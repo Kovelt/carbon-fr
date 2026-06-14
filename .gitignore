@@ -1,0 +1,25 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo.lock : suivi pour les binaires (bin/server), ignoré tant que le
+# workspace ne publie qu'une lib. À retirer de l'ignore-list dès le bin.
+Cargo.lock
+
+# Variables d'environnement / secrets (clés API, DSN Postgres…)
+.env
+.env.*
+!.env.example
+
+# Artefacts d'outillage
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE (config personnelle, hors dépôt public)
+/.idea/
+/.vscode/
+*.iml

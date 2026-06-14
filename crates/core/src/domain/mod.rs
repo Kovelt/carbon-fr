@@ -5,6 +5,7 @@
 //! méthodologie, millésime — ainsi que la logique métier qui ne dépend que de
 //! ces types (ex. [`greenest_window`]).
 
+mod factors;
 mod intensity;
 mod measurement;
 mod methodology;
@@ -13,6 +14,7 @@ mod stats;
 mod time_range;
 mod window;
 
+pub use factors::{EmissionFactors, acv_ademe_intensity, derive_acv_ademe};
 pub use intensity::CarbonIntensity;
 pub use measurement::{GenerationMix, Measurement, MeasurementKey};
 pub use methodology::{Methodology, Vintage};

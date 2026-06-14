@@ -1,6 +1,6 @@
 //! Cas d'usage : ingérer la dernière mesure d'une région (cœur du poller).
 
-use crate::domain::Region;
+use crate::domain::{Region, derive_acv_ademe};
 use crate::ports::{Eco2mixSource, IntensityRepository};
 
 use super::ApplicationError;
@@ -8,6 +8,9 @@ use super::ApplicationError;
 /// Récupère la dernière mesure depuis la source et la persiste via l'upsert
 /// conditionnel au millésime (ADR-0003, ADR-0006). C'est l'opération que le
 /// poller exécute périodiquement.
+///
+/// Quand la mesure porte un mix de production, on **dérive et stocke aussi** la
+/// mesure `acv-ademe` (cycle de vie, ADR-0008) au même horodatage.
 pub struct IngestLatest<S: Eco2mixSource, R: IntensityRepository> {
     source: S,
     repository: R,
@@ -19,13 +22,15 @@ impl<S: Eco2mixSource, R: IntensityRepository> IngestLatest<S, R> {
     }
 
     /// Retourne le nombre de mesures écrites (0 si la donnée déjà stockée
-    /// était d'un millésime supérieur).
+    /// était d'un millésime supérieur). Compte la mesure source et, le cas
+    /// échéant, sa dérivée `acv-ademe`.
     pub async fn execute(&self, region: Region) -> Result<usize, ApplicationError> {
         let measurement = self.source.latest(region).await?;
-        let written = self
-            .repository
-            .upsert_many(std::slice::from_ref(&measurement))
-            .await?;
+        let mut batch = vec![measurement];
+        if let Some(acv) = derive_acv_ademe(&batch[0]) {
+            batch.push(acv);
+        }
+        let written = self.repository.upsert_many(&batch).await?;
         Ok(written)
     }
 }

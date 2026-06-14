@@ -24,6 +24,9 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   (`carbonfr-server backfill`), upsert conditionnel au millésime.
 - **Rollups** : vues matérialisées horaires et journalières, rafraîchies par le
   poller et le backfill.
+- **Méthodologie `acv-ademe@1`** (cycle de vie ADEME, basée production, ADR-0008)
+  coexistant avec `rte-direct` : dérivée et stockée à l'ingestion, sélectionnable
+  via `?methodology=` sur les endpoints `/v1`. Couverture nationale.
 - **Documentation & gouvernance** : ADR 0001–0007 (+ addendum ADR-0003),
   `ARCHITECTURE.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `GOUVERNANCE.md`,
   et intégration continue GitHub Actions (fmt, clippy, tests + PostgreSQL).

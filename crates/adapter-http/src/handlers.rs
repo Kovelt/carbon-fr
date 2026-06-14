@@ -22,6 +22,7 @@ const MAX_HISTORY_SPAN: Duration = Duration::days(366);
 #[derive(Deserialize)]
 pub(crate) struct RegionQuery {
     region: Option<String>,
+    methodology: Option<String>,
 }
 
 impl RegionQuery {
@@ -40,6 +41,11 @@ fn resolve_region(slug: &Option<String>) -> Result<Region, ApiError> {
     }
 }
 
+/// Méthodologie demandée (`?methodology=`), ou celle par défaut de l'état.
+fn resolve_methodology(requested: &Option<String>, default: &str) -> String {
+    requested.clone().unwrap_or_else(|| default.to_string())
+}
+
 /// Parse un horodatage RFC 3339 fourni en paramètre, ou 400.
 fn parse_timestamp(name: &str, raw: &str) -> Result<OffsetDateTime, ApiError> {
     OffsetDateTime::parse(raw, &Rfc3339)
@@ -55,7 +61,8 @@ where
     R: IntensityRepository + Clone + Send + Sync + 'static,
 {
     let region = query.resolve()?;
-    let use_case = GetCurrentIntensity::new(state.repo.clone(), state.methodology.clone());
+    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let use_case = GetCurrentIntensity::new(state.repo.clone(), methodology);
     let measurement = use_case.execute(region).await?;
     Ok(Json(IntensityResponse::from_measurement(&measurement)?))
 }
@@ -69,7 +76,8 @@ where
     R: IntensityRepository + Clone + Send + Sync + 'static,
 {
     let region = query.resolve()?;
-    let use_case = GetCurrentIntensity::new(state.repo.clone(), state.methodology.clone());
+    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let use_case = GetCurrentIntensity::new(state.repo.clone(), methodology);
     let measurement = use_case.execute(region).await?;
     let mix = measurement.mix.as_ref().ok_or_else(|| {
         ApiError::not_found(format!(
@@ -86,6 +94,7 @@ pub(crate) struct HistoryQuery {
     from: Option<String>,
     to: Option<String>,
     region: Option<String>,
+    methodology: Option<String>,
 }
 
 /// `GET /v1/intensity/date?from=&to=&region=` — série historique sur un
@@ -119,14 +128,15 @@ where
     let range = TimeRange::new(from, to)
         .ok_or_else(|| ApiError::bad_request("`to` doit être strictement postérieur à `from`"))?;
 
-    let use_case = GetIntensityHistory::new(state.repo.clone(), state.methodology.clone());
+    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let use_case = GetIntensityHistory::new(state.repo.clone(), methodology.clone());
     let measurements = use_case.execute(region, range).await?;
 
     Ok(Json(HistoryResponse::new(
         region.slug(),
         from,
         to,
-        &state.methodology,
+        &methodology,
         &measurements,
     )?))
 }
@@ -138,6 +148,7 @@ pub(crate) struct StatsQuery {
     to: Option<String>,
     region: Option<String>,
     interval: Option<String>,
+    methodology: Option<String>,
 }
 
 /// `GET /v1/intensity/stats?from=&to=&region=&interval=` — résumé (moyenne/min/
@@ -170,7 +181,8 @@ where
     let range = TimeRange::new(from, to)
         .ok_or_else(|| ApiError::bad_request("`to` doit être strictement postérieur à `from`"))?;
 
-    let use_case = GetIntensityStats::new(state.repo.clone(), state.methodology.clone());
+    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let use_case = GetIntensityStats::new(state.repo.clone(), methodology.clone());
     let summary = use_case.summary(region, range).await?.ok_or_else(|| {
         ApiError::not_found(format!(
             "aucune donnée sur l'intervalle pour la région {}",
@@ -192,7 +204,7 @@ where
         region.slug(),
         from,
         to,
-        &state.methodology,
+        &methodology,
         &summary,
         interval_label,
         buckets.as_deref(),

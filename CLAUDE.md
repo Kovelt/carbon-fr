@@ -97,6 +97,7 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 - ADR-0005 (méthodologie carbone) — **Accepté** : `rte-direct` en MVP, méthodologie versionnée par mesure, enrichissement `acv-ademe` engagé.
 - ADR-0006 (cycle de vie & révision) — **Accepté** : millésime `tr`/`consolidated`/`definitive`, upsert conditionnel sur `(region, horodatage, methodology)`.
 - ADR-0007 (déploiement) — **Accepté** : API sur VPS FR/EU (PostgreSQL co-localisé), site statique sur o2switch, sous-domaine Kovelt, API versionnée `/v1`.
+- ADR-0008 (méthodologie `acv-ademe` & régional) — **Accepté** : intensité cycle de vie (facteurs ADEME × mix), `acv-ademe@1` basée production (imports = v2), dérivée à l'ingestion, sélectionnable via `?methodology=`. Base du futur régional.
 
 ## État d'avancement
 
@@ -106,7 +107,7 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
   - [x] **backfill historique national** par export de masse (`carbonfr-server backfill`, dataset `eco2mix-national-cons-def`). Validé de bout en bout.
   - [x] endpoint de lecture d'historique `/v1/intensity/date?from=&to=` (cas d'usage `GetIntensityHistory`, fenêtre ≤ 366 j).
   - [x] rollups (vues matérialisées horaire/journalier) + `/v1/intensity/stats` (résumé exact sur `measurement` + série depuis les rollups ; rafraîchis par poller & backfill).
-  - [ ] **régional** : intensité **dérivée par un modèle** (`taux_co2` absent du régional, cf. addendum ADR-0003) → nouvelle méthodologie + son ADR.
+  - [~] **méthodologie `acv-ademe`** (cycle de vie, ADR-0008) : ✅ définie + dérivée/stockée à l'ingestion + `?methodology=` (national) ; ⬜ **dérivation régionale** (exposer le mix régional `eco2mix-regional-*`, `thermique` agrégé → facteur gaz v1).
 - [ ] Phase 3 — prévision.
 
 ### Repères d'implémentation (phases 1-2)
@@ -116,6 +117,7 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 - **`upsert_many` = INSERT multi-lignes** (`QueryBuilder`, paquets de 1000) + **dédup par clé** (`dedup_by_key`, garde le meilleur millésime) — obligatoire pour le volume du backfill (~494k lignes).
 - **Backfill** : port `Eco2mixArchive` (export de masse, dataset `eco2mix-national-cons-def`), cas d'usage `BackfillHistory` qui **découpe en tranches** (une tranche = un export, pas l'API paginée — ADR-0003). Jamais de backfill via `range()` (plafonné).
 - **Rollups** : vues matérialisées `measurement_rollup_{hourly,daily}` (migration `0002`), seaux `date_trunc(..., 'UTC')`, index unique requis par `REFRESH … CONCURRENTLY`. Le **résumé** `/v1/intensity/stats` est exact (agrégat sur `measurement`) ; la **série** (`interval=`) vient des vues. Rafraîchies par le poller (si `written > 0`) et en fin de backfill.
+- **`acv-ademe`** : facteurs ACV versionnés en **constante de domaine** (`EmissionFactors::acv_ademe_v1`, ADR-0008), calcul pur `acv_ademe_intensity` + `derive_acv_ademe`. Dérivée et **stockée à l'ingestion** (poller + backfill) au même horodatage/millésime ; servie via `?methodology=acv-ademe`. National pour l'instant (régional = mix `thermique` agrégé à exposer).
 - **Partitionnement mensuel + BRIN** (ADR-0004) : toujours reporté (table simple, cf. commentaire de la migration `0001`). À reconsidérer maintenant que l'historique complet est ingérable.
 - **sqlx en requêtes runtime** (pas les macros `query!`) → `cargo check` reste hermétique, sans base.
 - Tests : `core`/adapters hermétiques ; intégration Postgres pilotée par `DATABASE_URL` ; ODRÉ « live » en `--ignored`. ⚠️ postgres-alpine se relance pendant son init → attendre une vraie requête SQL stable avant de lancer les tests (pas seulement `pg_isready`).

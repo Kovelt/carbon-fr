@@ -38,7 +38,9 @@ L'intensité carbone du réseau électrique français (en **gCO₂eq/kWh**) est 
 | `GET /v1/intensity/forecast` | Prévision d'intensité | 📅 Phase 3 |
 | `GET /v1/greenest-window` | Créneau le plus bas-carbone | 📅 Phase 3 |
 
-> Couverture **nationale** pour l'instant. L'intensité **régionale** n'est pas publiée par la source : elle sera **dérivée par un modèle** (addendum ADR-0003), à venir.
+Tous les endpoints `/v1` acceptent `?region=<slug>` (national par défaut) et `?methodology=<id>` : **`rte-direct`** (estimation RTE, combustion directe — défaut) ou **`acv-ademe`** (cycle de vie ADEME, ADR-0008).
+
+> Couverture **nationale** pour l'instant. L'intensité **régionale** sera dérivée via la méthode `acv-ademe` appliquée au mix régional (addendum ADR-0003 + ADR-0008), à venir.
 
 ## Architecture
 

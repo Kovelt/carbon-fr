@@ -25,6 +25,11 @@ impl Methodology {
     pub fn rte_direct() -> Self {
         Self::new("rte-direct", 1)
     }
+
+    /// Méthode cycle de vie ADEME, basée production (ADR-0008).
+    pub fn acv_ademe() -> Self {
+        Self::new("acv-ademe", 1)
+    }
 }
 
 impl fmt::Display for Methodology {

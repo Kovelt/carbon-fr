@@ -14,8 +14,8 @@ use carbonfr_core::application::{
     GetIntensityStats, IngestLatest,
 };
 use carbonfr_core::domain::{
-    CarbonIntensity, Granularity, IntensityStats, Measurement, MeasurementKey, Methodology, Region,
-    RollupBucket, TimeRange, Vintage,
+    CarbonIntensity, GenerationMix, Granularity, IntensityStats, Measurement, MeasurementKey,
+    Methodology, Region, RollupBucket, TimeRange, Vintage,
 };
 use carbonfr_core::ports::{
     Eco2mixArchive, Eco2mixSource, ForecastError, ForecastModel, IntensityRepository,
@@ -223,6 +223,53 @@ async fn read_current_without_data_errors() {
     let repo = InMemoryRepo::default();
     let get = GetCurrentIntensity::new(repo, "rte-direct");
     assert!(get.execute(Region::Bretagne).await.is_err());
+}
+
+#[tokio::test]
+async fn ingest_derives_and_stores_acv_ademe() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let repo = InMemoryRepo::default();
+    // Mesure source (rte-direct) portant un mix de production.
+    let source_measurement = Measurement {
+        at: t0,
+        region: Region::National,
+        intensity: CarbonIntensity::new(15.0).unwrap(),
+        methodology: Methodology::rte_direct(),
+        vintage: Vintage::Tr,
+        mix: Some(GenerationMix {
+            nucleaire: 38815.0,
+            gaz: 666.0,
+            charbon: 0.0,
+            fioul: 34.0,
+            hydraulique: 8893.0,
+            eolien: 2555.0,
+            solaire: 1050.0,
+            bioenergies: 1006.0,
+            pompage: -76.0,
+            echanges: -11574.0,
+        }),
+    };
+    let source = FakeSource {
+        measurement: source_measurement,
+    };
+
+    // Une ingestion → deux écritures (rte-direct + acv-ademe dérivée).
+    let ingest = IngestLatest::new(source, repo.clone());
+    assert_eq!(ingest.execute(Region::National).await.unwrap(), 2);
+
+    let rte = GetCurrentIntensity::new(repo.clone(), "rte-direct")
+        .execute(Region::National)
+        .await
+        .unwrap();
+    let acv = GetCurrentIntensity::new(repo, "acv-ademe")
+        .execute(Region::National)
+        .await
+        .unwrap();
+
+    assert_eq!(rte.intensity.value(), 15.0);
+    assert_eq!(acv.methodology, Methodology::acv_ademe());
+    // Intensité ACV du mix < taux_co2 publié pour ce mix très bas-carbone.
+    assert!(acv.intensity.value() < rte.intensity.value());
 }
 
 #[tokio::test]

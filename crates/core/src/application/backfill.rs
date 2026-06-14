@@ -2,7 +2,7 @@
 
 use time::Duration;
 
-use crate::domain::TimeRange;
+use crate::domain::{TimeRange, derive_acv_ademe};
 use crate::ports::{Eco2mixArchive, IntensityRepository};
 
 use super::ApplicationError;
@@ -63,7 +63,17 @@ impl<A: Eco2mixArchive, R: IntensityRepository> BackfillHistory<A, R> {
 
             let batch = self.archive.export_national(slice).await?;
             report.read += batch.len();
-            report.written += self.repository.upsert_many(&batch).await?;
+
+            // Enrichit chaque mesure de sa dérivée cycle de vie (ADR-0008).
+            let mut enriched = Vec::with_capacity(batch.len() * 2);
+            for measurement in batch {
+                if let Some(acv) = derive_acv_ademe(&measurement) {
+                    enriched.push(acv);
+                }
+                enriched.push(measurement);
+            }
+
+            report.written += self.repository.upsert_many(&enriched).await?;
             report.windows += 1;
 
             start = end;

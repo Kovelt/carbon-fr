@@ -20,8 +20,9 @@
 //! - `GET /v1/mix` — mix de production (MW par filière).
 //! - `GET /health` — sonde de disponibilité.
 //!
-//! Les endpoints `/v1` acceptent un paramètre optionnel `?region=<slug>`
-//! (national par défaut).
+//! Les endpoints `/v1` acceptent les paramètres optionnels `?region=<slug>`
+//! (national par défaut) et `?methodology=<id>` (`rte-direct` par défaut ;
+//! `acv-ademe` pour la vue cycle de vie, ADR-0008).
 
 mod dto;
 mod error;

@@ -29,9 +29,12 @@ impl IntensityRepository for FakeRepo {
     async fn latest(
         &self,
         region: Region,
-        _methodology_id: &str,
+        methodology_id: &str,
     ) -> Result<Option<Measurement>, RepositoryError> {
-        Ok(self.measurement.clone().filter(|m| m.region == region))
+        Ok(self
+            .measurement
+            .clone()
+            .filter(|m| m.region == region && m.methodology.id == methodology_id))
     }
 
     async fn range(
@@ -177,6 +180,23 @@ async fn intensity_now_returns_latest() {
     assert_eq!(body["methodology"], "rte-direct");
     assert_eq!(body["vintage"], "tr");
     assert_eq!(body["timestamp"], "1970-01-01T00:00:00Z");
+}
+
+#[tokio::test]
+async fn methodology_param_selects_series() {
+    // La mesure stockée est en `acv-ademe`.
+    let mut m = national_measurement();
+    m.methodology = Methodology::acv_ademe();
+
+    // Sans paramètre → défaut rte-direct → 404 (rien en rte-direct).
+    let response = get(app(Some(m.clone())), "/v1/intensity/now").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    // Avec ?methodology=acv-ademe → 200.
+    let response = get(app(Some(m)), "/v1/intensity/now?methodology=acv-ademe").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["methodology"], "acv-ademe");
 }
 
 #[tokio::test]

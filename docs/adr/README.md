@@ -17,6 +17,7 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0005](0005-methodologie-carbone.md) | Méthodologie carbone (RTE + enrichissement engagé) | Accepté |
 | [0006](0006-cycle-de-vie-revision-donnees.md) | Cycle de vie & révision des données (millésime + upsert) | Accepté |
 | [0007](0007-topologie-deploiement.md) | Topologie de déploiement (API VPS, site statique, sous-domaine Kovelt) | Accepté |
+| [0008](0008-methodologie-acv-ademe-et-regional.md) | Méthodologie cycle de vie (`acv-ademe`) & intensité régionale | Accepté |
 
 ## Gabarit
 

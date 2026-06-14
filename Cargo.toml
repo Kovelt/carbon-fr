@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/adapter-odre"]
+members = ["crates/core", "crates/adapter-odre", "crates/adapter-postgres"]
 
 [workspace.package]
 edition = "2024"
@@ -23,3 +23,11 @@ reqwest = { version = "0.12.24", default-features = false, features = [
     "gzip",
 ] }
 tokio = { version = "1.52.3", features = ["macros", "rt"] }
+sqlx = { version = "0.8.6", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring",
+    "postgres",
+    "time",
+    "migrate",
+    "macros",
+] }

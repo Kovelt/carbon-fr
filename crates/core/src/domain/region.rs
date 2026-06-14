@@ -60,6 +60,16 @@ impl Region {
         }
     }
 
+    /// Région correspondant à un [`slug`](Region::slug), ou `None` si inconnu.
+    ///
+    /// Réciproque de `slug()` : utilisée par les adapters pour reconstruire une
+    /// région à partir de sa forme stockée ou reçue (clé d'URL, colonne SQL).
+    pub fn from_slug(slug: &str) -> Option<Region> {
+        std::iter::once(Region::National)
+            .chain(Region::METROPOLITAN)
+            .find(|region| region.slug() == slug)
+    }
+
     /// Libellé humain.
     pub fn label(self) -> &'static str {
         match self {
@@ -105,5 +115,13 @@ mod tests {
         let before = slugs.len();
         slugs.dedup();
         assert_eq!(before, slugs.len());
+    }
+
+    #[test]
+    fn from_slug_roundtrips_every_region() {
+        for region in std::iter::once(Region::National).chain(Region::METROPOLITAN) {
+            assert_eq!(Region::from_slug(region.slug()), Some(region));
+        }
+        assert_eq!(Region::from_slug("atlantide"), None);
     }
 }

@@ -79,6 +79,9 @@ cargo fmt --all
 # Lancer l'API (migrations appliquées au démarrage du serveur) :
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server
 
+# Backfill de l'historique national par export de masse (one-shot) :
+DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backfill
+
 # Tests d'intégration nécessitant des ressources externes :
 DATABASE_URL=postgres://localhost/carbonfr_test \
   cargo test -p carbonfr-adapter-postgres --test pg     # Postgres réel
@@ -99,14 +102,19 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 
 - [x] Cadrage + documentation (ADR, ARCHITECTURE).
 - [x] Phase 1 — socle `core` + adapters ODRÉ/Postgres/HTTP + `bin/server` (poller unique + `/v1/intensity/now`, `/v1/mix`, `/health`). Validé de bout en bout (national).
-- [ ] Phase 2 — historique (backfill par export de masse ODRÉ) + régional (intensité **dérivée par un modèle** : `taux_co2` absent du régional, cf. addendum ADR-0003).
+- [~] Phase 2 — historique & régional :
+  - [x] **backfill historique national** par export de masse (`carbonfr-server backfill`, dataset `eco2mix-national-cons-def`). Validé de bout en bout.
+  - [ ] endpoint de lecture d'historique (`/v1/intensity/date`) + vues matérialisées de rollup.
+  - [ ] **régional** : intensité **dérivée par un modèle** (`taux_co2` absent du régional, cf. addendum ADR-0003) → nouvelle méthodologie + son ADR.
 - [ ] Phase 3 — prévision.
 
-### Repères d'implémentation (phase 1)
+### Repères d'implémentation (phases 1-2)
 
-- **Intensité régionale = national-only** à la source : `latest`/`range` de l'adapter ODRÉ renvoient `NoData` pour toute région ≠ `National` (addendum ADR-0003).
+- **Intensité régionale = national-only** à la source : `latest`/`range`/`export_national` de l'adapter ODRÉ renvoient `NoData` pour toute région ≠ `National` (addendum ADR-0003).
 - **Millésime stocké en rang `SMALLINT`** (0/1/2) côté Postgres → upsert conditionnel = `WHERE EXCLUDED.vintage_rank >= measurement.vintage_rank`. Mix = 10 colonnes (pas de `serde` dans le `core`).
-- **Partitionnement mensuel + BRIN** (ADR-0004) : reporté en phase 2 (table simple au socle, cf. commentaire de la migration `0001`).
+- **`upsert_many` = INSERT multi-lignes** (`QueryBuilder`, paquets de 1000) + **dédup par clé** (`dedup_by_key`, garde le meilleur millésime) — obligatoire pour le volume du backfill (~494k lignes).
+- **Backfill** : port `Eco2mixArchive` (export de masse, dataset `eco2mix-national-cons-def`), cas d'usage `BackfillHistory` qui **découpe en tranches** (une tranche = un export, pas l'API paginée — ADR-0003). Jamais de backfill via `range()` (plafonné).
+- **Partitionnement mensuel + BRIN** (ADR-0004) : toujours reporté (table simple, cf. commentaire de la migration `0001`). À reconsidérer maintenant que l'historique complet est ingérable.
 - **sqlx en requêtes runtime** (pas les macros `query!`) → `cargo check` reste hermétique, sans base.
-- Tests : `core`/adapters hermétiques ; intégration Postgres pilotée par `DATABASE_URL` ; ODRÉ « live » en `--ignored`.
-- Serveur configurable par env : `DATABASE_URL`, `CARBONFR_BIND` (déf. `0.0.0.0:8080`), `CARBONFR_POLL_SECS` (déf. 900), `RUST_LOG`.
+- Tests : `core`/adapters hermétiques ; intégration Postgres pilotée par `DATABASE_URL` ; ODRÉ « live » en `--ignored`. ⚠️ postgres-alpine se relance pendant son init → attendre une vraie requête SQL stable avant de lancer les tests (pas seulement `pg_isready`).
+- Serveur configurable par env : `DATABASE_URL`, `CARBONFR_BIND` (déf. `0.0.0.0:8080`), `CARBONFR_POLL_SECS` (déf. 900), `CARBONFR_BACKFILL_FROM`/`_TO`/`_WINDOW_DAYS` (déf. `2012-01-01`→maintenant, 90 j), `RUST_LOG`.

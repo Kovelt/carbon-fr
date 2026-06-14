@@ -8,9 +8,9 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-async-trait = "0.1.89"
-thiserror = "2.0.18"
-time = "0.3.49"
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
 
 [dev-dependencies]
-tokio = { version = "1.52.3", features = ["macros", "rt"] }
+tokio = { workspace = true }

@@ -1,0 +1,20 @@
+[package]
+name = "carbonfr-adapter-odre"
+version = "0.0.0"
+description = "Adapter sortant carbon-fr : implémente Eco2mixSource via l'API ODRÉ (éCO2mix RTE)."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+carbonfr-core = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+time = { workspace = true, features = ["parsing", "formatting"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

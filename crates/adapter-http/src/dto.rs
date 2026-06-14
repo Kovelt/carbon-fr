@@ -43,6 +43,56 @@ impl IntensityResponse {
     }
 }
 
+/// Réponse de `GET /v1/intensity/date` : la série sur l'intervalle demandé.
+#[derive(Serialize)]
+pub(crate) struct HistoryResponse {
+    region: String,
+    from: String,
+    to: String,
+    unit: &'static str,
+    methodology: String,
+    count: usize,
+    data: Vec<HistoryPoint>,
+}
+
+#[derive(Serialize)]
+struct HistoryPoint {
+    timestamp: String,
+    intensity: f64,
+    vintage: &'static str,
+}
+
+impl HistoryResponse {
+    pub(crate) fn new(
+        region: &str,
+        from: OffsetDateTime,
+        to: OffsetDateTime,
+        methodology: &str,
+        measurements: &[Measurement],
+    ) -> Result<Self, time::error::Format> {
+        let data = measurements
+            .iter()
+            .map(|m| {
+                Ok(HistoryPoint {
+                    timestamp: to_rfc3339(m.at)?,
+                    intensity: m.intensity.value(),
+                    vintage: m.vintage.code(),
+                })
+            })
+            .collect::<Result<Vec<_>, time::error::Format>>()?;
+
+        Ok(Self {
+            region: region.to_string(),
+            from: to_rfc3339(from)?,
+            to: to_rfc3339(to)?,
+            unit: "gCO2eq/kWh",
+            methodology: methodology.to_string(),
+            count: data.len(),
+            data,
+        })
+    }
+}
+
 /// Réponse de `GET /v1/mix`.
 #[derive(Serialize)]
 pub(crate) struct MixResponse {

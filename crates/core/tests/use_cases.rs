@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use time::{Duration, OffsetDateTime};
 
 use carbonfr_core::application::{
-    BackfillHistory, FindGreenestWindow, GetCurrentIntensity, IngestLatest,
+    BackfillHistory, FindGreenestWindow, GetCurrentIntensity, GetIntensityHistory, IngestLatest,
 };
 use carbonfr_core::domain::{
     CarbonIntensity, Measurement, MeasurementKey, Methodology, Region, TimeRange, Vintage,
@@ -227,6 +227,40 @@ async fn find_greenest_window_uses_forecast() {
 
     assert_eq!(window.start, t0 + step * 2);
     assert!(window.average.value() < 18.0);
+}
+
+#[tokio::test]
+async fn get_history_returns_window_sorted() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let step = Duration::hours(1);
+    let repo = InMemoryRepo::default();
+
+    // Cinq mesures horaires, insérées dans le désordre.
+    let points: Vec<Measurement> = [3, 0, 4, 1, 2]
+        .into_iter()
+        .map(|i| {
+            measurement(
+                t0 + step * i,
+                Region::National,
+                20.0 + i as f64,
+                Vintage::Tr,
+            )
+        })
+        .collect();
+    repo.upsert_many(&points).await.unwrap();
+
+    let history = GetIntensityHistory::new(repo, "rte-direct");
+    // Fenêtre couvrant les 3 premières heures → indices 0, 1, 2.
+    let window = TimeRange::new(t0, t0 + step * 3).unwrap();
+    let series = history.execute(Region::National, window).await.unwrap();
+
+    assert_eq!(series.len(), 3);
+    assert!(
+        series.windows(2).all(|w| w[0].at < w[1].at),
+        "tri croissant"
+    );
+    assert_eq!(series[0].at, t0);
+    assert_eq!(series[2].at, t0 + step * 2);
 }
 
 /// Export de masse simulé : rend une mesure à pas `step` couvrant l'intervalle

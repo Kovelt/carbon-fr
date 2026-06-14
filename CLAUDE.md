@@ -104,7 +104,8 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 - [x] Phase 1 — socle `core` + adapters ODRÉ/Postgres/HTTP + `bin/server` (poller unique + `/v1/intensity/now`, `/v1/mix`, `/health`). Validé de bout en bout (national).
 - [~] Phase 2 — historique & régional :
   - [x] **backfill historique national** par export de masse (`carbonfr-server backfill`, dataset `eco2mix-national-cons-def`). Validé de bout en bout.
-  - [ ] endpoint de lecture d'historique (`/v1/intensity/date`) + vues matérialisées de rollup.
+  - [x] endpoint de lecture d'historique `/v1/intensity/date?from=&to=` (cas d'usage `GetIntensityHistory`, fenêtre ≤ 366 j).
+  - [ ] vues matérialisées de rollup (horaire/journalier).
   - [ ] **régional** : intensité **dérivée par un modèle** (`taux_co2` absent du régional, cf. addendum ADR-0003) → nouvelle méthodologie + son ADR.
 - [ ] Phase 3 — prévision.
 

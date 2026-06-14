@@ -7,11 +7,13 @@
 mod backfill;
 mod find_greenest_window;
 mod get_current;
+mod get_history;
 mod ingest_latest;
 
 pub use backfill::{BackfillHistory, BackfillReport};
 pub use find_greenest_window::FindGreenestWindow;
 pub use get_current::GetCurrentIntensity;
+pub use get_history::GetIntensityHistory;
 pub use ingest_latest::IngestLatest;
 
 use thiserror::Error;

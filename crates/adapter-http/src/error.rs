@@ -5,6 +5,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use carbonfr_core::application::ApplicationError;
 use serde::Serialize;
+use utoipa::ToSchema;
 
 /// Erreur prête à être renvoyée au client : statut + corps JSON `{error, message}`.
 pub struct ApiError {
@@ -40,10 +41,13 @@ impl ApiError {
     }
 }
 
-#[derive(Serialize)]
-struct ErrorBody {
-    error: &'static str,
-    message: String,
+/// Corps JSON d'une erreur de l'API.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ErrorBody {
+    /// Code court et stable (`no_data`, `bad_request`, `internal`).
+    pub error: &'static str,
+    /// Message lisible.
+    pub message: String,
 }
 
 impl IntoResponse for ApiError {

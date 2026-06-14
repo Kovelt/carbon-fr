@@ -5,13 +5,14 @@ use carbonfr_core::domain::{GenerationMix, IntensityStats, Measurement, RollupBu
 use serde::Serialize;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use utoipa::ToSchema;
 
 fn to_rfc3339(at: OffsetDateTime) -> Result<String, time::error::Format> {
     at.format(&Rfc3339)
 }
 
 /// Réponse de `GET /v1/intensity/now`.
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub(crate) struct IntensityResponse {
     region: String,
     timestamp: String,
@@ -21,7 +22,7 @@ pub(crate) struct IntensityResponse {
     vintage: &'static str,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct IntensityValue {
     value: f64,
     unit: &'static str,
@@ -44,7 +45,7 @@ impl IntensityResponse {
 }
 
 /// Réponse de `GET /v1/intensity/date` : la série sur l'intervalle demandé.
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub(crate) struct HistoryResponse {
     region: String,
     from: String,
@@ -55,7 +56,7 @@ pub(crate) struct HistoryResponse {
     data: Vec<HistoryPoint>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct HistoryPoint {
     timestamp: String,
     intensity: f64,
@@ -94,7 +95,7 @@ impl HistoryResponse {
 }
 
 /// Réponse de `GET /v1/mix`.
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub(crate) struct MixResponse {
     region: String,
     timestamp: String,
@@ -102,7 +103,7 @@ pub(crate) struct MixResponse {
     mix: MixBody,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct MixBody {
     nucleaire: f64,
     gaz: f64,
@@ -147,7 +148,7 @@ impl MixResponse {
 
 /// Réponse de `GET /v1/intensity/stats` : résumé sur l'intervalle, et série
 /// agrégée par pas si `interval` est fourni.
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub(crate) struct StatsResponse {
     region: String,
     from: String,
@@ -164,7 +165,7 @@ pub(crate) struct StatsResponse {
     intervals: Option<Vec<StatsBucket>>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct StatsBucket {
     start: String,
     average: f64,

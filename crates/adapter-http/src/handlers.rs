@@ -9,19 +9,23 @@ use carbonfr_core::ports::IntensityRepository;
 use serde::Deserialize;
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
+use utoipa::IntoParams;
 
 use crate::AppState;
 use crate::dto::{HistoryResponse, IntensityResponse, MixResponse, StatsResponse};
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorBody};
 
 /// Fenêtre maximale d'une requête d'historique (protège le serveur d'une
 /// extraction démesurée). Au-delà → 400.
 const MAX_HISTORY_SPAN: Duration = Duration::days(366);
 
 /// Paramètre de requête commun : `?region=<slug>`, national par défaut.
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct RegionQuery {
+    /// Slug de région (ex. `bretagne`). National par défaut.
     region: Option<String>,
+    /// Méthodologie : `rte-direct` (national) ou `acv-ademe`. Défaut `rte-direct`.
     methodology: Option<String>,
 }
 
@@ -53,6 +57,17 @@ fn parse_timestamp(name: &str, raw: &str) -> Result<OffsetDateTime, ApiError> {
 }
 
 /// `GET /v1/intensity/now` — dernière intensité carbone connue.
+#[utoipa::path(
+    get,
+    path = "/v1/intensity/now",
+    params(RegionQuery),
+    responses(
+        (status = 200, description = "Dernière mesure", body = IntensityResponse),
+        (status = 400, description = "Région ou méthodologie invalide", body = ErrorBody),
+        (status = 404, description = "Aucune donnée", body = ErrorBody),
+    ),
+    tag = "intensité"
+)]
 pub(crate) async fn intensity_now<R>(
     State(state): State<AppState<R>>,
     Query(query): Query<RegionQuery>,
@@ -68,6 +83,17 @@ where
 }
 
 /// `GET /v1/mix` — mix de production de la dernière mesure.
+#[utoipa::path(
+    get,
+    path = "/v1/mix",
+    params(RegionQuery),
+    responses(
+        (status = 200, description = "Mix de production (MW)", body = MixResponse),
+        (status = 400, description = "Région ou méthodologie invalide", body = ErrorBody),
+        (status = 404, description = "Aucune donnée / mix indisponible", body = ErrorBody),
+    ),
+    tag = "mix"
+)]
 pub(crate) async fn mix<R>(
     State(state): State<AppState<R>>,
     Query(query): Query<RegionQuery>,
@@ -89,16 +115,31 @@ where
 }
 
 /// Paramètres de `GET /v1/intensity/date`.
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct HistoryQuery {
+    /// Début de l'intervalle (RFC 3339, inclus). Requis.
     from: Option<String>,
+    /// Fin de l'intervalle (RFC 3339, exclu). Requis.
     to: Option<String>,
+    /// Slug de région. National par défaut.
     region: Option<String>,
+    /// Méthodologie. Défaut `rte-direct`.
     methodology: Option<String>,
 }
 
 /// `GET /v1/intensity/date?from=&to=&region=` — série historique sur un
 /// intervalle `[from, to)` (RFC 3339), national par défaut.
+#[utoipa::path(
+    get,
+    path = "/v1/intensity/date",
+    params(HistoryQuery),
+    responses(
+        (status = 200, description = "Série chronologique", body = HistoryResponse),
+        (status = 400, description = "Paramètre invalide ou fenêtre > 366 jours", body = ErrorBody),
+    ),
+    tag = "intensité"
+)]
 pub(crate) async fn intensity_date<R>(
     State(state): State<AppState<R>>,
     Query(query): Query<HistoryQuery>,
@@ -142,17 +183,34 @@ where
 }
 
 /// Paramètres de `GET /v1/intensity/stats`.
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct StatsQuery {
+    /// Début de l'intervalle (RFC 3339, inclus). Requis.
     from: Option<String>,
+    /// Fin de l'intervalle (RFC 3339, exclu). Requis.
     to: Option<String>,
+    /// Slug de région. National par défaut.
     region: Option<String>,
+    /// Pas d'agrégation de la série : `hour` ou `day`. Optionnel.
     interval: Option<String>,
+    /// Méthodologie. Défaut `rte-direct`.
     methodology: Option<String>,
 }
 
 /// `GET /v1/intensity/stats?from=&to=&region=&interval=` — résumé (moyenne/min/
 /// max) sur `[from, to)`, et série agrégée par pas si `interval=hour|day`.
+#[utoipa::path(
+    get,
+    path = "/v1/intensity/stats",
+    params(StatsQuery),
+    responses(
+        (status = 200, description = "Résumé (et série si interval)", body = StatsResponse),
+        (status = 400, description = "Paramètre invalide", body = ErrorBody),
+        (status = 404, description = "Aucune donnée sur l'intervalle", body = ErrorBody),
+    ),
+    tag = "intensité"
+)]
 pub(crate) async fn intensity_stats<R>(
     State(state): State<AppState<R>>,
     Query(query): Query<StatsQuery>,
@@ -212,6 +270,12 @@ where
 }
 
 /// `GET /health` — sonde de disponibilité (hors contrat d'API versionné).
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses((status = 200, description = "Service disponible", body = String)),
+    tag = "opérations"
+)]
 pub(crate) async fn health() -> &'static str {
     "ok"
 }

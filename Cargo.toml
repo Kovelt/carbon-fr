@@ -22,6 +22,7 @@ carbonfr-adapter-http = { path = "crates/adapter-http" }
 
 # Dépendances tierces (versions centralisées)
 axum = "0.8.7"
+utoipa = { version = "5.4.0", features = ["axum_extras"] }
 async-trait = "0.1.89"
 anyhow = "1.0.100"
 tracing = "0.1.41"

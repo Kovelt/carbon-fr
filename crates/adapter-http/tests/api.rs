@@ -357,6 +357,23 @@ async fn stats_without_data_is_404() {
 }
 
 #[tokio::test]
+async fn openapi_spec_is_served() {
+    let response = get(app(None), "/v1/openapi.json").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["openapi"], "3.1.0");
+    assert!(body["paths"]["/v1/intensity/now"].is_object());
+}
+
+#[tokio::test]
+async fn swagger_ui_is_served() {
+    let response = get(app(None), "/docs").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(String::from_utf8_lossy(&bytes).contains("swagger-ui"));
+}
+
+#[tokio::test]
 async fn stats_bad_interval_is_400() {
     let series = vec![point(OffsetDateTime::UNIX_EPOCH, 10.0)];
     let response = get(

@@ -18,12 +18,14 @@
 //! - `GET /v1/intensity/stats?from=&to=[&interval=hour|day]` — résumé
 //!   (moyenne/min/max) et, optionnellement, série agrégée (rollups).
 //! - `GET /v1/mix` — mix de production (MW par filière).
+//! - `GET /v1/openapi.json` — spécification OpenAPI 3.1 ; `GET /docs` — Swagger UI.
 //! - `GET /health` — sonde de disponibilité.
 //!
 //! Les endpoints `/v1` acceptent les paramètres optionnels `?region=<slug>`
 //! (national par défaut) et `?methodology=<id>` (`rte-direct` par défaut ;
 //! `acv-ademe` pour la vue cycle de vie, ADR-0008).
 
+mod carbonfr_openapi;
 mod dto;
 mod error;
 mod handlers;
@@ -67,6 +69,8 @@ where
         .route("/v1/intensity/date", get(handlers::intensity_date::<R>))
         .route("/v1/intensity/stats", get(handlers::intensity_stats::<R>))
         .route("/v1/mix", get(handlers::mix::<R>))
+        .route("/v1/openapi.json", get(carbonfr_openapi::openapi))
+        .route("/docs", get(carbonfr_openapi::swagger_ui))
         .route("/health", get(handlers::health))
         .with_state(state)
 }

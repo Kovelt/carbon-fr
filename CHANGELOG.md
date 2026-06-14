@@ -30,6 +30,8 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 - **Couverture régionale** (12 régions métropolitaines) : le poller ingère le
   mix régional (éCO2mix régional, `thermique` agrégé) et en dérive l'intensité
   `acv-ademe`. `rte-direct` reste national (taux_co2 publié par RTE).
+- **OpenAPI 3.1** dérivée du code (`utoipa`) sous `GET /v1/openapi.json` +
+  **Swagger UI** sous `GET /docs`.
 - **Documentation & gouvernance** : ADR 0001–0007 (+ addendum ADR-0003),
   `ARCHITECTURE.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `GOUVERNANCE.md`,
   et intégration continue GitHub Actions (fmt, clippy, tests + PostgreSQL).

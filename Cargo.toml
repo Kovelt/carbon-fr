@@ -1,6 +1,11 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/adapter-odre", "crates/adapter-postgres"]
+members = [
+    "crates/core",
+    "crates/adapter-odre",
+    "crates/adapter-postgres",
+    "crates/adapter-http",
+]
 
 [workspace.package]
 edition = "2024"
@@ -12,6 +17,7 @@ repository = "https://github.com/Kovelt/carbon-fr"
 carbonfr-core = { path = "crates/core" }
 
 # Dépendances tierces (versions centralisées)
+axum = "0.8.7"
 async-trait = "0.1.89"
 thiserror = "2.0.18"
 time = "0.3.49"

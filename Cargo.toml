@@ -5,6 +5,7 @@ members = [
     "crates/adapter-odre",
     "crates/adapter-postgres",
     "crates/adapter-http",
+    "bin/server",
 ]
 
 [workspace.package]
@@ -15,10 +16,16 @@ repository = "https://github.com/Kovelt/carbon-fr"
 [workspace.dependencies]
 # Crates internes
 carbonfr-core = { path = "crates/core" }
+carbonfr-adapter-odre = { path = "crates/adapter-odre" }
+carbonfr-adapter-postgres = { path = "crates/adapter-postgres" }
+carbonfr-adapter-http = { path = "crates/adapter-http" }
 
 # Dépendances tierces (versions centralisées)
 axum = "0.8.7"
 async-trait = "0.1.89"
+anyhow = "1.0.100"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 thiserror = "2.0.18"
 time = "0.3.49"
 serde = { version = "1.0.228", features = ["derive"] }

@@ -1,0 +1,31 @@
+[package]
+name = "server"
+version = "0.0.0"
+description = "Composition root de carbon-fr : câble les adapters, le poller et l'API."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# Binaire nommé `carbonfr-server` (cf. déploiement, ADR-0007), package `server`
+# pour `cargo run -p server`.
+[[bin]]
+name = "carbonfr-server"
+path = "src/main.rs"
+
+[dependencies]
+carbonfr-core = { workspace = true }
+carbonfr-adapter-odre = { workspace = true }
+carbonfr-adapter-postgres = { workspace = true }
+carbonfr-adapter-http = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true, features = [
+    "rt-multi-thread",
+    "macros",
+    "signal",
+    "time",
+    "net",
+] }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

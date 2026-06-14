@@ -1,0 +1,17 @@
+meta {
+  name: Mix — national
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/v1/mix
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.region: eq national
+  res.body.unit: eq MW
+}

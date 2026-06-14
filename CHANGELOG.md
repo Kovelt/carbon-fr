@@ -32,6 +32,8 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `acv-ademe`. `rte-direct` reste national (taux_co2 publié par RTE).
 - **OpenAPI 3.1** dérivée du code (`utoipa`) sous `GET /v1/openapi.json` +
   **Swagger UI** sous `GET /docs`.
+- **Collection Bruno** versionnée (`bruno/`) couvrant tous les endpoints
+  (cas nominaux national/régional × `rte-direct`/`acv-ademe`, et erreurs 400/404).
 - **Documentation & gouvernance** : ADR 0001–0007 (+ addendum ADR-0003),
   `ARCHITECTURE.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `GOUVERNANCE.md`,
   et intégration continue GitHub Actions (fmt, clippy, tests + PostgreSQL).

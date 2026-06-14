@@ -40,7 +40,7 @@ L'intensité carbone du réseau électrique français (en **gCO₂eq/kWh**) est 
 
 Tous les endpoints `/v1` acceptent `?region=<slug>` (national par défaut) et `?methodology=<id>` : **`rte-direct`** (estimation RTE, combustion directe — défaut) ou **`acv-ademe`** (cycle de vie ADEME, ADR-0008).
 
-La spécification **OpenAPI 3.1** (dérivée du code via `utoipa`) est servie sous **`GET /v1/openapi.json`**, et une **Swagger UI** sous **`GET /docs`**.
+La spécification **OpenAPI 3.1** (dérivée du code via `utoipa`) est servie sous **`GET /v1/openapi.json`**, et une **Swagger UI** sous **`GET /docs`**. Une collection **[Bruno](https://www.usebruno.com/)** versionnée (dossier [`bruno/`](bruno/)) couvre tous les endpoints (cas nominaux + erreurs).
 
 > Couverture **National + 12 régions métropolitaines**. Le `taux_co2` publié par RTE (`rte-direct`) n'existe qu'au national ; l'intensité **régionale** est dérivée via `acv-ademe` (cycle de vie appliqué au mix régional, ADR-0008). `acv-ademe@1` est **basée production** (l'intensité régionale reflète la production locale, pas les imports — version consommation à venir).
 

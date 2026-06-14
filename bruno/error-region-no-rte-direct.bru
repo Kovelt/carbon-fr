@@ -1,0 +1,25 @@
+meta {
+  name: Erreur — région en rte-direct (404)
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/now?region=bretagne
+  body: none
+  auth: none
+}
+
+params:query {
+  region: bretagne
+}
+
+docs {
+  `rte-direct` n'existe qu'au national → 404 pour une région (utiliser
+  `?methodology=acv-ademe`).
+}
+
+assert {
+  res.status: eq 404
+  res.body.error: eq no_data
+}

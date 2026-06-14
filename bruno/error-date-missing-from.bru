@@ -1,0 +1,20 @@
+meta {
+  name: Erreur — date sans `from` (400)
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/date?to=2024-01-02T00:00:00Z
+  body: none
+  auth: none
+}
+
+params:query {
+  to: 2024-01-02T00:00:00Z
+}
+
+assert {
+  res.status: eq 400
+  res.body.error: eq bad_request
+}

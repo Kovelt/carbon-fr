@@ -1,0 +1,26 @@
+meta {
+  name: Intensité date — historique (national)
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/date?from=2024-01-01T00:00:00Z&to=2024-01-02T00:00:00Z
+  body: none
+  auth: none
+}
+
+params:query {
+  from: 2024-01-01T00:00:00Z
+  to: 2024-01-02T00:00:00Z
+}
+
+docs {
+  Nécessite que l'historique ait été backfillé (`carbonfr-server backfill`).
+}
+
+assert {
+  res.status: eq 200
+  res.body.region: eq national
+  res.body.unit: eq gCO2eq/kWh
+}

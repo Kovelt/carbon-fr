@@ -1,0 +1,23 @@
+meta {
+  name: Intensité stats — série journalière (national)
+  type: http
+  seq: 9
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/stats?from=2024-01-01T00:00:00Z&to=2024-01-08T00:00:00Z&interval=day
+  body: none
+  auth: none
+}
+
+params:query {
+  from: 2024-01-01T00:00:00Z
+  to: 2024-01-08T00:00:00Z
+  interval: day
+}
+
+assert {
+  res.status: eq 200
+  res.body.interval: eq day
+  res.body.intervals: isArray
+}

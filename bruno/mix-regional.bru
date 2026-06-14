@@ -1,0 +1,22 @@
+meta {
+  name: Mix — régional Bretagne (acv-ademe)
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{baseUrl}}/v1/mix?region=bretagne&methodology=acv-ademe
+  body: none
+  auth: none
+}
+
+params:query {
+  region: bretagne
+  methodology: acv-ademe
+}
+
+assert {
+  res.status: eq 200
+  res.body.region: eq bretagne
+  res.body.unit: eq MW
+}

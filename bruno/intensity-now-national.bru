@@ -1,0 +1,18 @@
+meta {
+  name: Intensité now — national (rte-direct)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/now
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.region: eq national
+  res.body.methodology: eq rte-direct
+  res.body.intensity.unit: eq gCO2eq/kWh
+}

@@ -10,10 +10,12 @@ use async_trait::async_trait;
 use time::{Duration, OffsetDateTime};
 
 use carbonfr_core::application::{
-    BackfillHistory, FindGreenestWindow, GetCurrentIntensity, GetIntensityHistory, IngestLatest,
+    BackfillHistory, FindGreenestWindow, GetCurrentIntensity, GetIntensityHistory,
+    GetIntensityStats, IngestLatest,
 };
 use carbonfr_core::domain::{
-    CarbonIntensity, Measurement, MeasurementKey, Methodology, Region, TimeRange, Vintage,
+    CarbonIntensity, Granularity, IntensityStats, Measurement, MeasurementKey, Methodology, Region,
+    RollupBucket, TimeRange, Vintage,
 };
 use carbonfr_core::ports::{
     Eco2mixArchive, Eco2mixSource, ForecastError, ForecastModel, IntensityRepository,
@@ -88,6 +90,79 @@ impl IntensityRepository for InMemoryRepo {
         out.sort_by_key(|m| m.at);
         Ok(out)
     }
+
+    async fn stats(
+        &self,
+        region: Region,
+        methodology_id: &str,
+        range: TimeRange,
+    ) -> Result<Option<IntensityStats>, RepositoryError> {
+        let store = self.store.lock().unwrap();
+        let values: Vec<f64> = store
+            .values()
+            .filter(|m| {
+                m.region == region && m.methodology.id == methodology_id && range.contains(m.at)
+            })
+            .map(|m| m.intensity.value())
+            .collect();
+        Ok(stats_from(&values))
+    }
+
+    async fn rollup(
+        &self,
+        region: Region,
+        methodology_id: &str,
+        range: TimeRange,
+        granularity: Granularity,
+    ) -> Result<Vec<RollupBucket>, RepositoryError> {
+        use std::collections::BTreeMap;
+        let store = self.store.lock().unwrap();
+        let mut buckets: BTreeMap<i64, Vec<f64>> = BTreeMap::new();
+        for m in store.values().filter(|m| {
+            m.region == region && m.methodology.id == methodology_id && range.contains(m.at)
+        }) {
+            let key = bucket_start(m.at, granularity).unix_timestamp();
+            buckets.entry(key).or_default().push(m.intensity.value());
+        }
+        Ok(buckets
+            .into_iter()
+            .filter_map(|(ts, values)| {
+                let start = OffsetDateTime::from_unix_timestamp(ts).ok()?;
+                stats_from(&values).map(|stats| RollupBucket { start, stats })
+            })
+            .collect())
+    }
+
+    async fn refresh_rollups(&self) -> Result<(), RepositoryError> {
+        Ok(())
+    }
+}
+
+/// Statistiques d'une série de valeurs, ou `None` si vide.
+fn stats_from(values: &[f64]) -> Option<IntensityStats> {
+    if values.is_empty() {
+        return None;
+    }
+    let count = values.len() as u64;
+    let average = values.iter().sum::<f64>() / values.len() as f64;
+    let min = values.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = values.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    Some(IntensityStats {
+        average: CarbonIntensity::new(average)?,
+        min: CarbonIntensity::new(min)?,
+        max: CarbonIntensity::new(max)?,
+        count,
+    })
+}
+
+/// Début du seau (UTC) couvrant `at` pour un pas donné.
+fn bucket_start(at: OffsetDateTime, granularity: Granularity) -> OffsetDateTime {
+    let step = match granularity {
+        Granularity::Hourly => 3600,
+        Granularity::Daily => 86_400,
+    };
+    let ts = at.unix_timestamp();
+    OffsetDateTime::from_unix_timestamp(ts - ts.rem_euclid(step)).unwrap_or(at)
 }
 
 struct FakeSource {
@@ -261,6 +336,49 @@ async fn get_history_returns_window_sorted() {
     );
     assert_eq!(series[0].at, t0);
     assert_eq!(series[2].at, t0 + step * 2);
+}
+
+#[tokio::test]
+async fn get_stats_summary_and_hourly_rollup() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let repo = InMemoryRepo::default();
+    // 0 h : deux mesures (10, 20) ; 1 h : une mesure (60).
+    repo.upsert_many(&[
+        measurement(t0, Region::National, 10.0, Vintage::Tr),
+        measurement(
+            t0 + Duration::minutes(30),
+            Region::National,
+            20.0,
+            Vintage::Tr,
+        ),
+        measurement(t0 + Duration::hours(1), Region::National, 60.0, Vintage::Tr),
+    ])
+    .await
+    .unwrap();
+
+    let stats = GetIntensityStats::new(repo, "rte-direct");
+    let window = TimeRange::new(t0, t0 + Duration::hours(2)).unwrap();
+
+    // Résumé exact sur les 3 mesures : moy 30, min 10, max 60.
+    let summary = stats
+        .summary(Region::National, window)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary.count, 3);
+    assert_eq!(summary.average.value(), 30.0);
+    assert_eq!(summary.min.value(), 10.0);
+    assert_eq!(summary.max.value(), 60.0);
+
+    // Rollup horaire : 2 seaux ; le premier moyenne (10, 20) = 15.
+    let hourly = stats
+        .series(Region::National, window, Granularity::Hourly)
+        .await
+        .unwrap();
+    assert_eq!(hourly.len(), 2);
+    assert_eq!(hourly[0].start, t0);
+    assert_eq!(hourly[0].stats.average.value(), 15.0);
+    assert_eq!(hourly[1].stats.average.value(), 60.0);
 }
 
 /// Export de masse simulé : rend une mesure à pas `step` couvrant l'intervalle

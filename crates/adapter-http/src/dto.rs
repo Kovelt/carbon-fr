@@ -1,7 +1,7 @@
 //! DTO de réponse : projection du domaine en JSON (la sérialisation vit ici,
 //! jamais dans `core`). L'unité canonique est exposée explicitement.
 
-use carbonfr_core::domain::{GenerationMix, Measurement};
+use carbonfr_core::domain::{GenerationMix, IntensityStats, Measurement, RollupBucket};
 use serde::Serialize;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -137,6 +137,77 @@ impl MixResponse {
                 pompage: mix.pompage,
                 echanges: mix.echanges,
             },
+        })
+    }
+}
+
+/// Réponse de `GET /v1/intensity/stats` : résumé sur l'intervalle, et série
+/// agrégée par pas si `interval` est fourni.
+#[derive(Serialize)]
+pub(crate) struct StatsResponse {
+    region: String,
+    from: String,
+    to: String,
+    unit: &'static str,
+    methodology: String,
+    average: f64,
+    min: f64,
+    max: f64,
+    count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    interval: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    intervals: Option<Vec<StatsBucket>>,
+}
+
+#[derive(Serialize)]
+struct StatsBucket {
+    start: String,
+    average: f64,
+    min: f64,
+    max: f64,
+    count: u64,
+}
+
+impl StatsResponse {
+    pub(crate) fn new(
+        region: &str,
+        from: OffsetDateTime,
+        to: OffsetDateTime,
+        methodology: &str,
+        summary: &IntensityStats,
+        interval: Option<&'static str>,
+        buckets: Option<&[RollupBucket]>,
+    ) -> Result<Self, time::error::Format> {
+        let intervals = buckets
+            .map(|buckets| {
+                buckets
+                    .iter()
+                    .map(|b| {
+                        Ok(StatsBucket {
+                            start: to_rfc3339(b.start)?,
+                            average: b.stats.average.value(),
+                            min: b.stats.min.value(),
+                            max: b.stats.max.value(),
+                            count: b.stats.count,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, time::error::Format>>()
+            })
+            .transpose()?;
+
+        Ok(Self {
+            region: region.to_string(),
+            from: to_rfc3339(from)?,
+            to: to_rfc3339(to)?,
+            unit: "gCO2eq/kWh",
+            methodology: methodology.to_string(),
+            average: summary.average.value(),
+            min: summary.min.value(),
+            max: summary.max.value(),
+            count: summary.count,
+            interval,
+            intervals,
         })
     }
 }

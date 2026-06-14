@@ -3,15 +3,15 @@
 
 use axum::Json;
 use axum::extract::{Query, State};
-use carbonfr_core::application::{GetCurrentIntensity, GetIntensityHistory};
-use carbonfr_core::domain::{Region, TimeRange};
+use carbonfr_core::application::{GetCurrentIntensity, GetIntensityHistory, GetIntensityStats};
+use carbonfr_core::domain::{Granularity, Region, TimeRange};
 use carbonfr_core::ports::IntensityRepository;
 use serde::Deserialize;
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 
 use crate::AppState;
-use crate::dto::{HistoryResponse, IntensityResponse, MixResponse};
+use crate::dto::{HistoryResponse, IntensityResponse, MixResponse, StatsResponse};
 use crate::error::ApiError;
 
 /// Fenêtre maximale d'une requête d'historique (protège le serveur d'une
@@ -128,6 +128,74 @@ where
         to,
         &state.methodology,
         &measurements,
+    )?))
+}
+
+/// Paramètres de `GET /v1/intensity/stats`.
+#[derive(Deserialize)]
+pub(crate) struct StatsQuery {
+    from: Option<String>,
+    to: Option<String>,
+    region: Option<String>,
+    interval: Option<String>,
+}
+
+/// `GET /v1/intensity/stats?from=&to=&region=&interval=` — résumé (moyenne/min/
+/// max) sur `[from, to)`, et série agrégée par pas si `interval=hour|day`.
+pub(crate) async fn intensity_stats<R>(
+    State(state): State<AppState<R>>,
+    Query(query): Query<StatsQuery>,
+) -> Result<Json<StatsResponse>, ApiError>
+where
+    R: IntensityRepository + Clone + Send + Sync + 'static,
+{
+    let region = resolve_region(&query.region)?;
+
+    let from_raw = query
+        .from
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("paramètre `from` requis (RFC 3339)"))?;
+    let to_raw = query
+        .to
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("paramètre `to` requis (RFC 3339)"))?;
+    let from = parse_timestamp("from", from_raw)?;
+    let to = parse_timestamp("to", to_raw)?;
+
+    if to - from > MAX_HISTORY_SPAN {
+        return Err(ApiError::bad_request(
+            "fenêtre trop large (maximum 366 jours)",
+        ));
+    }
+    let range = TimeRange::new(from, to)
+        .ok_or_else(|| ApiError::bad_request("`to` doit être strictement postérieur à `from`"))?;
+
+    let use_case = GetIntensityStats::new(state.repo.clone(), state.methodology.clone());
+    let summary = use_case.summary(region, range).await?.ok_or_else(|| {
+        ApiError::not_found(format!(
+            "aucune donnée sur l'intervalle pour la région {}",
+            region.slug()
+        ))
+    })?;
+
+    let (interval_label, buckets) = match query.interval.as_deref() {
+        None => (None, None),
+        Some(raw) => {
+            let granularity = Granularity::from_label(raw)
+                .ok_or_else(|| ApiError::bad_request("`interval` doit valoir `hour` ou `day`"))?;
+            let series = use_case.series(region, range, granularity).await?;
+            (Some(granularity.label()), Some(series))
+        }
+    };
+
+    Ok(Json(StatsResponse::new(
+        region.slug(),
+        from,
+        to,
+        &state.methodology,
+        &summary,
+        interval_label,
+        buckets.as_deref(),
     )?))
 }
 

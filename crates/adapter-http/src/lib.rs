@@ -15,6 +15,8 @@
 //! - `GET /v1/intensity/now` — dernière intensité carbone (gCO₂eq/kWh).
 //! - `GET /v1/intensity/date?from=&to=` — série historique sur un intervalle
 //!   RFC 3339 (fenêtre ≤ 366 jours).
+//! - `GET /v1/intensity/stats?from=&to=[&interval=hour|day]` — résumé
+//!   (moyenne/min/max) et, optionnellement, série agrégée (rollups).
 //! - `GET /v1/mix` — mix de production (MW par filière).
 //! - `GET /health` — sonde de disponibilité.
 //!
@@ -62,6 +64,7 @@ where
     Router::new()
         .route("/v1/intensity/now", get(handlers::intensity_now::<R>))
         .route("/v1/intensity/date", get(handlers::intensity_date::<R>))
+        .route("/v1/intensity/stats", get(handlers::intensity_stats::<R>))
         .route("/v1/mix", get(handlers::mix::<R>))
         .route("/health", get(handlers::health))
         .with_state(state)

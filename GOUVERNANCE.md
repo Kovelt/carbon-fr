@@ -86,7 +86,7 @@ Ces jobs deviennent les **status checks requis** de la protection de `main`. La 
 | `SECURITY.md` | Signalement de faille (en privé) | ⬜ à ajouter |
 | `.github/dependabot.yml` | MAJ dépendances + alertes sécurité | ⬜ à ajouter |
 | `.github/ISSUE_TEMPLATE/` + `PULL_REQUEST_TEMPLATE.md` | Gabarits issues/PR | ⬜ à ajouter |
-| `CHANGELOG.md` | Journal des versions | ⬜ à ajouter |
+| `CHANGELOG.md` | Journal des versions | ✅ présent |
 | `CODEOWNERS` | Revue obligatoire par domaine | ⬜ quand contributeurs |
 
 ## 8. Lien avec les ADR

@@ -15,7 +15,8 @@
 
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_core::domain::{
-    CarbonIntensity, GenerationMix, Measurement, Methodology, Region, TimeRange, Vintage,
+    CarbonIntensity, GenerationMix, Granularity, Measurement, Methodology, Region, TimeRange,
+    Vintage,
 };
 use carbonfr_core::ports::IntensityRepository;
 use time::{Duration, OffsetDateTime};
@@ -176,4 +177,53 @@ async fn range_returns_chronological_window() {
     assert!(got.windows(2).all(|w| w[0].at < w[1].at), "tri croissant");
     assert_eq!(got[0].at, t0);
     assert_eq!(got[2].at, t0 + step * 2);
+}
+
+#[tokio::test]
+async fn stats_summary_and_hourly_rollup() {
+    let m = "test-pg-stats";
+    let Some(repo) = setup(m).await else { return };
+    // Borne d'heure (UNIX_EPOCH + n jours) pour des seaux alignés.
+    let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(2000);
+
+    repo.upsert_many(&[
+        measurement(m, t0, 10.0, Vintage::Tr, None),
+        measurement(m, t0 + Duration::minutes(30), 20.0, Vintage::Tr, None),
+        measurement(m, t0 + Duration::hours(1), 60.0, Vintage::Tr, None),
+    ])
+    .await
+    .unwrap();
+    repo.refresh_rollups().await.unwrap();
+
+    let window = TimeRange::new(t0, t0 + Duration::hours(2)).unwrap();
+
+    // Résumé exact (sur measurement) : moy 30, min 10, max 60.
+    let summary = repo
+        .stats(Region::National, m, window)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(summary.count, 3);
+    assert_eq!(summary.average.value(), 30.0);
+    assert_eq!(summary.min.value(), 10.0);
+    assert_eq!(summary.max.value(), 60.0);
+
+    // Rollup horaire (sur la vue matérialisée) : 2 seaux.
+    let hourly = repo
+        .rollup(Region::National, m, window, Granularity::Hourly)
+        .await
+        .unwrap();
+    assert_eq!(hourly.len(), 2);
+    assert_eq!(hourly[0].start, t0);
+    assert_eq!(hourly[0].stats.average.value(), 15.0);
+    assert_eq!(hourly[1].stats.average.value(), 60.0);
+
+    // Intervalle vide → None.
+    let empty = TimeRange::new(t0 - Duration::days(1), t0).unwrap();
+    assert!(
+        repo.stats(Region::National, m, empty)
+            .await
+            .unwrap()
+            .is_none()
+    );
 }

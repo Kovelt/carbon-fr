@@ -9,6 +9,7 @@ mod intensity;
 mod measurement;
 mod methodology;
 mod region;
+mod stats;
 mod time_range;
 mod window;
 
@@ -16,5 +17,6 @@ pub use intensity::CarbonIntensity;
 pub use measurement::{GenerationMix, Measurement, MeasurementKey};
 pub use methodology::{Methodology, Vintage};
 pub use region::Region;
+pub use stats::{Granularity, IntensityStats, RollupBucket};
 pub use time_range::TimeRange;
 pub use window::{GreenWindow, greenest_window};

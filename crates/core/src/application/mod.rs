@@ -8,12 +8,14 @@ mod backfill;
 mod find_greenest_window;
 mod get_current;
 mod get_history;
+mod get_stats;
 mod ingest_latest;
 
 pub use backfill::{BackfillHistory, BackfillReport};
 pub use find_greenest_window::FindGreenestWindow;
 pub use get_current::GetCurrentIntensity;
 pub use get_history::GetIntensityHistory;
+pub use get_stats::GetIntensityStats;
 pub use ingest_latest::IngestLatest;
 
 use thiserror::Error;

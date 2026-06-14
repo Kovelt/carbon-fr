@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use thiserror::Error;
 use time::{Duration, OffsetDateTime};
 
-use crate::domain::{Measurement, Region, TimeRange};
+use crate::domain::{Granularity, IntensityStats, Measurement, Region, RollupBucket, TimeRange};
 
 /// Erreur de récupération depuis une source amont (ODRÉ, ou source de secours).
 #[derive(Debug, Error)]
@@ -91,6 +91,29 @@ pub trait IntensityRepository: Send + Sync {
         methodology_id: &str,
         range: TimeRange,
     ) -> Result<Vec<Measurement>, RepositoryError>;
+
+    /// Statistiques (moyenne/min/max/effectif) sur un intervalle, calculées sur
+    /// les mesures brutes. `None` si l'intervalle ne contient aucune donnée.
+    async fn stats(
+        &self,
+        region: Region,
+        methodology_id: &str,
+        range: TimeRange,
+    ) -> Result<Option<IntensityStats>, RepositoryError>;
+
+    /// Série agrégée par pas (`granularity`) sur un intervalle, servie depuis les
+    /// rollups (vues matérialisées). Triée par seau croissant.
+    async fn rollup(
+        &self,
+        region: Region,
+        methodology_id: &str,
+        range: TimeRange,
+        granularity: Granularity,
+    ) -> Result<Vec<RollupBucket>, RepositoryError>;
+
+    /// Rafraîchit les rollups après une ingestion ou un backfill. Sans effet
+    /// pour les implémentations qui agrègent à la volée.
+    async fn refresh_rollups(&self) -> Result<(), RepositoryError>;
 }
 
 /// Port sortant : modèle de prévision d'intensité carbone (phase 3).

@@ -83,7 +83,7 @@ async fn run_backfill() -> anyhow::Result<()> {
     let archive = OdreClient::new().context("initialisation du client ODRÉ")?;
 
     let (range, window) = backfill_params()?;
-    let backfill = BackfillHistory::new(archive, repo, window);
+    let backfill = BackfillHistory::new(archive, repo.clone(), window);
 
     info!(from = %range.start(), to = %range.end(), window_days = window.whole_days(), "backfill historique national démarré");
     let report = backfill
@@ -96,6 +96,12 @@ async fn run_backfill() -> anyhow::Result<()> {
         windows = report.windows,
         "backfill terminé"
     );
+
+    // Rollups à jour après le backfill massif.
+    repo.refresh_rollups()
+        .await
+        .context("rafraîchissement des rollups")?;
+    info!("rollups rafraîchis");
     Ok(())
 }
 
@@ -182,15 +188,23 @@ fn parse_rfc3339_env(name: &str) -> anyhow::Result<Option<OffsetDateTime>> {
 fn spawn_poller<S, R>(source: S, repo: R, interval: std::time::Duration) -> JoinHandle<()>
 where
     S: Eco2mixSource + 'static,
-    R: IntensityRepository + 'static,
+    R: IntensityRepository + Clone + 'static,
 {
-    let ingest = IngestLatest::new(source, repo);
+    let ingest = IngestLatest::new(source, repo.clone());
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
         loop {
             ticker.tick().await;
             match ingest.execute(Region::National).await {
-                Ok(written) => info!(written, "ingestion ODRÉ (national)"),
+                Ok(written) => {
+                    info!(written, "ingestion ODRÉ (national)");
+                    // Rollups rafraîchis seulement si la donnée a changé.
+                    if written > 0
+                        && let Err(err) = repo.refresh_rollups().await
+                    {
+                        warn!(error = %err, "échec du rafraîchissement des rollups");
+                    }
+                }
                 Err(err) => warn!(error = %err, "échec d'ingestion ODRÉ"),
             }
         }

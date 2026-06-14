@@ -15,12 +15,16 @@
 mod mapping;
 
 use async_trait::async_trait;
-use carbonfr_core::domain::{Measurement, Region, TimeRange};
+use carbonfr_core::domain::{
+    Granularity, IntensityStats, Measurement, Region, RollupBucket, TimeRange,
+};
 use carbonfr_core::ports::{IntensityRepository, RepositoryError};
 use sqlx::postgres::PgPoolOptions;
-use sqlx::{PgPool, QueryBuilder};
+use sqlx::{PgPool, QueryBuilder, Row};
 
-use mapping::{backend, dedup_by_key, mix_field, row_to_measurement, vintage_rank};
+use mapping::{
+    backend, dedup_by_key, intensity_stats, mix_field, rollup_row, row_to_measurement, vintage_rank,
+};
 
 /// Liste des colonnes, partagée par les requêtes de lecture et d'écriture.
 const COLUMNS: &str = "region, at, methodology_id, methodology_version, intensity, vintage_rank, \
@@ -173,5 +177,85 @@ impl IntensityRepository for PgIntensityRepository {
             .map_err(|e| backend(format!("range : {e}")))?;
 
         rows.iter().map(row_to_measurement).collect()
+    }
+
+    async fn stats(
+        &self,
+        region: Region,
+        methodology_id: &str,
+        range: TimeRange,
+    ) -> Result<Option<IntensityStats>, RepositoryError> {
+        // Résumé exact calculé sur les mesures brutes (pas sur les rollups).
+        let row = sqlx::query(
+            "SELECT avg(intensity) AS avg, min(intensity) AS min, max(intensity) AS max, \
+                    count(*) AS n \
+             FROM measurement \
+             WHERE region = $1 AND methodology_id = $2 AND at >= $3 AND at < $4",
+        )
+        .bind(region.slug())
+        .bind(methodology_id)
+        .bind(range.start())
+        .bind(range.end())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| backend(format!("stats : {e}")))?;
+
+        let count: i64 = row
+            .try_get("n")
+            .map_err(|e| backend(format!("stats : {e}")))?;
+        if count == 0 {
+            return Ok(None);
+        }
+        // Pour count > 0, les agrégats ne sont pas NULL.
+        let avg: f64 = row
+            .try_get("avg")
+            .map_err(|e| backend(format!("stats : {e}")))?;
+        let min: f64 = row
+            .try_get("min")
+            .map_err(|e| backend(format!("stats : {e}")))?;
+        let max: f64 = row
+            .try_get("max")
+            .map_err(|e| backend(format!("stats : {e}")))?;
+        Ok(Some(intensity_stats(avg, min, max, count)?))
+    }
+
+    async fn rollup(
+        &self,
+        region: Region,
+        methodology_id: &str,
+        range: TimeRange,
+        granularity: Granularity,
+    ) -> Result<Vec<RollupBucket>, RepositoryError> {
+        // Le nom de vue provient d'un enum (pas d'entrée utilisateur).
+        let view = match granularity {
+            Granularity::Hourly => "measurement_rollup_hourly",
+            Granularity::Daily => "measurement_rollup_daily",
+        };
+        let sql = format!(
+            "SELECT bucket, avg_intensity, min_intensity, max_intensity, n FROM {view} \
+             WHERE region = $1 AND methodology_id = $2 AND bucket >= $3 AND bucket < $4 \
+             ORDER BY bucket ASC"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(region.slug())
+            .bind(methodology_id)
+            .bind(range.start())
+            .bind(range.end())
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| backend(format!("rollup : {e}")))?;
+
+        rows.iter().map(rollup_row).collect()
+    }
+
+    async fn refresh_rollups(&self) -> Result<(), RepositoryError> {
+        for view in ["measurement_rollup_hourly", "measurement_rollup_daily"] {
+            // CONCURRENTLY : ne verrouille pas les lectures (index unique requis).
+            sqlx::query(&format!("REFRESH MATERIALIZED VIEW CONCURRENTLY {view}"))
+                .execute(&self.pool)
+                .await
+                .map_err(|e| backend(format!("refresh {view} : {e}")))?;
+        }
+        Ok(())
     }
 }

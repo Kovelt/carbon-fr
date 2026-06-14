@@ -31,11 +31,14 @@ L'intensité carbone du réseau électrique français (en **gCO₂eq/kWh**) est 
 
 | Endpoint | Nature | Statut |
 | --- | --- | --- |
-| `GET /v1/intensity/now` | Intensité courante (national + régional) | 🛠️ Phase 1 |
-| `GET /v1/mix` | Mix de production par filière | 🛠️ Phase 1 |
-| `GET /v1/intensity/date` | Historique (révisé/consolidé/définitif) | 📅 Phase 2 |
+| `GET /v1/intensity/now` | Intensité courante (national) | ✅ |
+| `GET /v1/mix` | Mix de production par filière | ✅ |
+| `GET /v1/intensity/date?from=&to=` | Historique sur un intervalle (révisé/consolidé/définitif) | ✅ |
+| `GET /v1/intensity/stats?from=&to=[&interval=hour\|day]` | Résumé (moyenne/min/max) + série agrégée | ✅ |
 | `GET /v1/intensity/forecast` | Prévision d'intensité | 📅 Phase 3 |
 | `GET /v1/greenest-window` | Créneau le plus bas-carbone | 📅 Phase 3 |
+
+> Couverture **nationale** pour l'instant. L'intensité **régionale** n'est pas publiée par la source : elle sera **dérivée par un modèle** (addendum ADR-0003), à venir.
 
 ## Architecture
 
@@ -103,8 +106,8 @@ Le crate `core` se teste **entièrement en mémoire**, avec des _fakes_ impléme
 ## Feuille de route
 
 - [x] **Cadrage** — ADR, architecture, modèle de domaine.
-- [ ] **Phase 1 — Socle** : `core` ✅ · adapters ODRÉ / Postgres / HTTP · poller · `/intensity/now` + `/mix` (national).
-- [ ] **Phase 2 — Historique & régional** : backfill par export de masse, `/intensity/date`, 12 régions, rollups.
+- [x] **Phase 1 — Socle** : `core` · adapters ODRÉ / Postgres / HTTP · poller · `/intensity/now` + `/mix` (national).
+- [ ] **Phase 2 — Historique & régional** : backfill par export de masse ✅ · `/intensity/date` ✅ · rollups + `/intensity/stats` ✅ · régional (modèle) à venir.
 - [ ] **Phase 3 — Prévision** : `ForecastModel` → `/forecast` + `/greenest-window`.
 - [ ] **Phase 4 — DX** : SDK (Rust + TS), OpenAPI, conteneur Docker.
 

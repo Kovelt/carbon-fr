@@ -6,7 +6,8 @@
 use std::collections::HashMap;
 
 use carbonfr_core::domain::{
-    CarbonIntensity, GenerationMix, Measurement, MeasurementKey, Methodology, Region, Vintage,
+    CarbonIntensity, GenerationMix, IntensityStats, Measurement, MeasurementKey, Methodology,
+    Region, RollupBucket, Vintage,
 };
 use carbonfr_core::ports::RepositoryError;
 use sqlx::Row;
@@ -139,6 +140,40 @@ pub(crate) fn row_to_measurement(row: &PgRow) -> Result<Measurement, RepositoryE
         methodology: Methodology::new(methodology_id, methodology_version.max(0) as u32),
         vintage,
         mix: read_mix(row)?,
+    })
+}
+
+/// Intensité depuis une valeur de base, ou erreur si hors domaine.
+fn intensity(value: f64) -> Result<CarbonIntensity, RepositoryError> {
+    CarbonIntensity::new(value)
+        .ok_or_else(|| backend(format!("intensité hors domaine en base : {value}")))
+}
+
+/// Construit les statistiques depuis des agrégats SQL.
+pub(crate) fn intensity_stats(
+    avg: f64,
+    min: f64,
+    max: f64,
+    count: i64,
+) -> Result<IntensityStats, RepositoryError> {
+    Ok(IntensityStats {
+        average: intensity(avg)?,
+        min: intensity(min)?,
+        max: intensity(max)?,
+        count: count.max(0) as u64,
+    })
+}
+
+/// Mappe une ligne de rollup (`bucket`, agrégats) vers un [`RollupBucket`].
+pub(crate) fn rollup_row(row: &PgRow) -> Result<RollupBucket, RepositoryError> {
+    let start: OffsetDateTime = row.try_get("bucket").map_err(backend_from)?;
+    let avg: f64 = row.try_get("avg_intensity").map_err(backend_from)?;
+    let min: f64 = row.try_get("min_intensity").map_err(backend_from)?;
+    let max: f64 = row.try_get("max_intensity").map_err(backend_from)?;
+    let count: i64 = row.try_get("n").map_err(backend_from)?;
+    Ok(RollupBucket {
+        start,
+        stats: intensity_stats(avg, min, max, count)?,
     })
 }
 

@@ -5,7 +5,8 @@
 //! traduit l'enregistrement brut en [`Measurement`] du domaine.
 
 use carbonfr_core::domain::{
-    CarbonIntensity, GenerationMix, Measurement, Methodology, Region, Vintage,
+    CarbonIntensity, EmissionFactors, GenerationMix, Measurement, Methodology, Region, Vintage,
+    acv_ademe_intensity,
 };
 use carbonfr_core::ports::SourceError;
 use serde::Deserialize;
@@ -14,9 +15,9 @@ use time::format_description::well_known::Rfc3339;
 
 /// Réponse de l'endpoint `records` de l'API Explore v2.1 d'Opendatasoft.
 #[derive(Debug, Deserialize)]
-pub(crate) struct RecordsResponse {
+pub(crate) struct RecordsResponse<T> {
     pub total_count: u64,
-    pub results: Vec<NationalRecord>,
+    pub results: Vec<T>,
 }
 
 /// Un enregistrement du dataset `eco2mix-national-tr`.
@@ -76,6 +77,7 @@ impl NationalRecord {
                 bioenergies: self.bioenergies.unwrap_or(0.0),
                 pompage: self.pompage.unwrap_or(0.0),
                 echanges: self.ech_physiques.unwrap_or(0.0),
+                thermique: None,
             }),
         })
     }
@@ -91,6 +93,66 @@ fn parse_vintage(nature: &str) -> Vintage {
         "Données consolidées" => Vintage::Consolidated,
         "Données définitives" => Vintage::Definitive,
         _ => Vintage::Tr,
+    }
+}
+
+/// Un enregistrement du dataset `eco2mix-regional-tr`.
+///
+/// Le thermique fossile est **agrégé** (`thermique`) ; il n'y a pas de
+/// `taux_co2` régional. L'intensité est donc **dérivée** par la méthode
+/// `acv-ademe` (ADR-0008).
+#[derive(Debug, Deserialize)]
+pub(crate) struct RegionalRecord {
+    pub date_heure: String,
+    pub nature: String,
+    pub thermique: Option<f64>,
+    pub nucleaire: Option<f64>,
+    pub eolien: Option<f64>,
+    pub solaire: Option<f64>,
+    pub hydraulique: Option<f64>,
+    pub bioenergies: Option<f64>,
+    pub ech_physiques: Option<f64>,
+    // NB : `pompage` est typé chaîne ("0") dans le dataset régional, et n'entre
+    // pas dans le calcul acv-ademe → non décodé (mix.pompage = 0).
+}
+
+impl RegionalRecord {
+    /// Convertit en [`Measurement`] régional `acv-ademe` (intensité dérivée du
+    /// mix de production). Échoue si l'horodatage est illisible ; renvoie
+    /// `NoData` si la production locale est nulle (intensité indéfinie).
+    pub(crate) fn into_measurement(self, region: Region) -> Result<Measurement, SourceError> {
+        let at = OffsetDateTime::parse(&self.date_heure, &Rfc3339).map_err(|e| {
+            SourceError::Invalid(format!(
+                "horodatage illisible « {} » : {e}",
+                self.date_heure
+            ))
+        })?;
+
+        let mix = GenerationMix {
+            nucleaire: self.nucleaire.unwrap_or(0.0),
+            gaz: 0.0,
+            charbon: 0.0,
+            fioul: 0.0,
+            hydraulique: self.hydraulique.unwrap_or(0.0),
+            eolien: self.eolien.unwrap_or(0.0),
+            solaire: self.solaire.unwrap_or(0.0),
+            bioenergies: self.bioenergies.unwrap_or(0.0),
+            pompage: 0.0,
+            echanges: self.ech_physiques.unwrap_or(0.0),
+            thermique: Some(self.thermique.unwrap_or(0.0)),
+        };
+
+        let intensity = acv_ademe_intensity(&mix, &EmissionFactors::acv_ademe_v1())
+            .ok_or(SourceError::NoData(region))?;
+
+        Ok(Measurement {
+            at,
+            region,
+            intensity,
+            methodology: Methodology::acv_ademe(),
+            vintage: parse_vintage(&self.nature),
+            mix: Some(mix),
+        })
     }
 }
 
@@ -115,7 +177,7 @@ mod tests {
     }"#;
 
     fn first(json: &str) -> NationalRecord {
-        serde_json::from_str::<RecordsResponse>(json)
+        serde_json::from_str::<RecordsResponse<NationalRecord>>(json)
             .expect("désérialisation")
             .results
             .into_iter()

@@ -26,13 +26,17 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   poller et le backfill.
 - **Méthodologie `acv-ademe@1`** (cycle de vie ADEME, basée production, ADR-0008)
   coexistant avec `rte-direct` : dérivée et stockée à l'ingestion, sélectionnable
-  via `?methodology=` sur les endpoints `/v1`. Couverture nationale.
+  via `?methodology=` sur les endpoints `/v1`.
+- **Couverture régionale** (12 régions métropolitaines) : le poller ingère le
+  mix régional (éCO2mix régional, `thermique` agrégé) et en dérive l'intensité
+  `acv-ademe`. `rte-direct` reste national (taux_co2 publié par RTE).
 - **Documentation & gouvernance** : ADR 0001–0007 (+ addendum ADR-0003),
   `ARCHITECTURE.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `GOUVERNANCE.md`,
   et intégration continue GitHub Actions (fmt, clippy, tests + PostgreSQL).
 
 ### Notes
 
-- Couverture **nationale** uniquement : l'intensité **régionale** n'est pas
-  publiée par la source et sera **dérivée par un modèle** (addendum ADR-0003).
+- `acv-ademe@1` est **basée production** : pour une région importatrice,
+  l'intensité reflète la production locale, pas la consommation (imports =
+  version consommation, `acv-ademe@2`).
 - La prévision (`/forecast`, `/greenest-window`) relève de la phase 3.

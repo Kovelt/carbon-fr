@@ -1,6 +1,6 @@
 //! Cas d'usage : ingérer la dernière mesure d'une région (cœur du poller).
 
-use crate::domain::{Region, derive_acv_ademe};
+use crate::domain::{Methodology, Region, derive_acv_ademe};
 use crate::ports::{Eco2mixSource, IntensityRepository};
 
 use super::ApplicationError;
@@ -27,7 +27,11 @@ impl<S: Eco2mixSource, R: IntensityRepository> IngestLatest<S, R> {
     pub async fn execute(&self, region: Region) -> Result<usize, ApplicationError> {
         let measurement = self.source.latest(region).await?;
         let mut batch = vec![measurement];
-        if let Some(acv) = derive_acv_ademe(&batch[0]) {
+        // Dérive `acv-ademe` sauf si la mesure l'est déjà (cas régional, où la
+        // source ne fournit que l'intensité dérivée).
+        if batch[0].methodology != Methodology::acv_ademe()
+            && let Some(acv) = derive_acv_ademe(&batch[0])
+        {
             batch.push(acv);
         }
         let written = self.repository.upsert_many(&batch).await?;

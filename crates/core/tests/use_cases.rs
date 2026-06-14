@@ -247,6 +247,7 @@ async fn ingest_derives_and_stores_acv_ademe() {
             bioenergies: 1006.0,
             pompage: -76.0,
             echanges: -11574.0,
+            thermique: None,
         }),
     };
     let source = FakeSource {

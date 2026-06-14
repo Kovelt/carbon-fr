@@ -195,17 +195,25 @@ where
         let mut ticker = tokio::time::interval(interval);
         loop {
             ticker.tick().await;
-            match ingest.execute(Region::National).await {
-                Ok(written) => {
-                    info!(written, "ingestion ODRÉ (national)");
-                    // Rollups rafraîchis seulement si la donnée a changé.
-                    if written > 0
-                        && let Err(err) = repo.refresh_rollups().await
-                    {
-                        warn!(error = %err, "échec du rafraîchissement des rollups");
+
+            // National (rte-direct + acv-ademe dérivée) puis les 12 régions
+            // (acv-ademe). Une région en échec ne bloque pas les autres.
+            let mut written = 0usize;
+            for region in std::iter::once(Region::National).chain(Region::METROPOLITAN) {
+                match ingest.execute(region).await {
+                    Ok(n) => written += n,
+                    Err(err) => {
+                        warn!(region = region.slug(), error = %err, "échec d'ingestion ODRÉ")
                     }
                 }
-                Err(err) => warn!(error = %err, "échec d'ingestion ODRÉ"),
+            }
+            info!(written, "ingestion ODRÉ (national + régions)");
+
+            // Rollups rafraîchis une fois par cycle si la donnée a changé.
+            if written > 0
+                && let Err(err) = repo.refresh_rollups().await
+            {
+                warn!(error = %err, "échec du rafraîchissement des rollups");
             }
         }
     })

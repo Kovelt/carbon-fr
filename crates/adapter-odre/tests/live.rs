@@ -7,7 +7,7 @@
 //! ```
 
 use carbonfr_adapter_odre::OdreClient;
-use carbonfr_core::domain::{Region, TimeRange, Vintage};
+use carbonfr_core::domain::{Methodology, Region, TimeRange, Vintage};
 use carbonfr_core::ports::{Eco2mixArchive, Eco2mixSource};
 use time::{Date, Duration, Month, OffsetDateTime};
 
@@ -69,4 +69,20 @@ async fn export_national_window_is_fetched() {
             .iter()
             .all(|m| matches!(m.vintage, Vintage::Consolidated | Vintage::Definitive))
     );
+}
+
+#[tokio::test]
+#[ignore = "réseau : frappe l'API ODRÉ réelle"]
+async fn latest_regional_is_derived_acv_ademe() {
+    let client = OdreClient::new().expect("client");
+    let m = client
+        .latest(Region::Bretagne)
+        .await
+        .expect("dernière mesure régionale");
+
+    assert_eq!(m.region, Region::Bretagne);
+    // Pas de taux_co2 régional → intensité dérivée acv-ademe.
+    assert_eq!(m.methodology, Methodology::acv_ademe());
+    // Le mix régional porte le thermique agrégé.
+    assert!(m.mix.expect("mix").thermique.is_some());
 }

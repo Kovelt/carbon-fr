@@ -22,6 +22,10 @@ pub struct GenerationMix {
     pub bioenergies: f64,
     pub pompage: f64,
     pub echanges: f64,
+    /// Thermique fossile **agrégé**, renseigné quand la source ne détaille pas
+    /// gaz/charbon/fioul (cas du mix régional ODRÉ). `None` au national, où le
+    /// détail par filière est disponible (ADR-0008).
+    pub thermique: Option<f64>,
 }
 
 /// Une mesure d'intensité carbone, horodatée et géolocalisée.

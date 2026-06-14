@@ -114,6 +114,9 @@ struct MixBody {
     bioenergies: f64,
     pompage: f64,
     echanges: f64,
+    /// Thermique fossile agrégé (mix régional uniquement ; omis au national).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thermique: Option<f64>,
 }
 
 impl MixResponse {
@@ -136,6 +139,7 @@ impl MixResponse {
                 bioenergies: mix.bioenergies,
                 pompage: mix.pompage,
                 echanges: mix.echanges,
+                thermique: mix.thermique,
             },
         })
     }

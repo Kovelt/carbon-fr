@@ -18,6 +18,9 @@ pub struct EmissionFactors {
     pub eolien: f64,
     pub solaire: f64,
     pub bioenergies: f64,
+    /// Facteur du thermique fossile **agrégé** (mix régional). En v1 = facteur
+    /// du gaz, le charbon/fioul étant quasi nuls en France (ADR-0008).
+    pub thermique: f64,
 }
 
 impl EmissionFactors {
@@ -32,6 +35,7 @@ impl EmissionFactors {
             eolien: 7.3,
             solaire: 55.0,
             bioenergies: 24.0,
+            thermique: 406.0,
         }
     }
 }
@@ -44,16 +48,25 @@ pub fn acv_ademe_intensity(
     mix: &GenerationMix,
     factors: &EmissionFactors,
 ) -> Option<CarbonIntensity> {
-    let terms = [
+    // Fossile : soit le thermique agrégé (régional), soit le détail par filière
+    // (national). Les deux ne coexistent pas.
+    let fossil = match mix.thermique {
+        Some(thermique) => [(thermique, factors.thermique)].to_vec(),
+        None => vec![
+            (mix.gaz, factors.gaz),
+            (mix.charbon, factors.charbon),
+            (mix.fioul, factors.fioul),
+        ],
+    };
+
+    let mut terms = vec![
         (mix.nucleaire, factors.nucleaire),
-        (mix.gaz, factors.gaz),
-        (mix.charbon, factors.charbon),
-        (mix.fioul, factors.fioul),
         (mix.hydraulique, factors.hydraulique),
         (mix.eolien, factors.eolien),
         (mix.solaire, factors.solaire),
         (mix.bioenergies, factors.bioenergies),
     ];
+    terms.extend(fossil);
 
     let mut emissions = 0.0;
     let mut production = 0.0;
@@ -104,6 +117,7 @@ mod tests {
             bioenergies: 1006.0,
             pompage: -76.0,
             echanges: -11574.0,
+            thermique: None,
         }
     }
 
@@ -133,8 +147,35 @@ mod tests {
             bioenergies: 0.0,
             pompage: -10.0,
             echanges: 50.0,
+            thermique: None,
         };
         assert!(acv_ademe_intensity(&empty, &EmissionFactors::acv_ademe_v1()).is_none());
+    }
+
+    #[test]
+    fn regional_thermique_aggregate_is_used() {
+        // Mix régional (Bretagne) : thermique agrégé, pas de gaz/charbon/fioul.
+        let regional = GenerationMix {
+            nucleaire: 0.0,
+            gaz: 0.0,
+            charbon: 0.0,
+            fioul: 0.0,
+            hydraulique: 110.0,
+            eolien: 373.0,
+            solaire: 0.0,
+            bioenergies: 45.0,
+            pompage: 0.0,
+            echanges: 1492.0, // import massif, exclu en v1 (basée production)
+            thermique: Some(0.0),
+        };
+        let intensity = acv_ademe_intensity(&regional, &EmissionFactors::acv_ademe_v1()).unwrap();
+        // Production locale : éolien + hydraulique + bioénergies (528 MW).
+        // (373×7,3 + 110×4 + 45×24) / 528 ≈ 8,04 gCO₂eq/kWh.
+        assert!(
+            (intensity.value() - 8.04).abs() < 0.1,
+            "intensité = {}",
+            intensity.value()
+        );
     }
 
     #[test]

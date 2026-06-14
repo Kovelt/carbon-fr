@@ -3,14 +3,14 @@
 //! Adapter **sortant** : implémentation de [`Eco2mixSource`] au-dessus de l'API
 //! Explore d'[ODRÉ](https://odre.opendatasoft.com/) (jeux éCO2mix de RTE).
 //!
-//! ## Périmètre (phase 1)
+//! ## Périmètre
 //!
 //! L'éCO2mix **temps réel** ne publie le `taux_co2` (intensité carbone) qu'au
-//! niveau **national**. Le dataset régional n'expose que la production par
-//! filière, sans intensité. Cet adapter sert donc le national ; toute autre
-//! région renvoie [`SourceError::NoData`]. La couverture régionale (phase 2)
-//! demandera un **modèle** dérivant l'intensité de la production régionale —
-//! ce n'est pas une donnée de la source (cf. ARCHITECTURE §2).
+//! niveau **national** → mesures `rte-direct` nationales. Pour les **12 régions**,
+//! l'adapter lit le mix de production régional (`eco2mix-regional-tr`) et **dérive**
+//! l'intensité par la méthode `acv-ademe` (cycle de vie, ADR-0008). Le national
+//! porte donc `rte-direct` (+ `acv-ademe` dérivée par l'ingestion) ; les régions
+//! portent `acv-ademe`.
 //!
 //! Conformément au quota (ADR-0003), un **poller unique** appelle cet adapter ;
 //! l'API sert ensuite depuis la base. Le backfill historique passe par l'export
@@ -22,14 +22,17 @@ mod dto;
 use async_trait::async_trait;
 use carbonfr_core::domain::{Measurement, Region, TimeRange};
 use carbonfr_core::ports::{Eco2mixArchive, Eco2mixSource, SourceError};
+use serde::de::DeserializeOwned;
 use time::format_description::well_known::Rfc3339;
 
-use dto::{NationalRecord, RecordsResponse};
+use dto::{NationalRecord, RecordsResponse, RegionalRecord};
 
 /// URL de base de l'API Explore d'ODRÉ.
 const DEFAULT_BASE_URL: &str = "https://odre.opendatasoft.com";
 /// Dataset éCO2mix national temps réel.
 const NATIONAL_DATASET: &str = "eco2mix-national-tr";
+/// Dataset éCO2mix régional temps réel (intensité dérivée, ADR-0008).
+const REGIONAL_DATASET: &str = "eco2mix-regional-tr";
 /// Dataset éCO2mix national consolidé + définitif (historique, ADR-0003).
 const NATIONAL_ARCHIVE_DATASET: &str = "eco2mix-national-cons-def";
 /// Plafond de pagination de l'API ODS v2.1 (`offset + limit ≤ 10 000`).
@@ -72,11 +75,11 @@ impl OdreClient {
         )
     }
 
-    async fn fetch(
+    async fn fetch<T: DeserializeOwned>(
         &self,
         dataset: &str,
         query: &[(&str, String)],
-    ) -> Result<RecordsResponse, SourceError> {
+    ) -> Result<RecordsResponse<T>, SourceError> {
         let resp = self
             .http
             .get(self.records_url(dataset))
@@ -92,7 +95,7 @@ impl OdreClient {
             )));
         }
 
-        resp.json::<RecordsResponse>()
+        resp.json::<RecordsResponse<T>>()
             .await
             .map_err(|e| SourceError::Invalid(format!("réponse ODRÉ illisible : {e}")))
     }
@@ -143,13 +146,98 @@ impl OdreClient {
             .await
             .map_err(|e| SourceError::Invalid(format!("export ODRÉ illisible : {e}")))
     }
+
+    /// Filtre de facette ODRÉ ciblant une région par code INSEE.
+    fn region_refine(region: Region) -> Result<String, SourceError> {
+        let code = region.insee_code().ok_or(SourceError::NoData(region))?;
+        Ok(format!("code_insee_region:\"{code}\""))
+    }
+
+    /// Dernière mesure régionale : mix de production le plus récent, intensité
+    /// dérivée `acv-ademe` (ADR-0008).
+    async fn latest_regional(&self, region: Region) -> Result<Measurement, SourceError> {
+        let query = [
+            ("refine", Self::region_refine(region)?),
+            ("where", "consommation is not null".to_string()),
+            ("order_by", "date_heure desc".to_string()),
+            ("limit", "1".to_string()),
+        ];
+        let page = self
+            .fetch::<RegionalRecord>(REGIONAL_DATASET, &query)
+            .await?;
+        page.results
+            .into_iter()
+            .next()
+            .ok_or(SourceError::NoData(region))?
+            .into_measurement(region)
+    }
+
+    /// Série régionale sur un intervalle (API paginée). Les créneaux sans
+    /// production locale (intensité indéfinie) sont ignorés.
+    async fn range_regional(
+        &self,
+        region: Region,
+        range: TimeRange,
+    ) -> Result<Vec<Measurement>, SourceError> {
+        let refine = Self::region_refine(region)?;
+        let start = range
+            .start()
+            .format(&Rfc3339)
+            .map_err(|e| SourceError::Invalid(format!("borne de début : {e}")))?;
+        let end = range
+            .end()
+            .format(&Rfc3339)
+            .map_err(|e| SourceError::Invalid(format!("borne de fin : {e}")))?;
+        let where_clause = format!(
+            "date_heure >= '{start}' and date_heure < '{end}' and consommation is not null"
+        );
+
+        let mut measurements = Vec::new();
+        let mut offset = 0u64;
+        loop {
+            let query = [
+                ("refine", refine.clone()),
+                ("where", where_clause.clone()),
+                ("order_by", "date_heure asc".to_string()),
+                ("limit", PAGE_SIZE.to_string()),
+                ("offset", offset.to_string()),
+            ];
+            let page = self
+                .fetch::<RegionalRecord>(REGIONAL_DATASET, &query)
+                .await?;
+            let total = page.total_count;
+
+            if offset == 0 && total > API_WINDOW {
+                return Err(SourceError::Unavailable(format!(
+                    "plage de {total} points : au-delà du plafond de l'API paginée ({API_WINDOW})"
+                )));
+            }
+
+            let count = page.results.len() as u64;
+            for record in page.results {
+                match record.into_measurement(region) {
+                    Ok(measurement) => measurements.push(measurement),
+                    // Production locale nulle sur ce créneau → intensité indéfinie.
+                    Err(SourceError::NoData(_)) => {}
+                    Err(other) => return Err(other),
+                }
+            }
+            offset += count;
+
+            if count < PAGE_SIZE || offset >= total || offset >= API_WINDOW {
+                break;
+            }
+        }
+        Ok(measurements)
+    }
 }
 
 #[async_trait]
 impl Eco2mixSource for OdreClient {
     async fn latest(&self, region: Region) -> Result<Measurement, SourceError> {
+        // Régional : pas de taux_co2 publié → intensité dérivée `acv-ademe`.
         if region != Region::National {
-            return Err(SourceError::NoData(region));
+            return self.latest_regional(region).await;
         }
 
         let query = [
@@ -157,7 +245,9 @@ impl Eco2mixSource for OdreClient {
             ("order_by", "date_heure desc".to_string()),
             ("limit", "1".to_string()),
         ];
-        let page = self.fetch(NATIONAL_DATASET, &query).await?;
+        let page = self
+            .fetch::<NationalRecord>(NATIONAL_DATASET, &query)
+            .await?;
 
         page.results
             .into_iter()
@@ -172,7 +262,7 @@ impl Eco2mixSource for OdreClient {
         range: TimeRange,
     ) -> Result<Vec<Measurement>, SourceError> {
         if region != Region::National {
-            return Err(SourceError::NoData(region));
+            return self.range_regional(region, range).await;
         }
 
         let filter = Self::time_filter(range)?;
@@ -186,7 +276,9 @@ impl Eco2mixSource for OdreClient {
                 ("limit", PAGE_SIZE.to_string()),
                 ("offset", offset.to_string()),
             ];
-            let page = self.fetch(NATIONAL_DATASET, &query).await?;
+            let page = self
+                .fetch::<NationalRecord>(NATIONAL_DATASET, &query)
+                .await?;
             let total = page.total_count;
 
             // Refus explicite plutôt que troncature silencieuse : au-delà du
@@ -239,12 +331,16 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn regional_returns_no_data_without_network() {
-        // La garde régionale s'applique avant tout appel HTTP : ce test est
-        // hermétique (aucun réseau).
-        let client = OdreClient::new().expect("client");
-        let err = client.latest(Region::Bretagne).await.unwrap_err();
-        assert!(matches!(err, SourceError::NoData(Region::Bretagne)));
+    #[test]
+    fn region_refine_uses_insee_code() {
+        assert_eq!(
+            OdreClient::region_refine(Region::Bretagne).unwrap(),
+            "code_insee_region:\"53\""
+        );
+        // National n'a pas de code régional.
+        assert!(matches!(
+            OdreClient::region_refine(Region::National),
+            Err(SourceError::NoData(Region::National))
+        ));
     }
 }

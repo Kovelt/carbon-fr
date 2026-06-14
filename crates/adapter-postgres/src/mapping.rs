@@ -91,6 +91,9 @@ fn read_mix(row: &PgRow) -> Result<Option<GenerationMix>, RepositoryError> {
         get("mix_pompage")?,
         get("mix_echanges")?,
     );
+    // Thermique agrégé (régional) : colonne optionnelle, indépendante du détail
+    // par filière. Reste `None` au national.
+    let thermique = get("mix_thermique")?;
 
     Ok((|| {
         Some(GenerationMix {
@@ -104,6 +107,7 @@ fn read_mix(row: &PgRow) -> Result<Option<GenerationMix>, RepositoryError> {
             bioenergies: bioenergies?,
             pompage: pompage?,
             echanges: echanges?,
+            thermique,
         })
     })())
 }
@@ -241,6 +245,7 @@ mod tests {
             bioenergies: 0.0,
             pompage: 0.0,
             echanges: 0.0,
+            thermique: None,
         };
         assert_eq!(mix_field(&Some(mix), |m| m.nucleaire), Some(100.0));
     }

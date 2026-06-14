@@ -29,9 +29,9 @@ use mapping::{
 /// Liste des colonnes, partagée par les requêtes de lecture et d'écriture.
 const COLUMNS: &str = "region, at, methodology_id, methodology_version, intensity, vintage_rank, \
      mix_nucleaire, mix_gaz, mix_charbon, mix_fioul, mix_hydraulique, mix_eolien, \
-     mix_solaire, mix_bioenergies, mix_pompage, mix_echanges";
+     mix_solaire, mix_bioenergies, mix_pompage, mix_echanges, mix_thermique";
 
-/// Taille de paquet pour l'INSERT multi-lignes : 16 colonnes × 1000 = 16 000
+/// Taille de paquet pour l'INSERT multi-lignes : 17 colonnes × 1000 = 17 000
 /// paramètres liés, sous la limite de 65 535 de PostgreSQL.
 const UPSERT_CHUNK: usize = 1000;
 
@@ -43,7 +43,8 @@ const ON_CONFLICT_UPSERT: &str = " ON CONFLICT (region, at, methodology_id, meth
      mix_charbon = EXCLUDED.mix_charbon, mix_fioul = EXCLUDED.mix_fioul, \
      mix_hydraulique = EXCLUDED.mix_hydraulique, mix_eolien = EXCLUDED.mix_eolien, \
      mix_solaire = EXCLUDED.mix_solaire, mix_bioenergies = EXCLUDED.mix_bioenergies, \
-     mix_pompage = EXCLUDED.mix_pompage, mix_echanges = EXCLUDED.mix_echanges \
+     mix_pompage = EXCLUDED.mix_pompage, mix_echanges = EXCLUDED.mix_echanges, \
+     mix_thermique = EXCLUDED.mix_thermique \
      WHERE EXCLUDED.vintage_rank >= measurement.vintage_rank";
 
 /// Implémentation PostgreSQL du port [`IntensityRepository`].
@@ -118,7 +119,8 @@ impl IntensityRepository for PgIntensityRepository {
                     .push_bind(mix_field(&m.mix, |x| x.solaire))
                     .push_bind(mix_field(&m.mix, |x| x.bioenergies))
                     .push_bind(mix_field(&m.mix, |x| x.pompage))
-                    .push_bind(mix_field(&m.mix, |x| x.echanges));
+                    .push_bind(mix_field(&m.mix, |x| x.echanges))
+                    .push_bind(m.mix.as_ref().and_then(|x| x.thermique));
             });
             builder.push(ON_CONFLICT_UPSERT);
 

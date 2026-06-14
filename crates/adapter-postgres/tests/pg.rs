@@ -72,6 +72,7 @@ fn sample_mix() -> GenerationMix {
         bioenergies: 1006.0,
         pompage: -76.0,
         echanges: -11574.0,
+        thermique: None,
     }
 }
 

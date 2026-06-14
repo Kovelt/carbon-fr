@@ -60,6 +60,27 @@ impl Region {
         }
     }
 
+    /// Code INSEE de la région métropolitaine, ou `None` pour `National`.
+    /// Sert de clé robuste vers l'éCO2mix régional (`code_insee_region`).
+    pub fn insee_code(self) -> Option<&'static str> {
+        let code = match self {
+            Region::National => return None,
+            Region::AuvergneRhoneAlpes => "84",
+            Region::BourgogneFrancheComte => "27",
+            Region::Bretagne => "53",
+            Region::CentreValDeLoire => "24",
+            Region::GrandEst => "44",
+            Region::HautsDeFrance => "32",
+            Region::IleDeFrance => "11",
+            Region::Normandie => "28",
+            Region::NouvelleAquitaine => "75",
+            Region::Occitanie => "76",
+            Region::PaysDeLaLoire => "52",
+            Region::ProvenceAlpesCoteDazur => "93",
+        };
+        Some(code)
+    }
+
     /// Région correspondant à un [`slug`](Region::slug), ou `None` si inconnu.
     ///
     /// Réciproque de `slug()` : utilisée par les adapters pour reconstruire une

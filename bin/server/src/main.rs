@@ -60,7 +60,11 @@ async fn run_server() -> anyhow::Result<()> {
     let source = OdreClient::new().context("initialisation du client ODRÉ")?;
     let poller = spawn_poller(source, repo.clone(), config.poll_interval);
 
-    let app = router(AppState::new(repo));
+    let mut state = AppState::new(repo);
+    if let Some(salt) = config.visit_salt {
+        state = state.with_visit_salt(salt);
+    }
+    let app = router(state);
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("écoute sur {}", config.bind))?;
@@ -120,6 +124,7 @@ struct ServerConfig {
     database_url: String,
     bind: SocketAddr,
     poll_interval: std::time::Duration,
+    visit_salt: Option<String>,
 }
 
 impl ServerConfig {
@@ -143,6 +148,7 @@ impl ServerConfig {
             database_url,
             bind,
             poll_interval: std::time::Duration::from_secs(poll_secs),
+            visit_salt: std::env::var("CARBONFR_VISIT_SALT").ok(),
         })
     }
 }

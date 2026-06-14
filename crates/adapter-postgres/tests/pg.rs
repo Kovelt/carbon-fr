@@ -18,8 +18,8 @@ use carbonfr_core::domain::{
     CarbonIntensity, GenerationMix, Granularity, Measurement, Methodology, Region, TimeRange,
     Vintage,
 };
-use carbonfr_core::ports::IntensityRepository;
-use time::{Duration, OffsetDateTime};
+use carbonfr_core::ports::{IntensityRepository, VisitCounter};
+use time::{Date, Duration, Month, OffsetDateTime};
 
 /// Repository prêt (migré, lignes de `methodology` purgées), ou `None` si
 /// `DATABASE_URL` n'est pas défini (test sauté).
@@ -227,4 +227,32 @@ async fn stats_summary_and_hourly_rollup() {
             .unwrap()
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn visit_counter_dedups_per_day() {
+    // Pas de méthodologie ici, mais on réutilise setup pour migrer/connecter.
+    let Some(repo) = setup("test-pg-visit").await else {
+        return;
+    };
+    // Le compteur est global → on repart d'une table propre (aucun autre test
+    // n'écrit dans `visit`).
+    sqlx::query("DELETE FROM visit")
+        .execute(repo.pool())
+        .await
+        .expect("nettoyage visit");
+
+    let day = Date::from_calendar_date(2026, Month::June, 15).unwrap();
+
+    // Même visiteur, même jour → compté une fois.
+    repo.record_visit("hash-a", day).await.unwrap();
+    let stats = repo.record_visit("hash-a", day).await.unwrap();
+    assert_eq!(stats.unique, 1);
+    assert_eq!(stats.total, 1);
+    assert_eq!(stats.since, Some(day));
+
+    // Un autre visiteur → 2 uniques.
+    let stats = repo.record_visit("hash-b", day).await.unwrap();
+    assert_eq!(stats.unique, 2);
+    assert_eq!(stats.total, 2);
 }

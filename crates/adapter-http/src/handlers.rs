@@ -3,16 +3,20 @@
 
 use axum::Json;
 use axum::extract::{Query, State};
+use axum::http::HeaderMap;
 use carbonfr_core::application::{GetCurrentIntensity, GetIntensityHistory, GetIntensityStats};
 use carbonfr_core::domain::{Granularity, Region, TimeRange};
-use carbonfr_core::ports::IntensityRepository;
+use carbonfr_core::ports::{IntensityRepository, VisitCounter};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 use utoipa::IntoParams;
 
 use crate::AppState;
-use crate::dto::{HistoryResponse, IntensityResponse, MixResponse, StatsResponse};
+use crate::dto::{
+    HistoryResponse, IntensityResponse, MixResponse, StatsResponse, VisitStatsResponse,
+};
 use crate::error::{ApiError, ErrorBody};
 
 /// Fenêtre maximale d'une requête d'historique (protège le serveur d'une
@@ -267,6 +271,69 @@ where
         interval_label,
         buckets.as_deref(),
     )?))
+}
+
+/// Adresse IP du client, lue des en-têtes posés par le reverse proxy
+/// (`X-Forwarded-For` puis `X-Real-IP`, ADR-0007). `unknown` à défaut (accès
+/// direct sans proxy) — toutes ces visites tombent alors dans un même seau.
+fn client_ip(headers: &HeaderMap) -> String {
+    for header in ["x-forwarded-for", "x-real-ip"] {
+        if let Some(value) = headers.get(header).and_then(|v| v.to_str().ok()) {
+            let first = value.split(',').next().unwrap_or("").trim();
+            if !first.is_empty() {
+                return first.to_string();
+            }
+        }
+    }
+    "unknown".to_string()
+}
+
+/// Clé visiteur anonyme : `SHA-256(sel | ip)`. L'IP n'est jamais stockée.
+fn hash_visitor(salt: &str, ip: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(salt.as_bytes());
+    hasher.update(b"|");
+    hasher.update(ip.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// `GET /v1/stats` — statistiques de consultation.
+#[utoipa::path(
+    get,
+    path = "/v1/stats",
+    responses((status = 200, description = "Statistiques courantes", body = VisitStatsResponse)),
+    tag = "opérations"
+)]
+pub(crate) async fn visit_stats<R>(
+    State(state): State<AppState<R>>,
+) -> Result<Json<VisitStatsResponse>, ApiError>
+where
+    R: VisitCounter + Clone + Send + Sync + 'static,
+{
+    let stats = state.repo.visit_stats().await?;
+    Ok(Json((&stats).into()))
+}
+
+/// `POST /v1/stats/visit` — enregistre une visite (unique par IP/jour, IP
+/// hachée jamais stockée) et renvoie les statistiques à jour.
+#[utoipa::path(
+    post,
+    path = "/v1/stats/visit",
+    responses((status = 200, description = "Statistiques à jour", body = VisitStatsResponse)),
+    tag = "opérations"
+)]
+pub(crate) async fn record_visit<R>(
+    State(state): State<AppState<R>>,
+    headers: HeaderMap,
+) -> Result<Json<VisitStatsResponse>, ApiError>
+where
+    R: VisitCounter + Clone + Send + Sync + 'static,
+{
+    let ip = client_ip(&headers);
+    let visitor = hash_visitor(&state.visit_salt, &ip);
+    let day = OffsetDateTime::now_utc().date();
+    let stats = state.repo.record_visit(&visitor, day).await?;
+    Ok(Json((&stats).into()))
 }
 
 /// `GET /health` — sonde de disponibilité (hors contrat d'API versionné).

@@ -34,6 +34,10 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   **Swagger UI** sous `GET /docs`.
 - **Collection Bruno** versionnée (`bruno/`) couvrant tous les endpoints
   (cas nominaux national/régional × `rte-direct`/`acv-ademe`, et erreurs 400/404).
+- **Compteur de consultation** : `GET /v1/stats` + `POST /v1/stats/visit`
+  (port `VisitCounter`). IP **jamais stockée** — empreinte SHA-256 salée
+  (`CARBONFR_VISIT_SALT`), déduplication unique par IP/jour ; IP lue via
+  `X-Forwarded-For`/`X-Real-IP`.
 - **Documentation & gouvernance** : ADR 0001–0007 (+ addendum ADR-0003),
   `ARCHITECTURE.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `GOUVERNANCE.md`,
   et intégration continue GitHub Actions (fmt, clippy, tests + PostgreSQL).

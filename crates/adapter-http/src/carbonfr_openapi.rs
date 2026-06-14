@@ -30,6 +30,8 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::handlers::intensity_date,
         crate::handlers::intensity_stats,
         crate::handlers::mix,
+        crate::handlers::visit_stats,
+        crate::handlers::record_visit,
         crate::handlers::health,
     ),
     components(schemas(
@@ -37,12 +39,13 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::dto::HistoryResponse,
         crate::dto::StatsResponse,
         crate::dto::MixResponse,
+        crate::dto::VisitStatsResponse,
         crate::error::ErrorBody,
     )),
     tags(
         (name = "intensité", description = "Intensité carbone"),
         (name = "mix", description = "Mix de production"),
-        (name = "opérations", description = "Exploitation"),
+        (name = "opérations", description = "Exploitation & statistiques"),
     ),
 )]
 pub(crate) struct ApiDoc;

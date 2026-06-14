@@ -5,9 +5,11 @@
 
 use async_trait::async_trait;
 use thiserror::Error;
-use time::{Duration, OffsetDateTime};
+use time::{Date, Duration, OffsetDateTime};
 
-use crate::domain::{Granularity, IntensityStats, Measurement, Region, RollupBucket, TimeRange};
+use crate::domain::{
+    Granularity, IntensityStats, Measurement, Region, RollupBucket, TimeRange, VisitStats,
+};
 
 /// Erreur de récupération depuis une source amont (ODRÉ, ou source de secours).
 #[derive(Debug, Error)]
@@ -114,6 +116,20 @@ pub trait IntensityRepository: Send + Sync {
     /// Rafraîchit les rollups après une ingestion ou un backfill. Sans effet
     /// pour les implémentations qui agrègent à la volée.
     async fn refresh_rollups(&self) -> Result<(), RepositoryError>;
+}
+
+/// Port sortant : compteur de consultations (visiteurs).
+///
+/// Ne reçoit qu'une **clé visiteur déjà anonymisée** (hachée par l'adapter
+/// entrant) : aucune donnée personnelle ne franchit cette frontière.
+#[async_trait]
+pub trait VisitCounter: Send + Sync {
+    /// Enregistre une visite pour `day`, dédupliquée par `(visitor, day)`.
+    /// Retourne les statistiques à jour.
+    async fn record_visit(&self, visitor: &str, day: Date) -> Result<VisitStats, RepositoryError>;
+
+    /// Statistiques de consultation courantes.
+    async fn visit_stats(&self) -> Result<VisitStats, RepositoryError>;
 }
 
 /// Port sortant : modèle de prévision d'intensité carbone (phase 3).

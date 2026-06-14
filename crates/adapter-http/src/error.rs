@@ -4,6 +4,7 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use carbonfr_core::application::ApplicationError;
+use carbonfr_core::ports::RepositoryError;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -76,6 +77,12 @@ impl From<ApplicationError> for ApiError {
 
 impl From<time::error::Format> for ApiError {
     fn from(_: time::error::Format) -> Self {
+        Self::internal()
+    }
+}
+
+impl From<RepositoryError> for ApiError {
+    fn from(_: RepositoryError) -> Self {
         Self::internal()
     }
 }

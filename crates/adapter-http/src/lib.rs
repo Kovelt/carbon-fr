@@ -31,16 +31,22 @@ mod error;
 mod handlers;
 
 use axum::Router;
-use axum::routing::get;
-use carbonfr_core::ports::IntensityRepository;
+use axum::routing::{get, post};
+use carbonfr_core::ports::{IntensityRepository, VisitCounter};
 
 pub use error::ApiError;
 
-/// État partagé par les handlers : le repository et la méthodologie servie.
+/// Sel par défaut du hachage des visiteurs. **À surcharger en production**
+/// (`CARBONFR_VISIT_SALT`) : un sel secret stable empêche de retrouver une IP.
+const DEFAULT_VISIT_SALT: &str = "carbon-fr";
+
+/// État partagé par les handlers : repository, méthodologie servie, sel du
+/// compteur de visiteurs.
 #[derive(Clone)]
 pub struct AppState<R> {
     pub(crate) repo: R,
     pub(crate) methodology: String,
+    pub(crate) visit_salt: String,
 }
 
 impl<R> AppState<R> {
@@ -49,6 +55,7 @@ impl<R> AppState<R> {
         Self {
             repo,
             methodology: "rte-direct".to_string(),
+            visit_salt: DEFAULT_VISIT_SALT.to_string(),
         }
     }
 
@@ -57,18 +64,26 @@ impl<R> AppState<R> {
         self.methodology = methodology.into();
         self
     }
+
+    /// Définit le sel de hachage des visiteurs (depuis la config).
+    pub fn with_visit_salt(mut self, salt: impl Into<String>) -> Self {
+        self.visit_salt = salt.into();
+        self
+    }
 }
 
 /// Construit le routeur de l'API, prêt à être servi par `axum::serve`.
 pub fn router<R>(state: AppState<R>) -> Router
 where
-    R: IntensityRepository + Clone + Send + Sync + 'static,
+    R: IntensityRepository + VisitCounter + Clone + Send + Sync + 'static,
 {
     Router::new()
         .route("/v1/intensity/now", get(handlers::intensity_now::<R>))
         .route("/v1/intensity/date", get(handlers::intensity_date::<R>))
         .route("/v1/intensity/stats", get(handlers::intensity_stats::<R>))
         .route("/v1/mix", get(handlers::mix::<R>))
+        .route("/v1/stats", get(handlers::visit_stats::<R>))
+        .route("/v1/stats/visit", post(handlers::record_visit::<R>))
         .route("/v1/openapi.json", get(carbonfr_openapi::openapi))
         .route("/docs", get(carbonfr_openapi::swagger_ui))
         .route("/health", get(handlers::health))

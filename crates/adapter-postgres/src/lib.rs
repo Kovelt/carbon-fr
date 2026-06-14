@@ -16,11 +16,12 @@ mod mapping;
 
 use async_trait::async_trait;
 use carbonfr_core::domain::{
-    Granularity, IntensityStats, Measurement, Region, RollupBucket, TimeRange,
+    Granularity, IntensityStats, Measurement, Region, RollupBucket, TimeRange, VisitStats,
 };
-use carbonfr_core::ports::{IntensityRepository, RepositoryError};
+use carbonfr_core::ports::{IntensityRepository, RepositoryError, VisitCounter};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, QueryBuilder, Row};
+use time::Date;
 
 use mapping::{
     backend, dedup_by_key, intensity_stats, mix_field, rollup_row, row_to_measurement, vintage_rank,
@@ -259,5 +260,44 @@ impl IntensityRepository for PgIntensityRepository {
                 .map_err(|e| backend(format!("refresh {view} : {e}")))?;
         }
         Ok(())
+    }
+}
+
+#[async_trait]
+impl VisitCounter for PgIntensityRepository {
+    async fn record_visit(&self, visitor: &str, day: Date) -> Result<VisitStats, RepositoryError> {
+        sqlx::query("INSERT INTO visit (visitor_hash, day) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+            .bind(visitor)
+            .bind(day)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| backend(format!("record_visit : {e}")))?;
+        self.visit_stats().await
+    }
+
+    async fn visit_stats(&self) -> Result<VisitStats, RepositoryError> {
+        let row = sqlx::query(
+            "SELECT COUNT(DISTINCT visitor_hash) AS uniques, COUNT(*) AS total, MIN(day) AS since \
+             FROM visit",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| backend(format!("visit_stats : {e}")))?;
+
+        let uniques: i64 = row
+            .try_get("uniques")
+            .map_err(|e| backend(format!("visit_stats : {e}")))?;
+        let total: i64 = row
+            .try_get("total")
+            .map_err(|e| backend(format!("visit_stats : {e}")))?;
+        let since: Option<Date> = row
+            .try_get("since")
+            .map_err(|e| backend(format!("visit_stats : {e}")))?;
+
+        Ok(VisitStats {
+            unique: uniques.max(0) as u64,
+            total: total.max(0) as u64,
+            since,
+        })
     }
 }

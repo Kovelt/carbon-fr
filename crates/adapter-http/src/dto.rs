@@ -1,7 +1,7 @@
 //! DTO de réponse : projection du domaine en JSON (la sérialisation vit ici,
 //! jamais dans `core`). L'unité canonique est exposée explicitement.
 
-use carbonfr_core::domain::{GenerationMix, IntensityStats, Measurement, RollupBucket};
+use carbonfr_core::domain::{GenerationMix, IntensityStats, Measurement, RollupBucket, VisitStats};
 use serde::Serialize;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -143,6 +143,28 @@ impl MixResponse {
                 thermique: mix.thermique,
             },
         })
+    }
+}
+
+/// Réponse de `GET /v1/stats` et `POST /v1/stats/visit` : compteur de visiteurs.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct VisitStatsResponse {
+    /// Visiteurs uniques (clés distinctes).
+    unique: u64,
+    /// Visiteur-jours cumulés.
+    total: u64,
+    /// Premier jour comptabilisé (ISO `YYYY-MM-DD`), absent si aucun.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    since: Option<String>,
+}
+
+impl From<&VisitStats> for VisitStatsResponse {
+    fn from(stats: &VisitStats) -> Self {
+        Self {
+            unique: stats.unique,
+            total: stats.total,
+            since: stats.since.map(|day| day.to_string()),
+        }
     }
 }
 

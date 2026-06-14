@@ -42,6 +42,8 @@ Tous les endpoints `/v1` acceptent `?region=<slug>` (national par défaut) et `?
 
 La spécification **OpenAPI 3.1** (dérivée du code via `utoipa`) est servie sous **`GET /v1/openapi.json`**, et une **Swagger UI** sous **`GET /docs`**. Une collection **[Bruno](https://www.usebruno.com/)** versionnée (dossier [`bruno/`](bruno/)) couvre tous les endpoints (cas nominaux + erreurs).
 
+Un compteur de consultation sobre est exposé (**`GET /v1/stats`**, **`POST /v1/stats/visit`**) : l'IP n'est **jamais** stockée — seule une empreinte **SHA-256 salée** sert à dédupliquer (unique par IP/jour), RGPD-friendly.
+
 > Couverture **National + 12 régions métropolitaines**. Le `taux_co2` publié par RTE (`rte-direct`) n'existe qu'au national ; l'intensité **régionale** est dérivée via `acv-ademe` (cycle de vie appliqué au mix régional, ADR-0008). `acv-ademe@1` est **basée production** (l'intensité régionale reflète la production locale, pas les imports — version consommation à venir).
 
 ## Architecture
@@ -71,11 +73,12 @@ carbon-fr/
 ├── Cargo.toml                  # workspace Cargo
 ├── crates/
 │   ├── core/                   # ✅ domaine + cas d'usage + ports (lib PURE, zéro IO)
-│   ├── adapter-odre/           # 📅 impl Eco2mixSource (HTTP → ODRÉ)
-│   ├── adapter-postgres/       # 📅 impl IntensityRepository (sqlx)
-│   └── adapter-http/           # 📅 API axum (adapter entrant)
+│   ├── adapter-odre/           # ✅ impl Eco2mixSource/Eco2mixArchive (ODRÉ)
+│   ├── adapter-postgres/       # ✅ impl IntensityRepository + VisitCounter (sqlx)
+│   └── adapter-http/           # ✅ API axum + OpenAPI (adapter entrant)
 ├── bin/
-│   └── server/                 # 📅 composition root : câble les adapters
+│   └── server/                 # ✅ composition root : adapters + poller
+├── bruno/                      # collection Bruno (requêtes .bru versionnées)
 └── docs/
     ├── ARCHITECTURE.md
     └── adr/                    # Architecture Decision Records

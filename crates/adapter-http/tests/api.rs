@@ -1,23 +1,28 @@
 //! Tests d'intégration de l'API : routeur monté sur un repository *fake* en
 //! mémoire, requêtes envoyées via `tower::ServiceExt::oneshot` (sans réseau).
 
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
+
 use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use carbonfr_adapter_http::{AppState, router};
 use carbonfr_core::domain::{
     CarbonIntensity, GenerationMix, Granularity, IntensityStats, Measurement, Methodology, Region,
-    RollupBucket, TimeRange, Vintage,
+    RollupBucket, TimeRange, Vintage, VisitStats,
 };
-use carbonfr_core::ports::{IntensityRepository, RepositoryError};
-use time::{Duration, OffsetDateTime};
+use carbonfr_core::ports::{IntensityRepository, RepositoryError, VisitCounter};
+use time::{Date, Duration, OffsetDateTime};
 use tower::ServiceExt;
 
-/// Repository minimal : une mesure « courante » et une série pour les plages.
+/// Repository minimal : une mesure « courante », une série pour les plages, et
+/// un compteur de visites en mémoire.
 #[derive(Clone, Default)]
 struct FakeRepo {
     measurement: Option<Measurement>,
     series: Vec<Measurement>,
+    visits: Arc<Mutex<HashSet<(String, Date)>>>,
 }
 
 #[async_trait]
@@ -106,6 +111,28 @@ impl IntensityRepository for FakeRepo {
     }
 }
 
+#[async_trait]
+impl VisitCounter for FakeRepo {
+    async fn record_visit(&self, visitor: &str, day: Date) -> Result<VisitStats, RepositoryError> {
+        self.visits
+            .lock()
+            .unwrap()
+            .insert((visitor.to_string(), day));
+        self.visit_stats().await
+    }
+
+    async fn visit_stats(&self) -> Result<VisitStats, RepositoryError> {
+        let visits = self.visits.lock().unwrap();
+        let unique: HashSet<&String> = visits.iter().map(|(v, _)| v).collect();
+        let since = visits.iter().map(|(_, d)| *d).min();
+        Ok(VisitStats {
+            unique: unique.len() as u64,
+            total: visits.len() as u64,
+            since,
+        })
+    }
+}
+
 fn stats_of(values: &[f64]) -> Option<IntensityStats> {
     if values.is_empty() {
         return None;
@@ -153,6 +180,7 @@ fn app(measurement: Option<Measurement>) -> axum::Router {
     router(AppState::new(FakeRepo {
         measurement,
         series: Vec::new(),
+        visits: Arc::default(),
     }))
 }
 
@@ -160,6 +188,7 @@ fn app_with_series(series: Vec<Measurement>) -> axum::Router {
     router(AppState::new(FakeRepo {
         measurement: None,
         series,
+        visits: Arc::default(),
     }))
 }
 
@@ -382,4 +411,40 @@ async fn stats_bad_interval_is_400() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn visit_counter_records_and_reports() {
+    let app = app(None);
+
+    // Enregistre une visite (IP via X-Forwarded-For).
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/v1/stats/visit")
+                .header("x-forwarded-for", "203.0.113.7")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["unique"], 1);
+    assert_eq!(body["total"], 1);
+
+    // Une 2ᵉ visite de la même IP le même jour ne compte pas deux fois.
+    app.clone()
+        .oneshot(
+            Request::post("/v1/stats/visit")
+                .header("x-forwarded-for", "203.0.113.7")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let body = json_body(get(app, "/v1/stats").await).await;
+    assert_eq!(body["unique"], 1);
+    assert_eq!(body["total"], 1);
 }

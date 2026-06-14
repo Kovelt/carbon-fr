@@ -13,6 +13,7 @@ axum = { workspace = true }
 serde = { workspace = true }
 time = { workspace = true, features = ["formatting", "parsing"] }
 utoipa = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

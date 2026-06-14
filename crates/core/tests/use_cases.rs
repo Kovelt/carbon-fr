@@ -9,12 +9,15 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use time::{Duration, OffsetDateTime};
 
-use carbonfr_core::application::{FindGreenestWindow, GetCurrentIntensity, IngestLatest};
+use carbonfr_core::application::{
+    BackfillHistory, FindGreenestWindow, GetCurrentIntensity, IngestLatest,
+};
 use carbonfr_core::domain::{
     CarbonIntensity, Measurement, MeasurementKey, Methodology, Region, TimeRange, Vintage,
 };
 use carbonfr_core::ports::{
-    Eco2mixSource, ForecastError, ForecastModel, IntensityRepository, RepositoryError, SourceError,
+    Eco2mixArchive, Eco2mixSource, ForecastError, ForecastModel, IntensityRepository,
+    RepositoryError, SourceError,
 };
 
 fn measurement(at: OffsetDateTime, region: Region, g: f64, vintage: Vintage) -> Measurement {
@@ -224,4 +227,61 @@ async fn find_greenest_window_uses_forecast() {
 
     assert_eq!(window.start, t0 + step * 2);
     assert!(window.average.value() < 18.0);
+}
+
+/// Export de masse simulé : rend une mesure à pas `step` couvrant l'intervalle
+/// demandé, et enregistre les bornes de chaque tranche reçue.
+#[derive(Clone, Default)]
+struct FakeArchive {
+    step: Duration,
+    ranges: Arc<Mutex<Vec<TimeRange>>>,
+}
+
+#[async_trait]
+impl Eco2mixArchive for FakeArchive {
+    async fn export_national(&self, range: TimeRange) -> Result<Vec<Measurement>, SourceError> {
+        self.ranges.lock().unwrap().push(range);
+        let mut out = Vec::new();
+        let mut t = range.start();
+        while t < range.end() {
+            out.push(measurement(t, Region::National, 30.0, Vintage::Definitive));
+            t += self.step;
+        }
+        Ok(out)
+    }
+}
+
+#[tokio::test]
+async fn backfill_slices_range_and_upserts_each_window() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let repo = InMemoryRepo::default();
+    let archive = FakeArchive {
+        step: Duration::hours(1),
+        ranges: Arc::default(),
+    };
+
+    // 24 h découpées en tranches de 6 h → 4 tranches, 6 mesures chacune.
+    let backfill = BackfillHistory::new(archive.clone(), repo.clone(), Duration::hours(6));
+    let range = TimeRange::new(t0, t0 + Duration::hours(24)).unwrap();
+    let report = backfill.execute(range).await.unwrap();
+
+    assert_eq!(report.windows, 4);
+    assert_eq!(report.read, 24);
+    assert_eq!(report.written, 24);
+
+    // Les tranches couvrent l'intervalle sans trou ni chevauchement.
+    let (count, first_start, last_end) = {
+        let ranges = archive.ranges.lock().unwrap();
+        (ranges.len(), ranges[0].start(), ranges[3].end())
+    };
+    assert_eq!(count, 4);
+    assert_eq!(first_start, t0);
+    assert_eq!(last_end, t0 + Duration::hours(24));
+
+    // La donnée a bien atterri dans le repository.
+    let stored = repo
+        .range(Region::National, "rte-direct", range)
+        .await
+        .unwrap();
+    assert_eq!(stored.len(), 24);
 }

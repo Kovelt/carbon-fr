@@ -4,10 +4,12 @@
 //! statique, zéro coût) et orchestre le domaine. Aucune IO concrète ici : les
 //! adapters fournissent les implémentations des ports (ADR-0002).
 
+mod backfill;
 mod find_greenest_window;
 mod get_current;
 mod ingest_latest;
 
+pub use backfill::{BackfillHistory, BackfillReport};
 pub use find_greenest_window::FindGreenestWindow;
 pub use get_current::GetCurrentIntensity;
 pub use ingest_latest::IngestLatest;

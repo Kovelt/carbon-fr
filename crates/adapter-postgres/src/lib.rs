@@ -17,15 +17,30 @@ mod mapping;
 use async_trait::async_trait;
 use carbonfr_core::domain::{Measurement, Region, TimeRange};
 use carbonfr_core::ports::{IntensityRepository, RepositoryError};
-use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
+use sqlx::{PgPool, QueryBuilder};
 
-use mapping::{backend, mix_field, row_to_measurement, vintage_rank};
+use mapping::{backend, dedup_by_key, mix_field, row_to_measurement, vintage_rank};
 
-/// Liste des colonnes, partagée par les requêtes de lecture.
+/// Liste des colonnes, partagée par les requêtes de lecture et d'écriture.
 const COLUMNS: &str = "region, at, methodology_id, methodology_version, intensity, vintage_rank, \
      mix_nucleaire, mix_gaz, mix_charbon, mix_fioul, mix_hydraulique, mix_eolien, \
      mix_solaire, mix_bioenergies, mix_pompage, mix_echanges";
+
+/// Taille de paquet pour l'INSERT multi-lignes : 16 colonnes × 1000 = 16 000
+/// paramètres liés, sous la limite de 65 535 de PostgreSQL.
+const UPSERT_CHUNK: usize = 1000;
+
+/// Clause d'upsert conditionnel au millésime (ADR-0006), appliquée par ligne :
+/// on n'écrase que par une qualité de millésime supérieure ou égale.
+const ON_CONFLICT_UPSERT: &str = " ON CONFLICT (region, at, methodology_id, methodology_version) DO UPDATE SET \
+     intensity = EXCLUDED.intensity, vintage_rank = EXCLUDED.vintage_rank, \
+     mix_nucleaire = EXCLUDED.mix_nucleaire, mix_gaz = EXCLUDED.mix_gaz, \
+     mix_charbon = EXCLUDED.mix_charbon, mix_fioul = EXCLUDED.mix_fioul, \
+     mix_hydraulique = EXCLUDED.mix_hydraulique, mix_eolien = EXCLUDED.mix_eolien, \
+     mix_solaire = EXCLUDED.mix_solaire, mix_bioenergies = EXCLUDED.mix_bioenergies, \
+     mix_pompage = EXCLUDED.mix_pompage, mix_echanges = EXCLUDED.mix_echanges \
+     WHERE EXCLUDED.vintage_rank >= measurement.vintage_rank";
 
 /// Implémentation PostgreSQL du port [`IntensityRepository`].
 #[derive(Clone)]
@@ -67,28 +82,12 @@ impl PgIntensityRepository {
 #[async_trait]
 impl IntensityRepository for PgIntensityRepository {
     async fn upsert_many(&self, measurements: &[Measurement]) -> Result<usize, RepositoryError> {
-        if measurements.is_empty() {
+        // Dédup par clé : une même ligne ne peut être affectée deux fois dans
+        // un seul INSERT ... ON CONFLICT (sinon PostgreSQL refuse).
+        let deduped = dedup_by_key(measurements);
+        if deduped.is_empty() {
             return Ok(0);
         }
-
-        let sql = format!(
-            "INSERT INTO measurement ({COLUMNS}) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) \
-             ON CONFLICT (region, at, methodology_id, methodology_version) DO UPDATE SET \
-                 intensity = EXCLUDED.intensity, \
-                 vintage_rank = EXCLUDED.vintage_rank, \
-                 mix_nucleaire = EXCLUDED.mix_nucleaire, \
-                 mix_gaz = EXCLUDED.mix_gaz, \
-                 mix_charbon = EXCLUDED.mix_charbon, \
-                 mix_fioul = EXCLUDED.mix_fioul, \
-                 mix_hydraulique = EXCLUDED.mix_hydraulique, \
-                 mix_eolien = EXCLUDED.mix_eolien, \
-                 mix_solaire = EXCLUDED.mix_solaire, \
-                 mix_bioenergies = EXCLUDED.mix_bioenergies, \
-                 mix_pompage = EXCLUDED.mix_pompage, \
-                 mix_echanges = EXCLUDED.mix_echanges \
-             WHERE EXCLUDED.vintage_rank >= measurement.vintage_rank"
-        );
 
         let mut tx = self
             .pool
@@ -97,24 +96,30 @@ impl IntensityRepository for PgIntensityRepository {
             .map_err(|e| backend(format!("ouverture de transaction : {e}")))?;
 
         let mut written = 0usize;
-        for m in measurements {
-            let result = sqlx::query(&sql)
-                .bind(m.region.slug())
-                .bind(m.at)
-                .bind(m.methodology.id.as_str())
-                .bind(m.methodology.version as i32)
-                .bind(m.intensity.value())
-                .bind(vintage_rank(m.vintage))
-                .bind(mix_field(&m.mix, |x| x.nucleaire))
-                .bind(mix_field(&m.mix, |x| x.gaz))
-                .bind(mix_field(&m.mix, |x| x.charbon))
-                .bind(mix_field(&m.mix, |x| x.fioul))
-                .bind(mix_field(&m.mix, |x| x.hydraulique))
-                .bind(mix_field(&m.mix, |x| x.eolien))
-                .bind(mix_field(&m.mix, |x| x.solaire))
-                .bind(mix_field(&m.mix, |x| x.bioenergies))
-                .bind(mix_field(&m.mix, |x| x.pompage))
-                .bind(mix_field(&m.mix, |x| x.echanges))
+        for chunk in deduped.chunks(UPSERT_CHUNK) {
+            let mut builder = QueryBuilder::new(format!("INSERT INTO measurement ({COLUMNS}) "));
+            builder.push_values(chunk.iter().copied(), |mut row, m| {
+                row.push_bind(m.region.slug())
+                    .push_bind(m.at)
+                    .push_bind(m.methodology.id.as_str())
+                    .push_bind(m.methodology.version as i32)
+                    .push_bind(m.intensity.value())
+                    .push_bind(vintage_rank(m.vintage))
+                    .push_bind(mix_field(&m.mix, |x| x.nucleaire))
+                    .push_bind(mix_field(&m.mix, |x| x.gaz))
+                    .push_bind(mix_field(&m.mix, |x| x.charbon))
+                    .push_bind(mix_field(&m.mix, |x| x.fioul))
+                    .push_bind(mix_field(&m.mix, |x| x.hydraulique))
+                    .push_bind(mix_field(&m.mix, |x| x.eolien))
+                    .push_bind(mix_field(&m.mix, |x| x.solaire))
+                    .push_bind(mix_field(&m.mix, |x| x.bioenergies))
+                    .push_bind(mix_field(&m.mix, |x| x.pompage))
+                    .push_bind(mix_field(&m.mix, |x| x.echanges));
+            });
+            builder.push(ON_CONFLICT_UPSERT);
+
+            let result = builder
+                .build()
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| backend(format!("upsert : {e}")))?;

@@ -21,15 +21,17 @@ mod dto;
 
 use async_trait::async_trait;
 use carbonfr_core::domain::{Measurement, Region, TimeRange};
-use carbonfr_core::ports::{Eco2mixSource, SourceError};
+use carbonfr_core::ports::{Eco2mixArchive, Eco2mixSource, SourceError};
 use time::format_description::well_known::Rfc3339;
 
-use dto::RecordsResponse;
+use dto::{NationalRecord, RecordsResponse};
 
 /// URL de base de l'API Explore d'ODRÉ.
 const DEFAULT_BASE_URL: &str = "https://odre.opendatasoft.com";
 /// Dataset éCO2mix national temps réel.
 const NATIONAL_DATASET: &str = "eco2mix-national-tr";
+/// Dataset éCO2mix national consolidé + définitif (historique, ADR-0003).
+const NATIONAL_ARCHIVE_DATASET: &str = "eco2mix-national-cons-def";
 /// Plafond de pagination de l'API ODS v2.1 (`offset + limit ≤ 10 000`).
 const API_WINDOW: u64 = 10_000;
 /// Taille de page (maximum autorisé par l'API `records`).
@@ -94,6 +96,53 @@ impl OdreClient {
             .await
             .map_err(|e| SourceError::Invalid(format!("réponse ODRÉ illisible : {e}")))
     }
+
+    /// Filtre ODSQL `date_heure ∈ [start, end)` restreint aux mesures portant un
+    /// `taux_co2`.
+    fn time_filter(range: TimeRange) -> Result<String, SourceError> {
+        let start = range
+            .start()
+            .format(&Rfc3339)
+            .map_err(|e| SourceError::Invalid(format!("borne de début : {e}")))?;
+        let end = range
+            .end()
+            .format(&Rfc3339)
+            .map_err(|e| SourceError::Invalid(format!("borne de fin : {e}")))?;
+        Ok(format!(
+            "date_heure >= '{start}' and date_heure < '{end}' and taux_co2 is not null"
+        ))
+    }
+
+    /// Export de masse (un téléchargement) : l'endpoint `exports/json` renvoie un
+    /// tableau JSON de tous les enregistrements filtrés, sans plafond paginé.
+    async fn fetch_export(
+        &self,
+        dataset: &str,
+        filter: &str,
+    ) -> Result<Vec<NationalRecord>, SourceError> {
+        let url = format!(
+            "{}/api/explore/v2.1/catalog/datasets/{dataset}/exports/json",
+            self.base_url.trim_end_matches('/')
+        );
+        let resp = self
+            .http
+            .get(url)
+            .query(&[("where", filter)])
+            .send()
+            .await
+            .map_err(|e| SourceError::Unavailable(format!("export ODRÉ : {e}")))?;
+
+        if !resp.status().is_success() {
+            return Err(SourceError::Unavailable(format!(
+                "ODRÉ (export) a répondu {}",
+                resp.status()
+            )));
+        }
+
+        resp.json::<Vec<NationalRecord>>()
+            .await
+            .map_err(|e| SourceError::Invalid(format!("export ODRÉ illisible : {e}")))
+    }
 }
 
 #[async_trait]
@@ -126,16 +175,7 @@ impl Eco2mixSource for OdreClient {
             return Err(SourceError::NoData(region));
         }
 
-        let start = range
-            .start()
-            .format(&Rfc3339)
-            .map_err(|e| SourceError::Invalid(format!("borne de début : {e}")))?;
-        let end = range
-            .end()
-            .format(&Rfc3339)
-            .map_err(|e| SourceError::Invalid(format!("borne de fin : {e}")))?;
-        let filter =
-            format!("date_heure >= '{start}' and date_heure < '{end}' and taux_co2 is not null");
+        let filter = Self::time_filter(range)?;
 
         let mut measurements = Vec::new();
         let mut offset = 0u64;
@@ -170,6 +210,19 @@ impl Eco2mixSource for OdreClient {
         }
 
         Ok(measurements)
+    }
+}
+
+#[async_trait]
+impl Eco2mixArchive for OdreClient {
+    async fn export_national(&self, range: TimeRange) -> Result<Vec<Measurement>, SourceError> {
+        let filter = Self::time_filter(range)?;
+        let records = self.fetch_export(NATIONAL_ARCHIVE_DATASET, &filter).await?;
+        // L'export n'est pas trié ; le tri est garanti à la lecture (repository).
+        records
+            .into_iter()
+            .map(NationalRecord::into_measurement)
+            .collect()
     }
 }
 

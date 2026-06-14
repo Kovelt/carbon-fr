@@ -43,12 +43,26 @@ pub trait Eco2mixSource: Send + Sync {
     /// Dernière mesure disponible pour une région.
     async fn latest(&self, region: Region) -> Result<Measurement, SourceError>;
 
-    /// Mesures sur un intervalle (utilisé pour le backfill historique).
+    /// Mesures sur un intervalle restreint (API paginée — pour le rattrapage de
+    /// courts trous, pas le backfill historique massif : voir [`Eco2mixArchive`]).
     async fn range(
         &self,
         region: Region,
         range: TimeRange,
     ) -> Result<Vec<Measurement>, SourceError>;
+}
+
+/// Port sortant : export de masse de l'historique (ADR-0003).
+///
+/// Distinct d'[`Eco2mixSource`] : l'historique se rapatrie par **un
+/// téléchargement** (export du jeu consolidé/définitif), jamais en parcourant
+/// l'API paginée — qui brûlerait le quota. Le découpage temporel de la requête
+/// est porté par l'appelant (le cas d'usage de backfill), pour borner la taille
+/// de chaque export.
+#[async_trait]
+pub trait Eco2mixArchive: Send + Sync {
+    /// Mesures nationales historiques sur `range`, obtenues par export de masse.
+    async fn export_national(&self, range: TimeRange) -> Result<Vec<Measurement>, SourceError>;
 }
 
 /// Port sortant : persistance des mesures (read-model + historique).

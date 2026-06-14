@@ -3,8 +3,10 @@
 //! L'encodage de stockage (rang de millésime, colonnes de mix) est une
 //! préoccupation d'adapter : il vit ici, jamais dans `core`.
 
+use std::collections::HashMap;
+
 use carbonfr_core::domain::{
-    CarbonIntensity, GenerationMix, Measurement, Methodology, Region, Vintage,
+    CarbonIntensity, GenerationMix, Measurement, MeasurementKey, Methodology, Region, Vintage,
 };
 use carbonfr_core::ports::RepositoryError;
 use sqlx::Row;
@@ -36,6 +38,28 @@ fn vintage_from_rank(rank: i16) -> Result<Vintage, RepositoryError> {
             "rang de millésime inconnu en base : {other}"
         ))),
     }
+}
+
+/// Déduplique par clé `(region, at, methodology)` en conservant la **meilleure
+/// qualité de millésime**. Indispensable avant un INSERT multi-lignes :
+/// PostgreSQL refuse qu'un même `ON CONFLICT` affecte deux fois la même ligne.
+///
+/// L'ordre d'origine des survivants est préservé (déterminisme).
+pub(crate) fn dedup_by_key(measurements: &[Measurement]) -> Vec<&Measurement> {
+    let mut best: HashMap<MeasurementKey, usize> = HashMap::with_capacity(measurements.len());
+    for (index, measurement) in measurements.iter().enumerate() {
+        match best.get(&measurement.key()) {
+            Some(&kept)
+                if vintage_rank(measurements[kept].vintage)
+                    >= vintage_rank(measurement.vintage) => {}
+            _ => {
+                best.insert(measurement.key(), index);
+            }
+        }
+    }
+    let mut kept: Vec<usize> = best.into_values().collect();
+    kept.sort_unstable();
+    kept.into_iter().map(|index| &measurements[index]).collect()
 }
 
 /// Valeur d'un champ de mix à lier, ou `None` si la mesure n'a pas de mix.
@@ -138,6 +162,34 @@ mod tests {
     #[test]
     fn unknown_rank_is_rejected() {
         assert!(vintage_from_rank(7).is_err());
+    }
+
+    #[test]
+    fn dedup_keeps_best_vintage_per_key() {
+        use time::OffsetDateTime;
+
+        let at = OffsetDateTime::UNIX_EPOCH;
+        let make = |g: f64, vintage: Vintage| Measurement {
+            at,
+            region: Region::National,
+            intensity: CarbonIntensity::new(g).unwrap(),
+            methodology: Methodology::rte_direct(),
+            vintage,
+            mix: None,
+        };
+        // Même clé (region, at, methodology) → un seul survivant, le meilleur.
+        let input = [make(50.0, Vintage::Tr), make(40.0, Vintage::Consolidated)];
+        let kept = dedup_by_key(&input);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].vintage, Vintage::Consolidated);
+
+        // Clés distinctes (méthodologies différentes) → tout est conservé.
+        let other = Measurement {
+            methodology: Methodology::new("acv-ademe", 1),
+            ..make(10.0, Vintage::Tr)
+        };
+        let input = [make(50.0, Vintage::Tr), other];
+        assert_eq!(dedup_by_key(&input).len(), 2);
     }
 
     #[test]

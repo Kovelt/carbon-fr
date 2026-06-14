@@ -2,6 +2,8 @@
 
 Merci de l'intérêt porté au projet. `carbon-fr` est une API d'intensité carbone française **souveraine, open source et dev-first**. Ces quelques règles visent à garder le code sain, l'architecture nette et les décisions traçables.
 
+En participant, tu acceptes de respecter notre [Code de conduite](CODE_OF_CONDUCT.md).
+
 ## Avant de coder
 
 - **Ouvre d'abord une issue** pour discuter de l'idée (bug, fonctionnalité, refactor). On évite ainsi le travail perdu.

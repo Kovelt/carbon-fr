@@ -99,6 +99,7 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 - ADR-0006 (cycle de vie & révision) — **Accepté** : millésime `tr`/`consolidated`/`definitive`, upsert conditionnel sur `(region, horodatage, methodology)`.
 - ADR-0007 (déploiement) — **Accepté** : API sur VPS FR/EU (PostgreSQL co-localisé), site statique sur o2switch, sous-domaine Kovelt, API versionnée `/v1`.
 - ADR-0008 (méthodologie `acv-ademe` & régional) — **Accepté** : intensité cycle de vie (facteurs ADEME × mix), `acv-ademe@1` basée production (imports = v2), dérivée à l'ingestion, sélectionnable via `?methodology=`. Base du futur régional.
+- ADR-0009 (modèle de prévision) — **Accepté** : `climatology@1` = climatologie horaire-de-semaine glissante (`N` semaines) + correction de persistance décroissante (`τ`). Modèle pur/explicable, sans dépendance externe, alimenté par le backfill ; prévisions **non persistées** (calculées à la lecture). Versionné comme la méthodologie (jamais de modif silencieuse). Évolution engagée : `forecast@2` dérivé des prévisions RTE J-1, même port.
 
 ## État d'avancement
 
@@ -109,7 +110,11 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
   - [x] endpoint de lecture d'historique `/v1/intensity/date?from=&to=` (cas d'usage `GetIntensityHistory`, fenêtre ≤ 366 j).
   - [x] rollups (vues matérialisées horaire/journalier) + `/v1/intensity/stats` (résumé exact sur `measurement` + série depuis les rollups ; rafraîchis par poller & backfill).
   - [x] **méthodologie `acv-ademe`** (cycle de vie, ADR-0008) : définie + dérivée/stockée à l'ingestion + `?methodology=`. **National** (dérivé du mix complet) **et 12 régions** (mix régional `eco2mix-regional-*`, `thermique` agrégé → facteur gaz). `rte-direct` reste national.
-- [ ] Phase 3 — prévision.
+- [ ] Phase 3 — prévision :
+  - [x] **ADR-0009** — modèle `climatology@1` (climatologie horaire-de-semaine glissante + correction de persistance décroissante). Pur, explicable, sans dépendance externe, alimenté par le backfill. Prévisions **non persistées** (calculées à la lecture, ADR-0006 intacte). Endpoints `/v1/intensity/forecast` et `/v1/intensity/greenest-window`.
+  - [ ] fonction pure de domaine + adapter `ForecastModel` (lit l'historique via `IntensityRepository`).
+  - [ ] handlers `/v1` + DTO (marqueur prévision + id de modèle) + OpenAPI/Bruno.
+  - [ ] backtest held-out publiant l'erreur (MAE/RMSE).
 
 ### Repères d'implémentation (phases 1-2)
 

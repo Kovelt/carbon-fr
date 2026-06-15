@@ -18,6 +18,7 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0006](0006-cycle-de-vie-revision-donnees.md) | Cycle de vie & révision des données (millésime + upsert) | Accepté |
 | [0007](0007-topologie-deploiement.md) | Topologie de déploiement (API VPS, site statique, sous-domaine Kovelt) | Accepté |
 | [0008](0008-methodologie-acv-ademe-et-regional.md) | Méthodologie cycle de vie (`acv-ademe`) & intensité régionale | Accepté |
+| [0009](0009-modele-prevision-climatologie.md) | Modèle de prévision d'intensité (`climatology@1`) | Accepté |
 
 ## Gabarit
 

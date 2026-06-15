@@ -22,11 +22,12 @@
 use std::net::SocketAddr;
 
 use anyhow::Context;
-use carbonfr_adapter_http::{AppState, router};
+use carbonfr_adapter_forecast::ClimatologyForecaster;
+use carbonfr_adapter_http::{AppState, ForecastState, router};
 use carbonfr_adapter_odre::OdreClient;
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_core::application::{BackfillHistory, IngestLatest};
-use carbonfr_core::domain::{Region, TimeRange};
+use carbonfr_core::domain::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, Region, TimeRange};
 use carbonfr_core::ports::{Eco2mixSource, IntensityRepository};
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, Month, OffsetDateTime};
@@ -60,11 +61,17 @@ async fn run_server() -> anyhow::Result<()> {
     let source = OdreClient::new().context("initialisation du client ODRÉ")?;
     let poller = spawn_poller(source, repo.clone(), config.poll_interval);
 
+    // Prévision (ADR-0009) : modèle climatology@1 alimenté par le même
+    // repository. Son identité versionnée est annoncée au client.
+    let forecaster = ClimatologyForecaster::new(repo.clone());
+    let model = format!("{CLIMATOLOGY_ID}@{CLIMATOLOGY_VERSION}");
+    let forecast_state = ForecastState::new(forecaster, model);
+
     let mut state = AppState::new(repo);
     if let Some(salt) = config.visit_salt {
         state = state.with_visit_salt(salt);
     }
-    let app = router(state);
+    let app = router(state, forecast_state);
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("écoute sur {}", config.bind))?;

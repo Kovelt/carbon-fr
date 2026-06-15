@@ -18,6 +18,10 @@
 //! - `GET /v1/intensity/stats?from=&to=[&interval=hour|day]` — résumé
 //!   (moyenne/min/max) et, optionnellement, série agrégée (rollups).
 //! - `GET /v1/mix` — mix de production (MW par filière).
+//! - `GET /v1/intensity/forecast?from=&horizon_hours=` — intensité **prévue**
+//!   sur l'horizon (modèle `climatology@1`, ADR-0009).
+//! - `GET /v1/intensity/greenest-window?from=&horizon_hours=&window_minutes=` —
+//!   créneau le plus bas-carbone à venir.
 //! - `GET /v1/openapi.json` — spécification OpenAPI 3.1 ; `GET /docs` — Swagger UI.
 //! - `GET /health` — sonde de disponibilité.
 //!
@@ -32,7 +36,7 @@ mod handlers;
 
 use axum::Router;
 use axum::routing::{get, post};
-use carbonfr_core::ports::{IntensityRepository, VisitCounter};
+use carbonfr_core::ports::{ForecastModel, IntensityRepository, VisitCounter};
 
 pub use error::ApiError;
 
@@ -72,12 +76,49 @@ impl<R> AppState<R> {
     }
 }
 
+/// État des endpoints de **prévision** (ADR-0009), distinct de [`AppState`] : il
+/// porte un modèle [`ForecastModel`] (le port, injecté par la composition root —
+/// l'adapter HTTP ignore l'implémentation concrète) plutôt que le repository.
+///
+/// `model` est l'identité versionnée annoncée au client (ex. `climatology@1`) ;
+/// `methodology` est la méthodologie servie par défaut.
+#[derive(Clone)]
+pub struct ForecastState<F> {
+    pub(crate) forecaster: F,
+    pub(crate) model: String,
+    pub(crate) methodology: String,
+}
+
+impl<F> ForecastState<F> {
+    /// Crée l'état avec un modèle (son identité versionnée) et la méthodologie
+    /// par défaut (`rte-direct`).
+    pub fn new(forecaster: F, model: impl Into<String>) -> Self {
+        Self {
+            forecaster,
+            model: model.into(),
+            methodology: "rte-direct".to_string(),
+        }
+    }
+
+    /// Sélectionne une autre méthodologie servie par défaut.
+    pub fn with_methodology(mut self, methodology: impl Into<String>) -> Self {
+        self.methodology = methodology.into();
+        self
+    }
+}
+
 /// Construit le routeur de l'API, prêt à être servi par `axum::serve`.
-pub fn router<R>(state: AppState<R>) -> Router
+///
+/// Les routes de lecture/écriture partagent [`AppState`] (le repository) ; les
+/// routes de **prévision** ont leur propre [`ForecastState`] (un
+/// [`ForecastModel`]). Deux sous-routeurs, chacun avec son état, **fusionnés**
+/// (`merge`) — ce qui évite d'imposer le type du modèle aux handlers existants.
+pub fn router<R, F>(state: AppState<R>, forecast: ForecastState<F>) -> Router
 where
     R: IntensityRepository + VisitCounter + Clone + Send + Sync + 'static,
+    F: ForecastModel + Clone + Send + Sync + 'static,
 {
-    Router::new()
+    let core = Router::new()
         .route("/v1/intensity/now", get(handlers::intensity_now::<R>))
         .route("/v1/intensity/date", get(handlers::intensity_date::<R>))
         .route("/v1/intensity/stats", get(handlers::intensity_stats::<R>))
@@ -87,5 +128,15 @@ where
         .route("/v1/openapi.json", get(carbonfr_openapi::openapi))
         .route("/docs", get(carbonfr_openapi::swagger_ui))
         .route("/health", get(handlers::health))
-        .with_state(state)
+        .with_state(state);
+
+    let forecasting = Router::new()
+        .route("/v1/intensity/forecast", get(handlers::forecast::<F>))
+        .route(
+            "/v1/intensity/greenest-window",
+            get(handlers::greenest_window::<F>),
+        )
+        .with_state(forecast);
+
+    core.merge(forecasting)
 }

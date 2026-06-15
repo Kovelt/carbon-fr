@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use carbonfr_adapter_http::{AppState, router};
+use carbonfr_adapter_forecast::ClimatologyForecaster;
+use carbonfr_adapter_http::{AppState, ForecastState, router};
 use carbonfr_core::domain::{
     CarbonIntensity, GenerationMix, Granularity, IntensityStats, Measurement, Methodology, Region,
     RollupBucket, TimeRange, Vintage, VisitStats,
@@ -176,20 +177,28 @@ async fn json_body(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
+/// Monte le routeur complet (lecture + prévision) sur un même repository *fake*.
+/// La prévision utilise le vrai `ClimatologyForecaster` (test de bout en bout :
+/// handler → cas d'usage/port → forecaster → repo → fonction pure).
+fn build(repo: FakeRepo) -> axum::Router {
+    let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1");
+    router(AppState::new(repo), forecast)
+}
+
 fn app(measurement: Option<Measurement>) -> axum::Router {
-    router(AppState::new(FakeRepo {
+    build(FakeRepo {
         measurement,
         series: Vec::new(),
         visits: Arc::default(),
-    }))
+    })
 }
 
 fn app_with_series(series: Vec<Measurement>) -> axum::Router {
-    router(AppState::new(FakeRepo {
+    build(FakeRepo {
         measurement: None,
         series,
         visits: Arc::default(),
-    }))
+    })
 }
 
 async fn get(app: axum::Router, uri: &str) -> axum::response::Response {
@@ -447,4 +456,99 @@ async fn visit_counter_records_and_reports() {
     let body = json_body(get(app, "/v1/stats").await).await;
     assert_eq!(body["unique"], 1);
     assert_eq!(body["total"], 1);
+}
+
+/// `from` = 1970-03-02T00:00:00Z (UNIX_EPOCH + 60 jours), aligné minuit UTC.
+fn forecast_from() -> OffsetDateTime {
+    OffsetDateTime::UNIX_EPOCH + Duration::days(60)
+}
+
+#[tokio::test]
+async fn forecast_returns_predicted_series() {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    // 14 jours d'historique constant juste avant `from`.
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 40.0))
+        .collect();
+
+    let response = get(
+        app_with_series(series),
+        "/v1/intensity/forecast?from=1970-03-02T00:00:00Z&horizon_hours=24",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = json_body(response).await;
+    assert_eq!(body["model"], "climatology@1");
+    assert_eq!(body["methodology"], "rte-direct");
+    assert_eq!(body["horizon_hours"], 24);
+    assert_eq!(body["unit"], "gCO2eq/kWh");
+    // Pas 15 min sur 24 h → 96 points.
+    assert_eq!(body["count"], 96);
+    assert_eq!(body["data"][0]["timestamp"], "1970-03-02T00:00:00Z");
+    // Historique constant → prévision ≈ 40.
+    assert!((body["data"][0]["intensity"].as_f64().unwrap() - 40.0).abs() < 1.0);
+}
+
+#[tokio::test]
+async fn forecast_without_history_is_404() {
+    let response = get(
+        app_with_series(vec![]),
+        "/v1/intensity/forecast?from=1970-03-02T00:00:00Z",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json_body(response).await["error"], "no_data");
+}
+
+#[tokio::test]
+async fn forecast_horizon_too_large_is_400() {
+    let response = get(app(None), "/v1/intensity/forecast?horizon_hours=100").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(response).await["error"], "bad_request");
+}
+
+#[tokio::test]
+async fn greenest_window_finds_lowest_slot() {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    // Motif : creux la nuit (20), pointe le jour (80) — au pas natif pour que
+    // tous les créneaux soient observés.
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| {
+            let at = from - step * i;
+            let g = if (0..=5).contains(&at.hour()) {
+                20.0
+            } else {
+                80.0
+            };
+            point(at, g)
+        })
+        .collect();
+
+    let response = get(
+        app_with_series(series),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&window_minutes=60",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = json_body(response).await;
+    assert_eq!(body["model"], "climatology@1");
+    assert!(body["start"].is_string());
+    assert!(body["end"].is_string());
+    // Le créneau le plus vert tombe la nuit (≈ 20), bien sous le jour.
+    assert!(body["average_intensity"].as_f64().unwrap() < 40.0);
+}
+
+#[tokio::test]
+async fn greenest_window_invalid_window_is_400() {
+    // Créneau plus large que l'horizon → 400.
+    let response = get(
+        app(None),
+        "/v1/intensity/greenest-window?horizon_hours=1&window_minutes=120",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }

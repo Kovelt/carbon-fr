@@ -4,24 +4,34 @@
 use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
-use carbonfr_core::application::{GetCurrentIntensity, GetIntensityHistory, GetIntensityStats};
+use carbonfr_core::application::{
+    FindGreenestWindow, GetCurrentIntensity, GetIntensityHistory, GetIntensityStats,
+};
 use carbonfr_core::domain::{Granularity, Region, TimeRange};
-use carbonfr_core::ports::{IntensityRepository, VisitCounter};
+use carbonfr_core::ports::{ForecastModel, IntensityRepository, VisitCounter};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 use utoipa::IntoParams;
 
-use crate::AppState;
 use crate::dto::{
-    HistoryResponse, IntensityResponse, MixResponse, StatsResponse, VisitStatsResponse,
+    ForecastResponse, GreenestWindowResponse, HistoryResponse, IntensityResponse, MixResponse,
+    StatsResponse, VisitStatsResponse,
 };
 use crate::error::{ApiError, ErrorBody};
+use crate::{AppState, ForecastState};
 
 /// Fenêtre maximale d'une requête d'historique (protège le serveur d'une
 /// extraction démesurée). Au-delà → 400.
 const MAX_HISTORY_SPAN: Duration = Duration::days(366);
+
+/// Horizon de prévision par défaut et maximum (ADR-0009 : usage « dans la
+/// journée » ; au-delà de 72 h la correction de persistance n'apporte plus rien).
+const DEFAULT_HORIZON_HOURS: u32 = 24;
+const MAX_HORIZON_HOURS: u32 = 72;
+/// Durée par défaut du créneau bas-carbone recherché.
+const DEFAULT_WINDOW_MINUTES: u32 = 60;
 
 /// Paramètre de requête commun : `?region=<slug>`, national par défaut.
 #[derive(Deserialize, IntoParams)]
@@ -270,6 +280,148 @@ where
         &summary,
         interval_label,
         buckets.as_deref(),
+    )?))
+}
+
+/// Résout `from` (RFC 3339) ou prend l'instant courant ; valide `horizon_hours`
+/// (1..=MAX). Facteur commun aux deux endpoints de prévision.
+fn resolve_forecast_window(
+    from: &Option<String>,
+    horizon_hours: Option<u32>,
+) -> Result<(OffsetDateTime, u32), ApiError> {
+    let from = match from {
+        Some(raw) => parse_timestamp("from", raw)?,
+        None => OffsetDateTime::now_utc(),
+    };
+    let horizon_hours = horizon_hours.unwrap_or(DEFAULT_HORIZON_HOURS);
+    if horizon_hours == 0 || horizon_hours > MAX_HORIZON_HOURS {
+        return Err(ApiError::bad_request(format!(
+            "`horizon_hours` doit être compris entre 1 et {MAX_HORIZON_HOURS}"
+        )));
+    }
+    Ok((from, horizon_hours))
+}
+
+/// Paramètres de `GET /v1/intensity/forecast`.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ForecastQuery {
+    /// Slug de région. National par défaut.
+    region: Option<String>,
+    /// Méthodologie à prévoir. Défaut `rte-direct`.
+    methodology: Option<String>,
+    /// Début de l'horizon (RFC 3339). Défaut : maintenant.
+    from: Option<String>,
+    /// Profondeur de l'horizon en heures (1..=72). Défaut 24.
+    horizon_hours: Option<u32>,
+}
+
+/// `GET /v1/intensity/forecast` — série d'intensité **prévue** sur l'horizon,
+/// par le modèle `climatology@1` (ADR-0009).
+#[utoipa::path(
+    get,
+    path = "/v1/intensity/forecast",
+    params(ForecastQuery),
+    responses(
+        (status = 200, description = "Série prévue", body = ForecastResponse),
+        (status = 400, description = "Paramètre invalide", body = ErrorBody),
+        (status = 404, description = "Historique insuffisant pour prévoir", body = ErrorBody),
+    ),
+    tag = "prévision"
+)]
+pub(crate) async fn forecast<F>(
+    State(state): State<ForecastState<F>>,
+    Query(query): Query<ForecastQuery>,
+) -> Result<Json<ForecastResponse>, ApiError>
+where
+    F: ForecastModel + Clone + Send + Sync + 'static,
+{
+    let region = resolve_region(&query.region)?;
+    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
+
+    let points = state
+        .forecaster
+        .forecast(
+            region,
+            &methodology,
+            from,
+            Duration::hours(horizon_hours as i64),
+        )
+        .await?;
+
+    Ok(Json(ForecastResponse::new(
+        region.slug(),
+        &methodology,
+        &state.model,
+        from,
+        horizon_hours,
+        &points,
+    )?))
+}
+
+/// Paramètres de `GET /v1/intensity/greenest-window`.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct GreenestWindowQuery {
+    /// Slug de région. National par défaut.
+    region: Option<String>,
+    /// Méthodologie à prévoir. Défaut `rte-direct`.
+    methodology: Option<String>,
+    /// Début de l'horizon (RFC 3339). Défaut : maintenant.
+    from: Option<String>,
+    /// Profondeur de l'horizon en heures (1..=72). Défaut 24.
+    horizon_hours: Option<u32>,
+    /// Durée du créneau recherché, en minutes. Défaut 60.
+    window_minutes: Option<u32>,
+}
+
+/// `GET /v1/intensity/greenest-window` — créneau le plus bas-carbone à venir, sur
+/// la prévision `climatology@1` (ADR-0009).
+#[utoipa::path(
+    get,
+    path = "/v1/intensity/greenest-window",
+    params(GreenestWindowQuery),
+    responses(
+        (status = 200, description = "Créneau le plus bas-carbone", body = GreenestWindowResponse),
+        (status = 400, description = "Paramètre invalide", body = ErrorBody),
+        (status = 404, description = "Série insuffisante pour déterminer un créneau", body = ErrorBody),
+    ),
+    tag = "prévision"
+)]
+pub(crate) async fn greenest_window<F>(
+    State(state): State<ForecastState<F>>,
+    Query(query): Query<GreenestWindowQuery>,
+) -> Result<Json<GreenestWindowResponse>, ApiError>
+where
+    F: ForecastModel + Clone + Send + Sync + 'static,
+{
+    let region = resolve_region(&query.region)?;
+    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
+    let window_minutes = query.window_minutes.unwrap_or(DEFAULT_WINDOW_MINUTES);
+    if window_minutes == 0 || window_minutes as u64 > horizon_hours as u64 * 60 {
+        return Err(ApiError::bad_request(
+            "`window_minutes` doit être > 0 et tenir dans l'horizon",
+        ));
+    }
+
+    let use_case = FindGreenestWindow::new(state.forecaster.clone());
+    let window = use_case
+        .execute(
+            region,
+            &methodology,
+            from,
+            Duration::hours(horizon_hours as i64),
+            Duration::minutes(window_minutes as i64),
+        )
+        .await?;
+
+    Ok(Json(GreenestWindowResponse::new(
+        region.slug(),
+        &methodology,
+        &state.model,
+        &window,
     )?))
 }
 

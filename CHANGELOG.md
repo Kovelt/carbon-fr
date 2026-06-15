@@ -34,6 +34,14 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   **Swagger UI** sous `GET /docs`.
 - **Collection Bruno** versionnée (`bruno/`) couvrant tous les endpoints
   (cas nominaux national/régional × `rte-direct`/`acv-ademe`, et erreurs 400/404).
+- **Prévision d'intensité** (phase 3, ADR-0009) : modèle `climatology@1`
+  (climatologie horaire-de-semaine glissante + correction de persistance
+  décroissante), fonction de domaine pure + adapter `ClimatologyForecaster`
+  (alimenté par l'historique stocké). Exposée sous
+  `GET /v1/intensity/forecast?from=&horizon_hours=` (série prévue) et
+  `GET /v1/intensity/greenest-window?from=&horizon_hours=&window_minutes=`
+  (créneau le plus bas-carbone). Prévisions **non persistées** (calculées à la
+  lecture) ; l'identité du modèle est exposée dans chaque réponse.
 - **Compteur de consultation** : `GET /v1/stats` + `POST /v1/stats/visit`
   (port `VisitCounter`). IP **jamais stockée** — empreinte SHA-256 salée
   (`CARBONFR_VISIT_SALT`), déduplication unique par IP/jour ; IP lue via

@@ -1,7 +1,9 @@
 //! DTO de réponse : projection du domaine en JSON (la sérialisation vit ici,
 //! jamais dans `core`). L'unité canonique est exposée explicitement.
 
-use carbonfr_core::domain::{GenerationMix, IntensityStats, Measurement, RollupBucket, VisitStats};
+use carbonfr_core::domain::{
+    GenerationMix, GreenWindow, IntensityStats, Measurement, RollupBucket, VisitStats,
+};
 use serde::Serialize;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -40,6 +42,101 @@ impl IntensityResponse {
             methodology: m.methodology.id.clone(),
             methodology_version: m.methodology.version,
             vintage: m.vintage.code(),
+        })
+    }
+}
+
+/// Réponse de `GET /v1/intensity/forecast` : la série **prévue** sur l'horizon.
+///
+/// Le champ `model` (identité versionnée du modèle, ex. `climatology@1`) marque
+/// explicitement ces points comme des **prévisions** — pas des observations
+/// (ADR-0009). Pas de `vintage` ici : une prévision n'est pas une mesure
+/// révisée, elle n'est jamais persistée.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ForecastResponse {
+    region: String,
+    methodology: String,
+    /// Identité versionnée du modèle de prévision (ex. `climatology@1`).
+    model: String,
+    /// Début de l'horizon (RFC 3339).
+    from: String,
+    /// Profondeur de l'horizon, en heures.
+    horizon_hours: u32,
+    unit: &'static str,
+    count: usize,
+    data: Vec<ForecastPoint>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct ForecastPoint {
+    timestamp: String,
+    intensity: f64,
+}
+
+impl ForecastResponse {
+    pub(crate) fn new(
+        region: &str,
+        methodology: &str,
+        model: &str,
+        from: OffsetDateTime,
+        horizon_hours: u32,
+        points: &[Measurement],
+    ) -> Result<Self, time::error::Format> {
+        let data = points
+            .iter()
+            .map(|m| {
+                Ok(ForecastPoint {
+                    timestamp: to_rfc3339(m.at)?,
+                    intensity: m.intensity.value(),
+                })
+            })
+            .collect::<Result<Vec<_>, time::error::Format>>()?;
+
+        Ok(Self {
+            region: region.to_string(),
+            methodology: methodology.to_string(),
+            model: model.to_string(),
+            from: to_rfc3339(from)?,
+            horizon_hours,
+            unit: "gCO2eq/kWh",
+            count: data.len(),
+            data,
+        })
+    }
+}
+
+/// Réponse de `GET /v1/intensity/greenest-window` : le créneau le plus
+/// bas-carbone sur l'horizon prévu (ADR-0009).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct GreenestWindowResponse {
+    region: String,
+    methodology: String,
+    /// Identité versionnée du modèle de prévision (ex. `climatology@1`).
+    model: String,
+    /// Début du créneau (RFC 3339).
+    start: String,
+    /// Fin du créneau (RFC 3339, exclue).
+    end: String,
+    unit: &'static str,
+    /// Intensité carbone moyenne prévue sur le créneau.
+    average_intensity: f64,
+}
+
+impl GreenestWindowResponse {
+    pub(crate) fn new(
+        region: &str,
+        methodology: &str,
+        model: &str,
+        window: &GreenWindow,
+    ) -> Result<Self, time::error::Format> {
+        Ok(Self {
+            region: region.to_string(),
+            methodology: methodology.to_string(),
+            model: model.to_string(),
+            start: to_rfc3339(window.start)?,
+            end: to_rfc3339(window.end)?,
+            unit: "gCO2eq/kWh",
+            average_intensity: window.average.value(),
         })
     }
 }

@@ -112,8 +112,9 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
   - [x] **méthodologie `acv-ademe`** (cycle de vie, ADR-0008) : définie + dérivée/stockée à l'ingestion + `?methodology=`. **National** (dérivé du mix complet) **et 12 régions** (mix régional `eco2mix-regional-*`, `thermique` agrégé → facteur gaz). `rte-direct` reste national.
 - [ ] Phase 3 — prévision :
   - [x] **ADR-0009** — modèle `climatology@1` (climatologie horaire-de-semaine glissante + correction de persistance décroissante). Pur, explicable, sans dépendance externe, alimenté par le backfill. Prévisions **non persistées** (calculées à la lecture, ADR-0006 intacte). Endpoints `/v1/intensity/forecast` et `/v1/intensity/greenest-window`.
-  - [ ] fonction pure de domaine + adapter `ForecastModel` (lit l'historique via `IntensityRepository`).
-  - [ ] handlers `/v1` + DTO (marqueur prévision + id de modèle) + OpenAPI/Bruno.
+  - [x] fonction pure de domaine (`climatology_forecast`) + adapter `ClimatologyForecaster` (`ForecastModel`, lit l'historique via `IntensityRepository`).
+  - [x] handlers `/v1` (`forecast` + `greenest-window`) + DTO (id de modèle `climatology@1`) + OpenAPI + câblage composition root.
+  - [ ] collection Bruno des deux endpoints de prévision.
   - [ ] backtest held-out publiant l'erreur (MAE/RMSE).
 
 ### Repères d'implémentation (phases 1-2)

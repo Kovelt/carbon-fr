@@ -30,6 +30,8 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::handlers::intensity_date,
         crate::handlers::intensity_stats,
         crate::handlers::mix,
+        crate::handlers::forecast,
+        crate::handlers::greenest_window,
         crate::handlers::visit_stats,
         crate::handlers::record_visit,
         crate::handlers::health,
@@ -39,12 +41,15 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::dto::HistoryResponse,
         crate::dto::StatsResponse,
         crate::dto::MixResponse,
+        crate::dto::ForecastResponse,
+        crate::dto::GreenestWindowResponse,
         crate::dto::VisitStatsResponse,
         crate::error::ErrorBody,
     )),
     tags(
         (name = "intensité", description = "Intensité carbone"),
         (name = "mix", description = "Mix de production"),
+        (name = "prévision", description = "Prévision d'intensité (ADR-0009)"),
         (name = "opérations", description = "Exploitation & statistiques"),
     ),
 )]
@@ -95,6 +100,8 @@ mod tests {
             "/v1/intensity/date",
             "/v1/intensity/stats",
             "/v1/mix",
+            "/v1/intensity/forecast",
+            "/v1/intensity/greenest-window",
             "/health",
         ] {
             assert!(

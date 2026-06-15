@@ -4,7 +4,7 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use carbonfr_core::application::ApplicationError;
-use carbonfr_core::ports::RepositoryError;
+use carbonfr_core::ports::{ForecastError, RepositoryError};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -68,9 +68,29 @@ impl From<ApplicationError> for ApiError {
                 "aucune donnée disponible pour la région {}",
                 region.slug()
             )),
-            // Erreurs de ports (base, source, prévision) ou série insuffisante :
+            // Pas assez d'historique pour prévoir, ou série trop courte pour
+            // dégager un créneau : ce n'est pas une panne serveur mais une
+            // absence de donnée exploitable → 404.
+            ApplicationError::Forecast(ForecastError::NotEnoughData) => {
+                Self::not_found("historique insuffisant pour établir une prévision")
+            }
+            ApplicationError::InsufficientSeries => {
+                Self::not_found("série insuffisante pour déterminer un créneau bas-carbone")
+            }
+            // Autres erreurs de ports (base, source, prévision indisponible) :
             // côté serveur, on ne détaille pas au client.
             _ => Self::internal(),
+        }
+    }
+}
+
+impl From<ForecastError> for ApiError {
+    fn from(error: ForecastError) -> Self {
+        match error {
+            ForecastError::NotEnoughData => {
+                Self::not_found("historique insuffisant pour établir une prévision")
+            }
+            ForecastError::Unavailable(_) => Self::internal(),
         }
     }
 }

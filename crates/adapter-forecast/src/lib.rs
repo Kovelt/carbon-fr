@@ -24,7 +24,9 @@ const DEFAULT_WEEKS: i64 = 8;
 ///
 /// Générique sur `R: IntensityRepository` → dispatch statique, zéro coût (comme
 /// les cas d'usage du `core`). La *composition root* y câble le repository
-/// Postgres concret.
+/// Postgres concret. `Clone` quand `R` l'est (le pool Postgres l'est, à coût
+/// négligeable) — requis pour le partage dans l'état de l'API.
+#[derive(Clone)]
 pub struct ClimatologyForecaster<R> {
     repo: R,
     weeks: i64,

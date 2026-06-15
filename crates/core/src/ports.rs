@@ -8,8 +8,8 @@ use thiserror::Error;
 use time::{Date, Duration, OffsetDateTime};
 
 use crate::domain::{
-    ForecastPoint, Granularity, IntensityStats, LoadRecord, Measurement, Region, RollupBucket,
-    TimeRange, VisitStats, WeatherForecast,
+    CrossBorderSnapshot, ForecastPoint, Granularity, IntensityStats, LoadRecord, Measurement,
+    Region, RollupBucket, TimeRange, VisitStats, WeatherForecast,
 };
 
 /// Erreur de récupération depuis une source amont (ODRÉ, ou source de secours).
@@ -173,6 +173,35 @@ pub trait WeatherRepository: Send + Sync {
 pub trait WeatherForecastSource: Send + Sync {
     /// Prévision météo nationale **courante** (produite à l'instant de l'appel).
     async fn current_forecast(&self) -> Result<Vec<WeatherForecast>, SourceError>;
+}
+
+/// Port sortant : source du **contexte d'import** transfrontalier (ADR-0010 §5).
+///
+/// Fournit, au pas quart d'heure, les flux signés par frontière **et** l'intensité
+/// carbone du voisin — l'entrée nécessaire au calcul `acv-ademe@2`
+/// *consumption-based*. Source européenne (ENTSO-E) pour la souveraineté ; jamais
+/// appelée par requête utilisateur — le poller l'ingère, comme ODRÉ.
+#[async_trait]
+pub trait CrossBorderSource: Send + Sync {
+    /// Contexte d'import **récent** (national), du plus ancien au plus récent.
+    async fn recent_flows(&self) -> Result<Vec<CrossBorderSnapshot>, SourceError>;
+}
+
+/// Port sortant : store du **contexte d'import** transfrontalier (ADR-0010 §6),
+/// aligné au pas quart d'heure du mix pour le calcul `acv-ademe@2` à la lecture.
+#[async_trait]
+pub trait CrossBorderRepository: Send + Sync {
+    /// Insère/met à jour des snapshots d'import (clé `at`).
+    async fn upsert_flows(
+        &self,
+        snapshots: &[CrossBorderSnapshot],
+    ) -> Result<usize, RepositoryError>;
+
+    /// Snapshot d'import au plus proche de `at` (≤ `at`), s'il existe.
+    async fn flows_at(
+        &self,
+        at: OffsetDateTime,
+    ) -> Result<Option<CrossBorderSnapshot>, RepositoryError>;
 }
 
 /// Port sortant : compteur de consultations (visiteurs).

@@ -96,6 +96,17 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   facteurs par filière + facteur de pertes T&D). *Le calcul de `@2` sera **servi**
   une fois la source d'import ENTSO-E branchée (tranche B) ; il apparaît `planned`
   dans `/v1/methodologies`.* Défaut de l'API inchangé : `rte-direct`.
+- **Adapter ENTSO-E — contexte d'import transfrontalier** (ADR-0010, tranche B
+  1/2) : port `CrossBorderSource` + value object horodaté `CrossBorderSnapshot`
+  (domaine) et crate `carbonfr-adapter-entsoe`. Pour chaque frontière de la
+  France métropolitaine : **flux physique net signé** (`documentType=A11`, import
+  − export) et **intensité carbone du voisin** dérivée de sa génération par type
+  (`documentType=A75`/`processType=A16`) via les **mêmes facteurs ADEME** que le
+  domaine (mapping `PsrType` B01–B25 → filières, zones EIC). Token
+  `CARBONFR_ENTSOE_TOKEN` ; jamais appelé par requête utilisateur. Parsing XML
+  testé sur fixtures ; *chemins XML/codes calés sur le guide RESTful API ENTSO-E,
+  **à valider contre l'API live** (`tests/live.rs`, `--ignored`).* Câblage store
+  + poller + service de `acv-ademe@2` à venir (tranche B 2/2).
 - **Compteur de consultation** : `GET /v1/stats` + `POST /v1/stats/visit`
   (port `VisitCounter`). IP **jamais stockée** — empreinte SHA-256 salée
   (`CARBONFR_VISIT_SALT`), déduplication unique par IP/jour ; IP lue via

@@ -26,7 +26,7 @@ mod window;
 pub use calculator::{
     AcvAdemeConsumption, AcvAdemeProduction, MethodologyCalculator, MethodologyContext, RteDirect,
 };
-pub use cross_border::{CrossBorderFlow, CrossBorderFlows, Neighbor};
+pub use cross_border::{CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Neighbor};
 pub use factors::{
     EmissionFactors, TD_LOSS_FACTOR_V1, acv_ademe_consumption_intensity, acv_ademe_intensity,
     derive_acv_ademe,

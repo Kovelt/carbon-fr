@@ -7,6 +7,7 @@ members = [
     "crates/adapter-http",
     "crates/adapter-forecast",
     "crates/adapter-meteo",
+    "crates/adapter-entsoe",
     "crates/adapter-gbdt",
     "bin/server",
 ]
@@ -23,6 +24,7 @@ carbonfr-adapter-odre = { path = "crates/adapter-odre" }
 carbonfr-adapter-postgres = { path = "crates/adapter-postgres" }
 carbonfr-adapter-http = { path = "crates/adapter-http" }
 carbonfr-adapter-meteo = { path = "crates/adapter-meteo" }
+carbonfr-adapter-entsoe = { path = "crates/adapter-entsoe" }
 carbonfr-adapter-gbdt = { path = "crates/adapter-gbdt" }
 carbonfr-adapter-forecast = { path = "crates/adapter-forecast" }
 
@@ -45,6 +47,7 @@ reqwest = { version = "0.12.24", default-features = false, features = [
     "gzip",
 ] }
 tokio = { version = "1.52.3", features = ["macros", "rt"] }
+quick-xml = { version = "0.37.5", features = ["serialize"] }
 sqlx = { version = "0.8.6", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls-ring",

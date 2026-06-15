@@ -1,0 +1,20 @@
+[package]
+name = "carbonfr-adapter-entsoe"
+version = "0.0.0"
+description = "Adapter sortant carbon-fr : contexte d'import transfrontalier (ENTSO-E) pour acv-ademe consumption-based (ADR-0010)."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+carbonfr-core = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { workspace = true }
+quick-xml = { workspace = true }
+serde = { workspace = true }
+time = { workspace = true, features = ["parsing", "formatting", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

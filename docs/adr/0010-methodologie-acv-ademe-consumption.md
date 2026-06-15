@@ -27,10 +27,27 @@ est entièrement spécifié et testé **sans IO** :
 (Bilan électrique RTE / Base Carbone ADEME) avant publication de `@2` ; tout
 changement = bump de version.
 
-**À venir (tranche B) :** adapter `adapter-entsoe` + port `CrossBorderSource` +
-store du contexte d'import + ingestion par le poller + service effectif de
-`acv-ademe@2` (statut `planned` dans `/v1/methodologies` tant que la source
-n'est pas branchée). Le défaut de l'API **reste `rte-direct`**.
+**Tranche B (1/2) — adapter ENTSO-E + port : livrée.** Port sortant
+`CrossBorderSource` + value object horodaté `CrossBorderSnapshot` (domaine) ;
+crate **`carbonfr-adapter-entsoe`** :
+
+- flux physique net **signé** par frontière (`documentType=A11`, import − export) ;
+- **intensité du voisin** dérivée de sa génération par type (`documentType=A75`,
+  `processType=A16`) via les **mêmes facteurs ADEME** que le domaine (méthode
+  cohérente et vérifiable) — mapping `PsrType` (B01..B25) → filières ;
+- zones EIC des 6 frontières métropolitaines ; assemblage en `CrossBorderSnapshot`
+  alignés par horodatage (intensité voisine au plus proche ≤) ;
+- token `CARBONFR_ENTSOE_TOKEN` ; **jamais appelé par requête utilisateur**.
+
+Parsing XML **testé sur fixtures** (hermétique) ; chemins XML/codes calés sur le
+guide RESTful API ENTSO-E, **à valider contre l'API live** (test `tests/live.rs`,
+`--ignored`, token requis).
+
+**À venir (tranche B 2/2) :** `CrossBorderRepository` côté Postgres (migration +
+store du contexte d'import) + ingestion par le poller + **service effectif** de
+`acv-ademe@2` à la lecture (calcul via `AcvAdemeConsumption` à partir du mix FR +
+du snapshot d'import). Tant que ce câblage n'est pas en place, `acv-ademe@2` reste
+`planned` dans `/v1/methodologies`. Le défaut de l'API **reste `rte-direct`**.
 
 ## Contexte
 

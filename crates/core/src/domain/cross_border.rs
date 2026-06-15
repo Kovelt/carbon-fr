@@ -6,6 +6,8 @@
 //! (un seul scalaire) ne permet pas. Aucune IO : la donnée est remplie par un
 //! adapter (ENTSO-E), le domaine ne fait que la consommer.
 
+use time::OffsetDateTime;
+
 use crate::domain::CarbonIntensity;
 
 /// Voisin électrique de la France métropolitaine (zone d'ajustement ENTSO-E
@@ -89,4 +91,15 @@ impl CrossBorderFlows {
             .map(|f| f.flow_mw * f.neighbor_intensity.value())
             .sum()
     }
+}
+
+/// Contexte d'import **horodaté** : les flux frontaliers à un pas quart d'heure.
+///
+/// Unité d'échange du port [`CrossBorderSource`](crate::ports::CrossBorderSource)
+/// et de son store : aligné au pas du mix (ADR-0010 §6) pour permettre le calcul
+/// `acv-ademe@2` à la lecture.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CrossBorderSnapshot {
+    pub at: OffsetDateTime,
+    pub flows: CrossBorderFlows,
 }

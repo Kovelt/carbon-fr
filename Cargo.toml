@@ -5,6 +5,7 @@ members = [
     "crates/adapter-odre",
     "crates/adapter-postgres",
     "crates/adapter-http",
+    "crates/adapter-forecast",
     "bin/server",
 ]
 
@@ -19,6 +20,7 @@ carbonfr-core = { path = "crates/core" }
 carbonfr-adapter-odre = { path = "crates/adapter-odre" }
 carbonfr-adapter-postgres = { path = "crates/adapter-postgres" }
 carbonfr-adapter-http = { path = "crates/adapter-http" }
+carbonfr-adapter-forecast = { path = "crates/adapter-forecast" }
 
 # Dépendances tierces (versions centralisées)
 axum = "0.8.7"

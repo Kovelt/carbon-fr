@@ -1,0 +1,16 @@
+[package]
+name = "carbonfr-adapter-forecast"
+version = "0.0.0"
+description = "Adapter sortant carbon-fr : implémente ForecastModel par climatologie (ADR-0009), alimenté par IntensityRepository."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+carbonfr-core = { workspace = true }
+async-trait = { workspace = true }
+time = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

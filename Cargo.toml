@@ -7,6 +7,7 @@ members = [
     "crates/adapter-http",
     "crates/adapter-forecast",
     "crates/adapter-meteo",
+    "crates/adapter-gbdt",
     "bin/server",
 ]
 
@@ -22,10 +23,12 @@ carbonfr-adapter-odre = { path = "crates/adapter-odre" }
 carbonfr-adapter-postgres = { path = "crates/adapter-postgres" }
 carbonfr-adapter-http = { path = "crates/adapter-http" }
 carbonfr-adapter-meteo = { path = "crates/adapter-meteo" }
+carbonfr-adapter-gbdt = { path = "crates/adapter-gbdt" }
 carbonfr-adapter-forecast = { path = "crates/adapter-forecast" }
 
 # Dépendances tierces (versions centralisées)
 axum = "0.8.7"
+gbdt = "0.1"
 utoipa = { version = "5.4.0", features = ["axum_extras"] }
 sha2 = "0.10.9"
 async-trait = "0.1.89"

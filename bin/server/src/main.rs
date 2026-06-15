@@ -12,6 +12,8 @@
 //! - `backtest-sweep` : balaie une grille N × τ, classe par RMSE.
 //! - `backtest-bands` : calibre et imprime les bandes d'incertitude par horizon
 //!   (ADR-0011).
+//! - `train` : entraîne le modèle ML GBDT (ADR-0012) → artefact, et compare
+//!   `gbdt@1` à `climatology@1` au backtest (garde de promotion).
 //!
 //! ## Configuration (variables d'environnement)
 //!
@@ -32,12 +34,18 @@
 //! | `CARBONFR_BACKTEST_HORIZON_HOURS` | `24`      | `backtest-bands` : horizon calibré |
 //! | `CARBONFR_BACKTEST_BAND_QUANTILE` | `0.1`     | `backtest-bands` : quantile de bord |
 //! | `CARBONFR_FORECAST_CALIBRATE_WEEKS` | `8`     | auto-calibration au démarrage (0 = off) |
+//! | `CARBONFR_TRAIN_FROM`/`_TO`  | 120 j av. test | `train` : période d'entraînement   |
+//! | `CARBONFR_TRAIN_ORIGIN_STEP_HOURS` | `6`      | `train` : espacement des origines  |
+//! | `CARBONFR_GBDT_MODEL`        | `gbdt.model`   | `train` : chemin de l'artefact GBDT |
 //! | `RUST_LOG`                   | `info`         | filtre de logs (`tracing`)        |
 
 use std::net::SocketAddr;
 
 use anyhow::Context;
 use carbonfr_adapter_forecast::ClimatologyForecaster;
+use carbonfr_adapter_gbdt::{
+    GbdtForecaster, GbdtHyperParams, build_training_examples, train_model,
+};
 use carbonfr_adapter_http::{AppState, ForecastState, router};
 use carbonfr_adapter_meteo::OpenMeteoClient;
 use carbonfr_adapter_odre::OdreClient;
@@ -67,9 +75,10 @@ async fn main() -> anyhow::Result<()> {
         Some("backtest") => run_backtest().await,
         Some("backtest-sweep") => run_backtest_sweep().await,
         Some("backtest-bands") => run_backtest_bands().await,
+        Some("train") => run_train().await,
         Some(other) => {
             anyhow::bail!(
-                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-sweep`, `backtest-bands`, ou aucune pour servir l'API)"
+                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-sweep`, `backtest-bands`, `train`, ou aucune pour servir l'API)"
             )
         }
     }
@@ -541,6 +550,126 @@ async fn run_backtest_bands() -> anyhow::Result<()> {
     }
     println!();
     println!("Bornes en gCO₂eq/kWh, relatives à l'estimation centrale (erreur = observé − prévu).");
+    Ok(())
+}
+
+/// Mode `train` : entraîne le modèle **ML GBDT** (ADR-0012) sur l'historique,
+/// sauvegarde l'artefact, puis **compare** `gbdt@1` à `climatology@1` au backtest
+/// (garde de promotion : on ne sert le GBDT que s'il bat la climatologie).
+///
+/// Config : `CARBONFR_TRAIN_FROM`/`_TO` (période d'entraînement ; défaut 120 j
+/// avant la fenêtre de test), `CARBONFR_GBDT_MODEL` (chemin de l'artefact ; déf.
+/// `gbdt.model`), `CARBONFR_TRAIN_ORIGIN_STEP_HOURS` (déf. 6) ; fenêtre de test
+/// et pas via les variables `CARBONFR_BACKTEST_*`.
+async fn run_train() -> anyhow::Result<()> {
+    use std::collections::HashMap;
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let params = BacktestParams::from_env()?;
+
+    let train_to = parse_rfc3339_env("CARBONFR_TRAIN_TO")?.unwrap_or(params.test.start());
+    let train_from =
+        parse_rfc3339_env("CARBONFR_TRAIN_FROM")?.unwrap_or(train_to - Duration::days(120));
+    anyhow::ensure!(
+        train_to <= params.test.start(),
+        "la période d'entraînement doit précéder la fenêtre de test (anti-fuite)"
+    );
+    let origin_step_hours = std::env::var("CARBONFR_TRAIN_ORIGIN_STEP_HOURS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(6);
+
+    // Historique d'intensité couvrant l'entraînement (+ 1 semaine de lags amont).
+    let read = TimeRange::new(train_from - Duration::weeks(1), train_to)
+        .context("période d'entraînement invalide")?;
+    let history = repo
+        .range(params.region, &params.methodology, read)
+        .await
+        .context("lecture de l'historique")?;
+    let intensity: HashMap<OffsetDateTime, f64> = history
+        .iter()
+        .map(|m| (m.at, m.intensity.value()))
+        .collect();
+
+    // Origines d'entraînement : du début +1 sem. à la fin −24 h.
+    let mut origins = Vec::new();
+    let mut o = train_from + Duration::weeks(1);
+    while o < train_to - Duration::hours(24) {
+        origins.push(o);
+        o += Duration::hours(origin_step_hours);
+    }
+    let examples = build_training_examples(&intensity, &origins, params.step, Duration::hours(24));
+    anyhow::ensure!(
+        !examples.is_empty(),
+        "aucun exemple d'entraînement (historique insuffisant ?)"
+    );
+    info!(
+        examples = examples.len(),
+        origins = origins.len(),
+        "entraînement GBDT"
+    );
+
+    let model = train_model(&examples, GbdtHyperParams::default())
+        .context("entraînement GBDT (aucun exemple)")?;
+    let path = std::env::var("CARBONFR_GBDT_MODEL").unwrap_or_else(|_| "gbdt.model".to_string());
+    model.save(&path).map_err(anyhow::Error::msg)?;
+    info!(path = %path, "artefact GBDT sauvegardé");
+
+    // Comparaison sur la fenêtre de test (postérieure → pas de fuite de labels).
+    let climatology = ClimatologyForecaster::with_config(
+        repo.clone(),
+        10,
+        ClimatologyParams {
+            step: params.step,
+            tau: Duration::days(14),
+        },
+    );
+    let r1 = BacktestForecast::new(climatology, repo.clone(), params.methodology.clone())
+        .execute(
+            params.region,
+            params.test,
+            params.origin_step,
+            params.step,
+            &BACKTEST_CHECKPOINTS,
+        )
+        .await
+        .context("backtest climatology@1")?;
+
+    let gbdt = GbdtForecaster::with_config(repo.clone(), model, 10, params.step);
+    let r2 = BacktestForecast::new(gbdt, repo.clone(), params.methodology.clone())
+        .execute(
+            params.region,
+            params.test,
+            params.origin_step,
+            params.step,
+            &BACKTEST_CHECKPOINTS,
+        )
+        .await
+        .context("backtest gbdt@1")?;
+
+    println!();
+    println!(
+        "Comparaison climatology@1 vs gbdt@1 — région {}, méthodologie {}",
+        params.region.slug(),
+        params.methodology
+    );
+    println!(
+        "Entraîné sur {} → {}  ({} exemples) ; testé sur {} → {}",
+        train_from,
+        train_to,
+        examples.len(),
+        params.test.start(),
+        params.test.end()
+    );
+    println!();
+    println!("{:<16} {:>10} {:>10} {:>10}", "Série", "MAE", "RMSE", "n");
+    print_metrics_row("climato @1", r1.model);
+    print_metrics_row("gbdt @1", r2.model);
+    for (h1, h2) in r1.by_horizon.iter().zip(r2.by_horizon.iter()) {
+        print_metrics_row(&format!("climato h+{}", h1.horizon.whole_hours()), h1.model);
+        print_metrics_row(&format!("gbdt h+{}", h2.horizon.whole_hours()), h2.model);
+    }
     Ok(())
 }
 

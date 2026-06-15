@@ -89,6 +89,8 @@ DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-sweep
 # Calibration des intervalles (quantiles de résidus par horizon) :
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-bands
+# Entraîner le modèle ML GBDT + comparer au backtest (CARBONFR_TRAIN_FROM/_TO, _GBDT_MODEL) :
+DATABASE_URL=postgres://localhost/carbonfr cargo run -p server train
 
 # Tests d'intégration nécessitant des ressources externes :
 DATABASE_URL=postgres://localhost/carbonfr_test \
@@ -142,8 +144,9 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 - [ ] Phase 4 — **enrichissement & usage** (ADR proposés 0010, 0012-0014) :
   - [ ] `acv-ademe` **consumption-based** + `adapter-entsoe` + `/v1/factors` (ADR-0010).
   - [~] modèle **ML GBDT** (tout-Rust) + features météo, derrière le port, gardé par le backtest (ADR-0012) :
-    - [x] **store météo prévisionnel** : port `WeatherForecastSource` + adapter `carbonfr-adapter-meteo` (Open-Meteo, vent 100 m + irradiance, 7 points FR moyennés), store `WeatherRepository` (table `weather_forecast`) daté `(run_at, valid_at)` **anti-fuite**, ingestion poller. Crate `gbdt` (Apache-2.0) confirmé.
-    - [ ] `bin/train` (artefact versionné) + `GbdtForecaster` (inférence) + features (calendrier, lags, charge prévue, météo) + garde de promotion par backtest.
+    - [x] **store météo prévisionnel** : port `WeatherForecastSource` + adapter `carbonfr-adapter-meteo` (Open-Meteo, vent 100 m + irradiance, 7 points FR moyennés), store `WeatherRepository` (table `weather_forecast`) daté `(run_at, valid_at)` **anti-fuite**, ingestion poller.
+    - [x] **framework GBDT** (crate `carbonfr-adapter-gbdt`, `gbdt` pur Rust) : feature engineering partagé train/inférence (ancre = dernière obs. avant l'origine), `build_training_examples`/`train_model`, `GbdtForecaster` (artefact chargé par chemin), sous-commande `train` (entraîne → sauve → compare au backtest). **Mesuré (sans météo) : `gbdt@1` ne bat pas `climatology@1`** (RMSE ≈15,8 vs 7,5 nov. 2024) — attendu, la météo est le levier. `@1` reste servi.
+    - [ ] **tranche 2b** : features **météo** (backfill historique des prévisions via API archive Open-Meteo) + apprentissage résiduel (climatologie en feature) ; re-mesure sous garde de promotion.
   - [ ] **prévision `acv-ademe`** (prévoir les entrées → calculateur ; `MixForecaster`, ENTSO-E day-ahead) (ADR-0013).
   - [ ] **usage** : primitives de scheduling carbon-aware + streaming **SSE** (ADR-0014) ; webhooks reportés (tier hébergé).
   - [ ] **tier hébergé** : clés API en middleware de bord, anonyme par défaut, `core` intact (ADR-0015) ; débloque les webhooks. Direction posée, calendrier libre.

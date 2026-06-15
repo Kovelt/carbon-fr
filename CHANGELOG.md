@@ -51,6 +51,13 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `HorizonBands` calibré par backtest *walk-forward* (`backtest-bands`) ; les
   bornes **s'élargissent avec l'horizon**. Le serveur auto-calibre au démarrage
   (`CARBONFR_FORECAST_CALIBRATE_WEEKS`), avec repli sur la dispersion par créneau.
+- **Framework de prévision ML GBDT** (ADR-0012, tranche 2a) : crate
+  `carbonfr-adapter-gbdt` (`gbdt` pur Rust) — *feature engineering* partagé
+  train/inférence (anti-fuite), `train_model`, `GbdtForecaster` (artefact
+  versionné chargé par chemin), sous-commande `carbonfr-server train`
+  (entraîne → sauve → compare `gbdt@1` vs `climatology@1` au backtest).
+  *Mesuré* : sans features météo, le GBDT **ne bat pas** la climatologie calibrée
+  (attendu — la météo est le levier) ; `climatology@1` **reste servi**.
 - **Store de prévision météo** (ADR-0012, tranche 1 du modèle ML) : port
   `WeatherForecastSource` + adapter `carbonfr-adapter-meteo` (Open-Meteo, vent à
   100 m + irradiance, agrégés sur 7 points de métropole), store

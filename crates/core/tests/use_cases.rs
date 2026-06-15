@@ -192,6 +192,7 @@ impl ForecastModel for FakeForecast {
     async fn forecast(
         &self,
         _region: Region,
+        _methodology_id: &str,
         _from: OffsetDateTime,
         _horizon: Duration,
     ) -> Result<Vec<Measurement>, ForecastError> {
@@ -341,6 +342,7 @@ async fn find_greenest_window_uses_forecast() {
     let window = uc
         .execute(
             Region::National,
+            "rte-direct",
             t0,
             Duration::hours(24),
             Duration::minutes(30),

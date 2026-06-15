@@ -132,13 +132,16 @@ pub trait VisitCounter: Send + Sync {
     async fn visit_stats(&self) -> Result<VisitStats, RepositoryError>;
 }
 
-/// Port sortant : modèle de prévision d'intensité carbone (phase 3).
+/// Port sortant : modèle de prévision d'intensité carbone (phase 3, ADR-0009).
 #[async_trait]
 pub trait ForecastModel: Send + Sync {
-    /// Prévision à pas régulier sur `horizon`, à partir de `from`.
+    /// Prévision à pas régulier sur `horizon`, à partir de `from`, pour la série
+    /// `(region, methodology_id)`. La méthodologie est explicite : on prévoit une
+    /// méthode précise (`rte-direct`, `acv-ademe`…), pas une intensité générique.
     async fn forecast(
         &self,
         region: Region,
+        methodology_id: &str,
         from: OffsetDateTime,
         horizon: Duration,
     ) -> Result<Vec<Measurement>, ForecastError>;

@@ -24,15 +24,20 @@ impl<F: ForecastModel> FindGreenestWindow<F> {
     }
 
     /// `from` : début de l'horizon ; `horizon` : profondeur de prévision ;
-    /// `window` : durée du créneau recherché.
+    /// `window` : durée du créneau recherché. La prévision porte sur la série
+    /// `(region, methodology_id)`.
     pub async fn execute(
         &self,
         region: Region,
+        methodology_id: &str,
         from: OffsetDateTime,
         horizon: Duration,
         window: Duration,
     ) -> Result<GreenWindow, ApplicationError> {
-        let points = self.forecast.forecast(region, from, horizon).await?;
+        let points = self
+            .forecast
+            .forecast(region, methodology_id, from, horizon)
+            .await?;
         greenest_window(&points, window).ok_or(ApplicationError::InsufficientSeries)
     }
 }

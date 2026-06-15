@@ -36,7 +36,9 @@ mod handlers;
 
 use axum::Router;
 use axum::routing::{get, post};
-use carbonfr_core::ports::{ForecastModel, IntensityRepository, VisitCounter};
+use carbonfr_core::ports::{
+    CrossBorderRepository, ForecastModel, IntensityRepository, VisitCounter,
+};
 
 pub use error::ApiError;
 
@@ -115,7 +117,7 @@ impl<F> ForecastState<F> {
 /// (`merge`) — ce qui évite d'imposer le type du modèle aux handlers existants.
 pub fn router<R, F>(state: AppState<R>, forecast: ForecastState<F>) -> Router
 where
-    R: IntensityRepository + VisitCounter + Clone + Send + Sync + 'static,
+    R: IntensityRepository + VisitCounter + CrossBorderRepository + Clone + Send + Sync + 'static,
     F: ForecastModel + Clone + Send + Sync + 'static,
 {
     let core = Router::new()

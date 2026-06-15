@@ -16,11 +16,13 @@ mod mapping;
 
 use async_trait::async_trait;
 use carbonfr_core::domain::{
-    Granularity, IntensityStats, LoadRecord, Measurement, Region, RollupBucket, TimeRange,
-    VisitStats, WeatherForecast,
+    CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Granularity,
+    IntensityStats, LoadRecord, Measurement, Neighbor, Region, RollupBucket, TimeRange, VisitStats,
+    WeatherForecast,
 };
 use carbonfr_core::ports::{
-    ConsumptionRepository, IntensityRepository, RepositoryError, VisitCounter, WeatherRepository,
+    ConsumptionRepository, CrossBorderRepository, IntensityRepository, RepositoryError,
+    VisitCounter, WeatherRepository,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, QueryBuilder, Row};
@@ -449,5 +451,108 @@ impl WeatherRepository for PgIntensityRepository {
                 })
             })
             .collect()
+    }
+}
+
+#[async_trait]
+impl CrossBorderRepository for PgIntensityRepository {
+    async fn upsert_flows(
+        &self,
+        snapshots: &[CrossBorderSnapshot],
+    ) -> Result<usize, RepositoryError> {
+        // Aplatit (snapshot → lignes par voisin) en dédupliquant la clé
+        // `(at, neighbor)` (garde la dernière occurrence) : un créneau peut être
+        // ré-ingéré, et `ON CONFLICT` interdit deux fois la même clé par requête.
+        let mut rows: std::collections::BTreeMap<(OffsetDateTime, &str), &CrossBorderFlow> =
+            std::collections::BTreeMap::new();
+        for snap in snapshots {
+            for flow in &snap.flows.flows {
+                rows.insert((snap.at, flow.neighbor.slug()), flow);
+            }
+        }
+        if rows.is_empty() {
+            return Ok(0);
+        }
+
+        let mut written = 0usize;
+        let entries: Vec<((OffsetDateTime, &str), &CrossBorderFlow)> = rows.into_iter().collect();
+        // 4 colonnes × 10 000 = 40 000 paramètres < 65 535.
+        for chunk in entries.chunks(10_000) {
+            let mut builder = QueryBuilder::new(
+                "INSERT INTO cross_border_flow (at, neighbor, flow_mw, neighbor_intensity) ",
+            );
+            builder.push_values(chunk.iter(), |mut row, ((at, slug), flow)| {
+                row.push_bind(*at)
+                    .push_bind(*slug)
+                    .push_bind(flow.flow_mw)
+                    .push_bind(flow.neighbor_intensity.value());
+            });
+            builder.push(
+                " ON CONFLICT (at, neighbor) DO UPDATE SET \
+                 flow_mw = EXCLUDED.flow_mw, neighbor_intensity = EXCLUDED.neighbor_intensity",
+            );
+            let result = builder
+                .build()
+                .execute(&self.pool)
+                .await
+                .map_err(|e| backend(format!("upsert_flows : {e}")))?;
+            written += result.rows_affected() as usize;
+        }
+        Ok(written)
+    }
+
+    async fn flows_at(
+        &self,
+        at: OffsetDateTime,
+    ) -> Result<Option<CrossBorderSnapshot>, RepositoryError> {
+        // Dernier horodatage disponible ≤ cible.
+        let row = sqlx::query("SELECT max(at) AS at FROM cross_border_flow WHERE at <= $1")
+            .bind(at)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| backend(format!("flows_at (max) : {e}")))?;
+        let Some(snap_at): Option<OffsetDateTime> =
+            row.try_get("at").map_err(|e| backend(e.to_string()))?
+        else {
+            return Ok(None);
+        };
+
+        let rows = sqlx::query(
+            "SELECT neighbor, flow_mw, neighbor_intensity FROM cross_border_flow \
+             WHERE at = $1 ORDER BY neighbor ASC",
+        )
+        .bind(snap_at)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| backend(format!("flows_at (rows) : {e}")))?;
+
+        let mut flows = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let slug: String = row
+                .try_get("neighbor")
+                .map_err(|e| backend(e.to_string()))?;
+            let Some(neighbor) = Neighbor::from_slug(&slug) else {
+                continue; // voisin inconnu (donnée héritée) → ignoré
+            };
+            let flow_mw: f64 = row.try_get("flow_mw").map_err(|e| backend(e.to_string()))?;
+            let intensity: f64 = row
+                .try_get("neighbor_intensity")
+                .map_err(|e| backend(e.to_string()))?;
+            let Some(neighbor_intensity) = CarbonIntensity::new(intensity) else {
+                continue;
+            };
+            flows.push(CrossBorderFlow {
+                neighbor,
+                flow_mw,
+                neighbor_intensity,
+            });
+        }
+        if flows.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(CrossBorderSnapshot {
+            at: snap_at,
+            flows: CrossBorderFlows::new(flows),
+        }))
     }
 }

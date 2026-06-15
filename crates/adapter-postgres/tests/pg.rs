@@ -15,11 +15,13 @@
 
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_core::domain::{
-    CarbonIntensity, GenerationMix, Granularity, LoadRecord, Measurement, Methodology, Region,
-    TimeRange, Vintage, WeatherForecast,
+    CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, GenerationMix,
+    Granularity, LoadRecord, Measurement, Methodology, Neighbor, Region, TimeRange, Vintage,
+    WeatherForecast,
 };
 use carbonfr_core::ports::{
-    ConsumptionRepository, IntensityRepository, VisitCounter, WeatherRepository,
+    ConsumptionRepository, CrossBorderRepository, IntensityRepository, VisitCounter,
+    WeatherRepository,
 };
 use time::{Date, Duration, Month, OffsetDateTime};
 
@@ -583,4 +585,81 @@ async fn stats_and_range_isolate_methodology() {
     let got = repo.range(Region::National, m, window).await.unwrap();
     assert_eq!(got.len(), 2);
     assert!(got.iter().all(|p| p.intensity.value() <= 20.0));
+}
+
+#[tokio::test]
+async fn cross_border_snapshot_roundtrips_and_picks_nearest() {
+    let Some(repo) = setup("test-pg-xborder").await else {
+        return;
+    };
+    let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(6200);
+    let t1 = t0 + Duration::hours(1);
+    sqlx::query("DELETE FROM cross_border_flow WHERE at >= $1 AND at <= $2")
+        .bind(t0)
+        .bind(t1)
+        .execute(repo.pool())
+        .await
+        .expect("nettoyage cross_border");
+
+    let snap = |at, flow_mw, intensity| CrossBorderSnapshot {
+        at,
+        flows: CrossBorderFlows::new(vec![
+            CrossBorderFlow {
+                neighbor: Neighbor::Germany,
+                flow_mw,
+                neighbor_intensity: CarbonIntensity::new(intensity).unwrap(),
+            },
+            CrossBorderFlow {
+                neighbor: Neighbor::Spain,
+                flow_mw: -500.0,
+                neighbor_intensity: CarbonIntensity::new(180.0).unwrap(),
+            },
+        ]),
+    };
+
+    let written = repo
+        .upsert_flows(&[snap(t0, 1000.0, 400.0), snap(t1, 2000.0, 420.0)])
+        .await
+        .unwrap();
+    assert_eq!(written, 4, "2 créneaux × 2 voisins");
+
+    // Pile sur t1 → le snapshot t1, deux frontières.
+    let at_t1 = repo.flows_at(t1).await.unwrap().expect("snapshot t1");
+    assert_eq!(at_t1.at, t1);
+    assert_eq!(at_t1.flows.flows.len(), 2);
+
+    // Entre t0 et t1 → le plus proche ≤, donc t0.
+    let between = repo
+        .flows_at(t0 + Duration::minutes(30))
+        .await
+        .unwrap()
+        .expect("snapshot ≤ cible");
+    assert_eq!(between.at, t0);
+    let de = between
+        .flows
+        .flows
+        .iter()
+        .find(|f| f.neighbor == Neighbor::Germany)
+        .unwrap();
+    assert_eq!(de.flow_mw, 1000.0);
+
+    // Avant tout → None.
+    assert!(
+        repo.flows_at(t0 - Duration::hours(1))
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // Ré-ingestion du même créneau → mise à jour, pas de doublon.
+    let rewritten = repo.upsert_flows(&[snap(t0, 1500.0, 410.0)]).await.unwrap();
+    assert_eq!(rewritten, 2);
+    let updated = repo.flows_at(t0).await.unwrap().unwrap();
+    let de = updated
+        .flows
+        .flows
+        .iter()
+        .find(|f| f.neighbor == Neighbor::Germany)
+        .unwrap();
+    assert_eq!(de.flow_mw, 1500.0, "valeur mise à jour");
 }

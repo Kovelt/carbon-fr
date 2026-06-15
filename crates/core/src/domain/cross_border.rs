@@ -46,6 +46,11 @@ impl Neighbor {
             Neighbor::GreatBritain => "gb",
         }
     }
+
+    /// Inverse de [`slug`](Neighbor::slug) (lecture depuis le stockage).
+    pub fn from_slug(slug: &str) -> Option<Neighbor> {
+        Neighbor::ALL.into_iter().find(|n| n.slug() == slug)
+    }
 }
 
 /// Flux net sur une frontière, **signé** (positif = import vers la France),

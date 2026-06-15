@@ -10,10 +10,12 @@ use axum::http::{Request, StatusCode};
 use carbonfr_adapter_forecast::ClimatologyForecaster;
 use carbonfr_adapter_http::{AppState, ForecastState, router};
 use carbonfr_core::domain::{
-    CarbonIntensity, GenerationMix, Granularity, IntensityStats, Measurement, Methodology, Region,
-    RollupBucket, TimeRange, Vintage, VisitStats,
+    CarbonIntensity, CrossBorderSnapshot, GenerationMix, Granularity, IntensityStats, Measurement,
+    Methodology, Region, RollupBucket, TimeRange, Vintage, VisitStats,
 };
-use carbonfr_core::ports::{IntensityRepository, RepositoryError, VisitCounter};
+use carbonfr_core::ports::{
+    CrossBorderRepository, IntensityRepository, RepositoryError, VisitCounter,
+};
 use time::{Date, Duration, OffsetDateTime};
 use tower::ServiceExt;
 
@@ -24,6 +26,7 @@ struct FakeRepo {
     measurement: Option<Measurement>,
     series: Vec<Measurement>,
     visits: Arc<Mutex<HashSet<(String, Date)>>>,
+    flows: Option<CrossBorderSnapshot>,
 }
 
 #[async_trait]
@@ -113,6 +116,20 @@ impl IntensityRepository for FakeRepo {
 }
 
 #[async_trait]
+impl CrossBorderRepository for FakeRepo {
+    async fn upsert_flows(&self, _: &[CrossBorderSnapshot]) -> Result<usize, RepositoryError> {
+        Ok(0)
+    }
+
+    async fn flows_at(
+        &self,
+        _: OffsetDateTime,
+    ) -> Result<Option<CrossBorderSnapshot>, RepositoryError> {
+        Ok(self.flows.clone())
+    }
+}
+
+#[async_trait]
 impl VisitCounter for FakeRepo {
     async fn record_visit(&self, visitor: &str, day: Date) -> Result<VisitStats, RepositoryError> {
         self.visits
@@ -188,16 +205,14 @@ fn build(repo: FakeRepo) -> axum::Router {
 fn app(measurement: Option<Measurement>) -> axum::Router {
     build(FakeRepo {
         measurement,
-        series: Vec::new(),
-        visits: Arc::default(),
+        ..Default::default()
     })
 }
 
 fn app_with_series(series: Vec<Measurement>) -> axum::Router {
     build(FakeRepo {
-        measurement: None,
         series,
-        visits: Arc::default(),
+        ..Default::default()
     })
 }
 
@@ -579,4 +594,48 @@ async fn greenest_window_estimator_selector() {
     // Estimateur inconnu → 400.
     let bad = get(app(None), "/v1/intensity/greenest-window?estimator=bogus").await;
     assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn consumption_intensity_v2_uses_import_context() {
+    use carbonfr_core::domain::{CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Neighbor};
+
+    // Mesure acv-ademe@1 (porte le mix FR) + contexte d'import carboné.
+    let mut measurement = national_measurement();
+    measurement.methodology = Methodology::acv_ademe();
+    let at = measurement.at;
+    let repo = FakeRepo {
+        measurement: Some(measurement),
+        flows: Some(CrossBorderSnapshot {
+            at,
+            flows: CrossBorderFlows::new(vec![CrossBorderFlow {
+                neighbor: Neighbor::Germany,
+                flow_mw: 5000.0,
+                neighbor_intensity: CarbonIntensity::new(400.0).unwrap(),
+            }]),
+        }),
+        ..Default::default()
+    };
+
+    let response = get(
+        build(repo),
+        "/v1/intensity/now?methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["methodology"], "acv-ademe");
+    assert_eq!(body["methodology_version"], 2);
+    // Import charbon → intensité consommation nettement au-dessus du mix FR (~12).
+    assert!(body["intensity"]["value"].as_f64().unwrap() > 15.0);
+}
+
+#[tokio::test]
+async fn consumption_intensity_v2_rejects_regional() {
+    let response = get(
+        app(Some(national_measurement())),
+        "/v1/intensity/now?region=bretagne&methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }

@@ -105,8 +105,16 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   domaine (mapping `PsrType` B01–B25 → filières, zones EIC). Token
   `CARBONFR_ENTSOE_TOKEN` ; jamais appelé par requête utilisateur. Parsing XML
   testé sur fixtures ; *chemins XML/codes calés sur le guide RESTful API ENTSO-E,
-  **à valider contre l'API live** (`tests/live.rs`, `--ignored`).* Câblage store
-  + poller + service de `acv-ademe@2` à venir (tranche B 2/2).
+  **à valider contre l'API live** (`tests/live.rs`, `--ignored`).*
+- **`acv-ademe@2` servie : store + ingestion + lecture** (ADR-0010, tranche B
+  2/2) : port + store Postgres `CrossBorderRepository` (table `cross_border_flow`,
+  migration `0007`, testé sur Postgres réel) ; le poller ingère le contexte
+  d'import à chaque cycle **si `CARBONFR_ENTSOE_TOKEN` est défini** (source
+  optionnelle, non bloquante) ; cas d'usage `GetConsumptionIntensity` (calcul
+  **à la lecture**, sans stockage de ligne `@2`) exposé via
+  **`GET /v1/intensity/now?methodology=acv-ademe&version=2`** (national).
+  `acv-ademe@2` passe `served` dans `/v1/methodologies`. Défaut de l'API inchangé
+  (`rte-direct`) ; sans token, le calcul renvoie `404` faute de contexte d'import.
 - **Compteur de consultation** : `GET /v1/stats` + `POST /v1/stats/visit`
   (port `VisitCounter`). IP **jamais stockée** — empreinte SHA-256 salée
   (`CARBONFR_VISIT_SALT`), déduplication unique par IP/jour ; IP lue via

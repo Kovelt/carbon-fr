@@ -406,11 +406,12 @@ impl MethodologiesResponse {
                     basis: "cycle de vie, basée consommation (imports inclus)",
                     scope: "national",
                     default: false,
-                    status: "planned",
+                    status: "served",
                     adr: "ADR-0010",
                     description: "Empreinte de l'électricité réellement consommée : imports \
                                   valorisés à l'intensité du voisin (ENTSO-E) + pertes T&D. \
-                                  Source d'import à brancher.",
+                                  Servie via ?methodology=acv-ademe&version=2 (national), si le \
+                                  contexte d'import a été ingéré.",
                 },
             ],
         }

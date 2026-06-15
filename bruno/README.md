@@ -31,6 +31,7 @@ bru run --env Local
 | Health | `200`, corps `ok` |
 | Intensité now — national (rte-direct / acv-ademe) | `200`, méthodologie |
 | Intensité now — régional Bretagne (acv-ademe) | `200`, région |
+| Intensité now — acv-ademe@2 (consommation) | `200`, version `2` (si contexte d'import ingéré) |
 | Mix — national / régional | `200`, unité `MW` |
 | Méthodologies — catalogue | `200`, défaut `rte-direct` |
 | Facteurs — acv-ademe | `200`, unité, filières |

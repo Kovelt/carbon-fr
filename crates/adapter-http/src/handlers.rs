@@ -5,10 +5,13 @@ use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use carbonfr_core::application::{
-    FindGreenestWindow, GetCurrentIntensity, GetIntensityHistory, GetIntensityStats,
+    FindGreenestWindow, GetConsumptionIntensity, GetCurrentIntensity, GetIntensityHistory,
+    GetIntensityStats,
 };
 use carbonfr_core::domain::{Granularity, Region, TimeRange, WindowEstimator};
-use carbonfr_core::ports::{ForecastModel, IntensityRepository, VisitCounter};
+use carbonfr_core::ports::{
+    CrossBorderRepository, ForecastModel, IntensityRepository, VisitCounter,
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
@@ -41,6 +44,9 @@ pub(crate) struct RegionQuery {
     region: Option<String>,
     /// Méthodologie : `rte-direct` (national) ou `acv-ademe`. Défaut `rte-direct`.
     methodology: Option<String>,
+    /// Version de la méthode. Pour `acv-ademe` : `1` = production (défaut),
+    /// `2` = consommation (imports inclus, national, ADR-0010).
+    version: Option<u32>,
 }
 
 impl RegionQuery {
@@ -87,10 +93,24 @@ pub(crate) async fn intensity_now<R>(
     Query(query): Query<RegionQuery>,
 ) -> Result<Json<IntensityResponse>, ApiError>
 where
-    R: IntensityRepository + Clone + Send + Sync + 'static,
+    R: IntensityRepository + CrossBorderRepository + Clone + Send + Sync + 'static,
 {
     let region = query.resolve()?;
     let methodology = resolve_methodology(&query.methodology, &state.methodology);
+
+    // Chemin `acv-ademe@2` consumption-based : calculé à la lecture depuis le mix
+    // FR + le contexte d'import (ADR-0010). National uniquement (§8).
+    if methodology == "acv-ademe" && query.version == Some(2) {
+        if region != Region::National {
+            return Err(ApiError::bad_request(
+                "acv-ademe@2 (consommation) n'est disponible qu'au national",
+            ));
+        }
+        let use_case = GetConsumptionIntensity::new(state.repo.clone(), state.repo.clone());
+        let measurement = use_case.execute(region).await?;
+        return Ok(Json(IntensityResponse::from_measurement(&measurement)?));
+    }
+
     let use_case = GetCurrentIntensity::new(state.repo.clone(), methodology);
     let measurement = use_case.execute(region).await?;
     Ok(Json(IntensityResponse::from_measurement(&measurement)?))

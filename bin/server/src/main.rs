@@ -42,6 +42,7 @@
 use std::net::SocketAddr;
 
 use anyhow::Context;
+use carbonfr_adapter_entsoe::EntsoeClient;
 use carbonfr_adapter_forecast::ClimatologyForecaster;
 use carbonfr_adapter_gbdt::{
     GbdtForecaster, GbdtHyperParams, build_training_examples, train_model,
@@ -55,8 +56,8 @@ use carbonfr_core::domain::{
     CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, ErrorMetrics, Region, TimeRange,
 };
 use carbonfr_core::ports::{
-    ConsumptionRepository, ConsumptionSource, Eco2mixArchive, Eco2mixSource, IntensityRepository,
-    WeatherForecastSource, WeatherRepository,
+    ConsumptionRepository, ConsumptionSource, CrossBorderRepository, CrossBorderSource,
+    Eco2mixArchive, Eco2mixSource, IntensityRepository, WeatherForecastSource, WeatherRepository,
 };
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, Month, OffsetDateTime};
@@ -94,7 +95,25 @@ async fn run_server() -> anyhow::Result<()> {
     // depuis la base. ODRÉ (intensité + charge) et Open-Meteo (prévision météo).
     let source = OdreClient::new().context("initialisation du client ODRÉ")?;
     let weather = OpenMeteoClient::new().context("initialisation du client Open-Meteo")?;
-    let poller = spawn_poller(source, weather, repo.clone(), config.poll_interval);
+    // ENTSO-E : optionnel (ADR-0010) — seulement si `CARBONFR_ENTSOE_TOKEN` est
+    // défini. Sans token, `acv-ademe@2` reste calculable mais sans donnée d'import.
+    let cross_border = match EntsoeClient::from_env() {
+        Ok(client) => {
+            info!("source d'import ENTSO-E configurée (acv-ademe@2 alimentée)");
+            Some(client)
+        }
+        Err(err) => {
+            info!(raison = %err, "ENTSO-E non configuré : acv-ademe@2 sans contexte d'import");
+            None
+        }
+    };
+    let poller = spawn_poller(
+        source,
+        weather,
+        cross_border,
+        repo.clone(),
+        config.poll_interval,
+    );
 
     // Prévision (ADR-0009) : modèle climatology@1 alimenté par le même
     // repository. Intervalles **calibrés** au démarrage par quantiles de résidus
@@ -805,16 +824,23 @@ fn parse_rfc3339_env(name: &str) -> anyhow::Result<Option<OffsetDateTime>> {
 /// Démarre la tâche d'ingestion périodique. La première itération s'exécute
 /// immédiatement. Une erreur d'ingestion est journalisée sans interrompre la
 /// boucle (la donnée sera rattrapée à la prochaine itération ou au backfill).
-fn spawn_poller<S, W, R>(
+fn spawn_poller<S, W, C, R>(
     source: S,
     weather: W,
+    cross_border: Option<C>,
     repo: R,
     interval: std::time::Duration,
 ) -> JoinHandle<()>
 where
     S: Eco2mixSource + ConsumptionSource + Clone + 'static,
     W: WeatherForecastSource + 'static,
-    R: IntensityRepository + ConsumptionRepository + WeatherRepository + Clone + 'static,
+    C: CrossBorderSource + 'static,
+    R: IntensityRepository
+        + ConsumptionRepository
+        + WeatherRepository
+        + CrossBorderRepository
+        + Clone
+        + 'static,
 {
     let ingest = IngestLatest::new(source.clone(), repo.clone());
     tokio::spawn(async move {
@@ -857,6 +883,24 @@ where
                 }
                 Ok(_) => {}
                 Err(err) => warn!(error = %err, "échec de récupération de la météo"),
+            }
+
+            // Contexte d'import transfrontalier (ENTSO-E, ADR-0010) — entrée du
+            // calcul `acv-ademe@2`. Optionnel : seulement si un token est
+            // configuré. Échec non bloquant.
+            if let Some(entsoe) = cross_border.as_ref() {
+                match entsoe.recent_flows().await {
+                    Ok(snapshots) if !snapshots.is_empty() => {
+                        match repo.upsert_flows(&snapshots).await {
+                            Ok(n) => info!(flows = n, "ingestion contexte d'import (ENTSO-E)"),
+                            Err(err) => {
+                                warn!(error = %err, "échec d'écriture du contexte d'import")
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(err) => warn!(error = %err, "échec de récupération ENTSO-E"),
+                }
             }
 
             // Rollups rafraîchis une fois par cycle si la donnée a changé.

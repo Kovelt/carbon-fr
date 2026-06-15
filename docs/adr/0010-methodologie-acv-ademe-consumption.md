@@ -43,11 +43,26 @@ Parsing XML **testé sur fixtures** (hermétique) ; chemins XML/codes calés sur
 guide RESTful API ENTSO-E, **à valider contre l'API live** (test `tests/live.rs`,
 `--ignored`, token requis).
 
-**À venir (tranche B 2/2) :** `CrossBorderRepository` côté Postgres (migration +
-store du contexte d'import) + ingestion par le poller + **service effectif** de
-`acv-ademe@2` à la lecture (calcul via `AcvAdemeConsumption` à partir du mix FR +
-du snapshot d'import). Tant que ce câblage n'est pas en place, `acv-ademe@2` reste
-`planned` dans `/v1/methodologies`. Le défaut de l'API **reste `rte-direct`**.
+**Tranche B (2/2) — store + ingestion + service : livrée.**
+
+- **Store** : port `CrossBorderRepository` + table `cross_border_flow`
+  (`(at, neighbor)`, migration `0007`) ; `upsert_flows` (multi-lignes, dédup
+  `(at, neighbor)`) et `flows_at` (snapshot du dernier horodatage ≤ cible).
+  Validé par test d'intégration Postgres réel.
+- **Ingestion** : le poller ingère le contexte d'import à chaque cycle **si**
+  `CARBONFR_ENTSOE_TOKEN` est défini (source optionnelle, échec non bloquant).
+- **Service** : cas d'usage `GetConsumptionIntensity` (calcul **à la lecture**,
+  ADR-0010 §6 — aucune ligne `@2` stockée) ; servi via
+  **`GET /v1/intensity/now?methodology=acv-ademe&version=2`** (national, §8).
+  `acv-ademe@2` passe `served` dans `/v1/methodologies`.
+
+Le défaut de l'API **reste `rte-direct`**. Sans token ENTSO-E, le chemin de calcul
+existe mais renvoie `404` faute de contexte d'import ingéré.
+
+**Reste ouvert** : (a) **validation des chemins XML ENTSO-E** contre l'API live
+(test `--ignored`, token) ; (b) `TD_LOSS_FACTOR_V1 = 0,072` à sourcer
+précisément ; (c) `@2` sur l'historique/les stats (rollups, §6) — le point
+(`now`) est servi, l'agrégé viendra avec les rollups de variante.
 
 ## Contexte
 

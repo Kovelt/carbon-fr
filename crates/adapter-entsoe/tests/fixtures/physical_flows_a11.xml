@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Publication_MarketDocument
+    				xmlns="urn:iec62325.351:tc57wg16:451-3:publicationdocument:7:0"
+		>
+    <mRID>1</mRID>
+    <revisionNumber>1</revisionNumber>
+    <type>A11</type> <!-- A11 = Aggregated energy data report -->
+	
+    <sender_MarketParticipant.mRID codingScheme="A01" >10XDE-VE-TRANSMK</sender_MarketParticipant.mRID>     
+    <sender_MarketParticipant.marketRole.type>A04</sender_MarketParticipant.marketRole.type>   <!-- (code of Srole associated with MarketParticipant)
+    																								A04 = System Operator or TSO
+																									A39 = Data Provider
+																									A07 = Transmission Capacity Allocator
+																									A11 = Market Operator
+																									A32 = Market Information Aggregator
+																									A36 = Capacity Coordinator
+    																							-->
+   	<receiver_MarketParticipant.mRID codingScheme="A01">10X1001A1001A450</receiver_MarketParticipant.mRID>  <!-- (code of doc. recipient) -->
+    <receiver_MarketParticipant.marketRole.type>A32</receiver_MarketParticipant.marketRole.type>       <!-- (code of role associated with MarketParticipant) -->
+    
+    <createdDateTime>2013-12-18T12:15:21Z</createdDateTime>	
+  	<period.timeInterval>
+		<start>2013-12-18T23:00Z</start>
+		<end>2013-12-19T23:00Z</end>
+	</period.timeInterval>
+    
+    <TimeSeries>
+        <mRID>1</mRID>
+
+        <businessType>A66</businessType>	<!-- A66 = Energy flow -->
+        <in_Domain.mRID codingScheme="A01">10YDE-VE-------2</in_Domain.mRID>			<!-- The domain where energy is going associated with a TimeSeries -->	
+        <out_Domain.mRID codingScheme="A01">10YCZ-CEPS-----N</out_Domain.mRID>			<!-- The domain where energy is coming from associated with a TimeSeries. -->
+        <quantity_Measure_Unit.name>MAW</quantity_Measure_Unit.name>
+        
+        <curveType>A03</curveType>
+         
+        <Period>
+        
+            <timeInterval>
+				<start>2013-12-18T23:00Z</start>
+				<end>2013-12-19T23:00Z</end>
+			</timeInterval>
+            <resolution>PT60M</resolution>
+            <Point>
+	            <position>1</position>
+                <quantity>100</quantity>
+            </Point>
+        </Period>        
+    </TimeSeries>
+    
+    
+    <TimeSeries>
+        <mRID>2</mRID>
+
+        <businessType>A66</businessType>	<!-- A66 = Energy flow -->
+        <in_Domain.mRID codingScheme="A01">10YCZ-CEPS-----N</in_Domain.mRID>			<!-- The domain where energy is going associated with a TimeSeries -->	
+        <out_Domain.mRID codingScheme="A01">10YDE-VE-------2</out_Domain.mRID>			<!-- The domain where energy is coming from associated with a TimeSeries. -->
+        <quantity_Measure_Unit.name>MAW</quantity_Measure_Unit.name>
+        
+        <curveType>A03</curveType>
+         
+        <Period>
+        
+            <timeInterval>
+				<start>2013-12-18T22:00Z</start>
+				<end>2013-12-19T22:00Z</end>
+			</timeInterval>
+            <resolution>PT60M</resolution>
+            <Point>
+	            <position>1</position>
+                <quantity>10</quantity>
+            </Point>
+        </Period>        
+    </TimeSeries>
+</Publication_MarketDocument>

@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<GL_MarketDocument xmlns="urn:iec62325.351:tc57wg16:451-6:generationloaddocument:3:0">
+    <mRID>1</mRID>
+    <revisionNumber>1</revisionNumber>
+    <type>A75</type>	<!-- A75 = Actual generation per type / A74 = Wind and Solar generation-->
+    <process.processType>A16</process.processType>	<!-- A16 = Realised -->
+    <sender_MarketParticipant.mRID codingScheme="A01" >10XDE-VE-TRANSMK</sender_MarketParticipant.mRID>         <!-- (document owner (Code)) -->
+    <sender_MarketParticipant.marketRole.type>A04</sender_MarketParticipant.marketRole.type>   <!-- (code of Srole associated with MarketParticipant) -->
+    <receiver_MarketParticipant.mRID codingScheme="A01">10X1001A1001A450</receiver_MarketParticipant.mRID>  <!-- (code of doc. recipient) -->
+    <receiver_MarketParticipant.marketRole.type>A32</receiver_MarketParticipant.marketRole.type>       <!-- (code of Rrole associated with MarketParticipant) -->
+    <createdDateTime>2013-12-18T13:15:21Z</createdDateTime>	
+    <time_Period.timeInterval>
+		<start>2013-12-18T12:00Z</start>
+		<end>2013-12-18T13:00Z</end>
+	</time_Period.timeInterval>
+    <TimeSeries>  <!-- Generation -->
+        <mRID>1</mRID>
+        <businessType>A01</businessType>   <!-- A01 = Production -->
+        <objectAggregation>A08</objectAggregation> <!-- A08 = Resource type -->
+        <inBiddingZone_Domain.mRID codingScheme="A01">10YDE-VE-------2</inBiddingZone_Domain.mRID> <!-- used to describe generation -->
+        <quantity_Measure_Unit.name>MAW</quantity_Measure_Unit.name>
+        <curveType>A01</curveType>  <!-- A01 = Sequential fixed block | A03 = Variable sized blocks -->
+        <!-- <cancelledTS>A01</cancelledTS> -->
+		<!-- Used to cancel the entire timeseries -->
+        <MktPSRType>
+    		<psrType>B14</psrType>  <!-- B01 = Biomass; B02 = Fossil Brown coal/Lignite; B03 = Fossil Coal-derived gas; B04 = Fossil Gas; 
+                                    B05 = Fossil Hard coal; B06 = Fossil Oil; B07 = Fossil Oil shale; B08 = Fossil Peat; B09 = Geothermal; 
+                                    B10 = Hydro Pumped Storage; B11 = Hydro Run-of-river and poundage; B12 = Hydro Water Reservoir; 
+                                    B13 = Marine; B14 = Nuclear; B15 = Other renewable; B16 = Solar; B17 = Waste; B18 = Wind Offshore; 
+                                    B19 = Wind Onshore; B20 = Other; B25 = Energy storage -->
+   		</MktPSRType>
+        <Period>
+            <timeInterval>
+				<start>2013-12-18T12:00Z</start>
+				<end>2013-12-18T13:00Z</end>
+			</timeInterval>
+            <resolution>PT60M</resolution>
+            <Point>
+                <position>1</position>
+                <quantity>100</quantity>
+            </Point>
+        </Period>
+    </TimeSeries>
+    <TimeSeries> <!-- Consumption - optional -->
+        <mRID>2</mRID>
+        <businessType>A01</businessType>   <!-- A01 = Production -->
+        <objectAggregation>A08</objectAggregation> <!-- A08 = Resource type -->
+        <outBiddingZone_Domain.mRID codingScheme="A01">10YDE-VE-------2</outBiddingZone_Domain.mRID> <!-- used to describe consumption -->
+        <quantity_Measure_Unit.name>MAW</quantity_Measure_Unit.name>
+        <curveType>A01</curveType>  <!-- A01 = Sequential fixed block | A03 = Variable sized blocks -->
+        <MktPSRType>
+    		<psrType>B14</psrType>  <!-- B01 = Biomass; B02 = Fossil Brown coal/Lignite; B03 = Fossil Coal-derived gas; B04 = Fossil Gas; 
+                                    B05 = Fossil Hard coal; B06 = Fossil Oil; B07 = Fossil Oil shale; B08 = Fossil Peat; B09 = Geothermal; 
+                                    B10 = Hydro Pumped Storage; B11 = Hydro Run-of-river and poundage; B12 = Hydro Water Reservoir; 
+                                    B13 = Marine; B14 = Nuclear; B15 = Other renewable; B16 = Solar; B17 = Waste; B18 = Wind Offshore; 
+                                    B19 = Wind Onshore; B20 = Other; B25 = Energy storage -->
+   		</MktPSRType>
+        <Period>
+            <timeInterval>
+				<start>2013-12-18T12:00Z</start>
+				<end>2013-12-18T13:00Z</end>
+			</timeInterval>
+            <resolution>PT60M</resolution>
+            <Point>
+                <position>1</position>
+                <quantity>100</quantity>
+            </Point>
+        </Period>
+    </TimeSeries>
+    <TimeSeries> <!-- Wind/Solar generation -->
+        <mRID>3</mRID>
+        <businessType>A93</businessType>   <!-- A93 = wind generation; A94 = solar generation -->
+        <objectAggregation>A08</objectAggregation> <!-- A08 = Resource type -->
+        <inBiddingZone_Domain.mRID codingScheme="A01">10YDE-VE-------2</inBiddingZone_Domain.mRID>
+        <quantity_Measure_Unit.name>MAW</quantity_Measure_Unit.name>
+        <curveType>A01</curveType> <!-- A01 = Sequential fixed block | A03 = Variable sized blocks -->
+        <MktPSRType>
+    		<psrType>B19</psrType>  <!--B16 = Solar; B18 = wind offshore; B19 = wind onshore;  -->
+   		</MktPSRType>
+        <Period>
+            <timeInterval>
+				<start>2013-12-18T12:00Z</start>
+				<end>2013-12-18T13:00Z</end>
+			</timeInterval>
+            <resolution>PT60M</resolution>
+            <Point>
+                <position>1</position>
+                <quantity>100</quantity>
+            </Point>
+        </Period>
+    </TimeSeries>    
+</GL_MarketDocument>

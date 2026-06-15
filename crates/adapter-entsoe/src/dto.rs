@@ -62,8 +62,15 @@ pub(crate) struct MktPsrType {
 }
 
 /// `TimeSeries` d'un document de génération (`GL_MarketDocument`).
+///
+/// Une série porte **soit** `inBiddingZone_Domain.mRID` (production), **soit**
+/// `outBiddingZone_Domain.mRID` (consommation associée, p. ex. pompage). On ne
+/// retient que la **production** : sommer les deux double-compterait (vérifié sur
+/// l'exemple officiel A75 qui contient une série de consommation).
 #[derive(Debug, Deserialize)]
 pub(crate) struct GenerationTimeSeries {
+    #[serde(default, rename = "inBiddingZone_Domain.mRID")]
+    pub in_domain: Option<String>,
     #[serde(rename = "MktPSRType")]
     pub psr: MktPsrType,
     #[serde(default, rename = "Period")]
@@ -145,6 +152,11 @@ impl GenerationDocument {
     pub(crate) fn mix_by_instant(&self) -> Result<MixByInstant, EntsoeError> {
         let mut out: MixByInstant = BTreeMap::new();
         for ts in &self.series {
+            // Production seulement : on saute les séries de consommation
+            // (`outBiddingZone_Domain` ⇒ pas d'`inBiddingZone_Domain`).
+            if ts.in_domain.is_none() {
+                continue;
+            }
             let filiere = psr_type_to_filiere(&ts.psr.psr_type);
             for period in &ts.periods {
                 for (at, mw) in period.expand()? {
@@ -188,6 +200,7 @@ mod tests {
     const GENERATION_XML: &str = r#"<?xml version="1.0"?>
 <GL_MarketDocument xmlns="urn:iec62325.351:tc57wg16:451-6:generationloaddocument:3:0">
   <TimeSeries>
+    <inBiddingZone_Domain.mRID codingScheme="A01">10YFR-RTE------C</inBiddingZone_Domain.mRID>
     <MktPSRType><psrType>B14</psrType></MktPSRType>
     <Period>
       <timeInterval><start>2024-01-01T00:00Z</start><end>2024-01-01T01:00Z</end></timeInterval>
@@ -196,6 +209,7 @@ mod tests {
     </Period>
   </TimeSeries>
   <TimeSeries>
+    <inBiddingZone_Domain.mRID codingScheme="A01">10YFR-RTE------C</inBiddingZone_Domain.mRID>
     <MktPSRType><psrType>B04</psrType></MktPSRType>
     <Period>
       <timeInterval><start>2024-01-01T00:00Z</start><end>2024-01-01T01:00Z</end></timeInterval>
@@ -234,10 +248,38 @@ mod tests {
         assert_eq!(series.get(&datetime!(2024-01-01 00:00 UTC)), Some(&1500.0));
     }
 
+    // Exemples XML **officiels** ENTSO-E (gitlab.entsoe.eu/transparency/xml-examples)
+    // — la validation qui compte : on parse la donnée telle que la plateforme la
+    // produit, pas seulement nos fixtures faites main.
+    const REAL_A75: &str = include_str!("../tests/fixtures/generation_a75.xml");
+    const REAL_A11: &str = include_str!("../tests/fixtures/physical_flows_a11.xml");
+
+    #[test]
+    fn parses_official_a75_and_excludes_consumption_series() {
+        let doc: GenerationDocument = quick_xml::de::from_str(REAL_A75).unwrap();
+        let mix = doc.mix_by_instant().unwrap();
+        let slot = mix.get(&datetime!(2013-12-18 12:00 UTC)).unwrap();
+        // 3 TimeSeries : génération B14 (100), CONSOMMATION B14 (100, exclue),
+        // génération B19 éolien (100). Le nucléaire doit valoir 100, pas 200.
+        assert_eq!(slot.nucleaire, 100.0, "consommation non exclue → 200");
+        assert_eq!(slot.eolien, 100.0);
+    }
+
+    #[test]
+    fn parses_official_a11_flow() {
+        let doc: FlowDocument = quick_xml::de::from_str(REAL_A11).unwrap();
+        let series = doc.flow_series().unwrap();
+        // Deux directions dans l'exemple (en requête réelle, une seule par appel).
+        assert_eq!(series.get(&datetime!(2013-12-18 23:00 UTC)), Some(&100.0));
+        assert_eq!(series.get(&datetime!(2013-12-18 22:00 UTC)), Some(&10.0));
+    }
+
     #[test]
     fn quarter_hourly_positions_advance_by_15min() {
         let xml = r#"<GL_MarketDocument>
-          <TimeSeries><MktPSRType><psrType>B16</psrType></MktPSRType>
+          <TimeSeries>
+            <inBiddingZone_Domain.mRID>10YFR-RTE------C</inBiddingZone_Domain.mRID>
+            <MktPSRType><psrType>B16</psrType></MktPSRType>
             <Period>
               <timeInterval><start>2024-06-01T10:00Z</start><end>2024-06-01T10:30Z</end></timeInterval>
               <resolution>PT15M</resolution>

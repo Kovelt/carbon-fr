@@ -10,6 +10,7 @@ mod forecast;
 mod intensity;
 mod measurement;
 mod methodology;
+mod metrics;
 mod region;
 mod stats;
 mod time_range;
@@ -21,6 +22,7 @@ pub use forecast::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, clima
 pub use intensity::CarbonIntensity;
 pub use measurement::{GenerationMix, Measurement, MeasurementKey};
 pub use methodology::{Methodology, Vintage};
+pub use metrics::{ErrorAccumulator, ErrorMetrics};
 pub use region::Region;
 pub use stats::{Granularity, IntensityStats, RollupBucket};
 pub use time_range::TimeRange;

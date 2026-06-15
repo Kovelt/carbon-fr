@@ -42,6 +42,10 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `GET /v1/intensity/greenest-window?from=&horizon_hours=&window_minutes=`
   (créneau le plus bas-carbone). Prévisions **non persistées** (calculées à la
   lecture) ; l'identité du modèle est exposée dans chaque réponse.
+- **Backtest** du modèle de prévision (`carbonfr-server backtest`, ADR-0009) :
+  évaluation *walk-forward* sur l'historique, MAE/RMSE global et par horizon
+  (h+1/h+6/h+24), comparés à une référence de persistance — pour mesurer la
+  précision plutôt que la supposer.
 - **Compteur de consultation** : `GET /v1/stats` + `POST /v1/stats/visit`
   (port `VisitCounter`). IP **jamais stockée** — empreinte SHA-256 salée
   (`CARBONFR_VISIT_SALT`), déduplication unique par IP/jour ; IP lue via

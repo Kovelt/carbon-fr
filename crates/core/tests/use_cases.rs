@@ -487,3 +487,207 @@ async fn backfill_slices_range_and_upserts_each_window() {
         .unwrap();
     assert_eq!(stored.len(), 24);
 }
+
+/// Modèle de prévision *fake* : valeur constante sur la grille (`from + k·step`),
+/// pour piloter l'erreur de façon déterministe dans le backtest.
+struct GridForecast {
+    value: f64,
+    step: Duration,
+}
+
+#[async_trait]
+impl ForecastModel for GridForecast {
+    async fn forecast(
+        &self,
+        region: Region,
+        _methodology_id: &str,
+        from: OffsetDateTime,
+        horizon: Duration,
+    ) -> Result<Vec<Measurement>, ForecastError> {
+        let mut points = Vec::new();
+        let mut at = from;
+        while at < from + horizon {
+            points.push(measurement(at, region, self.value, Vintage::Tr));
+            at += self.step;
+        }
+        Ok(points)
+    }
+}
+
+#[tokio::test]
+async fn backtest_reports_model_and_persistence_error() {
+    use carbonfr_core::application::BacktestForecast;
+
+    let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(30);
+    let step = Duration::minutes(15);
+
+    // Observé : plat à 50, du lendemain d'avant l'origine jusqu'au-delà des
+    // horizons (couvre l'ancre de persistance et l'observé évalué).
+    let repo = InMemoryRepo::default();
+    let observed: Vec<Measurement> = (0..(4 * 24 * 4)) // 4 jours au pas 15 min
+        .map(|i| {
+            measurement(
+                t0 - Duration::days(1) + step * i,
+                Region::National,
+                50.0,
+                Vintage::Tr,
+            )
+        })
+        .collect();
+    repo.upsert_many(&observed).await.unwrap();
+
+    // Modèle constant à 55 → erreur de +5 partout ; persistance = 50 (plat) → 0.
+    let backtest = BacktestForecast::new(GridForecast { value: 55.0, step }, repo, "rte-direct");
+
+    let test = TimeRange::new(t0, t0 + Duration::days(2)).unwrap();
+    let report = backtest
+        .execute(
+            Region::National,
+            test,
+            Duration::days(1), // une origine par jour → 2 origines
+            step,
+            &[Duration::hours(1)],
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(report.origins, 2);
+
+    let model = report.model.expect("métriques modèle");
+    assert!((model.mae - 5.0).abs() < 1e-9, "MAE modèle = {}", model.mae);
+    assert!((model.rmse - 5.0).abs() < 1e-9);
+
+    let persistence = report.persistence.expect("métriques persistance");
+    assert!(
+        persistence.mae.abs() < 1e-9,
+        "la persistance d'un signal plat est parfaite, MAE = {}",
+        persistence.mae
+    );
+
+    // Détail à h+1.
+    let h1 = &report.by_horizon[0];
+    assert_eq!(h1.horizon, Duration::hours(1));
+    assert!((h1.model.unwrap().mae - 5.0).abs() < 1e-9);
+    assert!(h1.persistence.unwrap().mae.abs() < 1e-9);
+}
+
+#[tokio::test]
+async fn backtest_aligns_origins_to_grid() {
+    use carbonfr_core::application::BacktestForecast;
+
+    let step = Duration::minutes(15);
+    // Observé sur la grille du quart d'heure ; fenêtre de test décalée de 7 min
+    // (origine non alignée) → sans alignement, aucune paire ne serait comparée.
+    let grid0 = OffsetDateTime::UNIX_EPOCH + Duration::days(30);
+    let repo = InMemoryRepo::default();
+    let observed: Vec<Measurement> = (0..(3 * 24 * 4))
+        .map(|i| {
+            measurement(
+                grid0 - Duration::days(1) + step * i,
+                Region::National,
+                50.0,
+                Vintage::Tr,
+            )
+        })
+        .collect();
+    repo.upsert_many(&observed).await.unwrap();
+
+    let backtest = BacktestForecast::new(GridForecast { value: 55.0, step }, repo, "rte-direct");
+    let test = TimeRange::new(grid0 + Duration::minutes(7), grid0 + Duration::days(1)).unwrap();
+    let report = backtest
+        .execute(
+            Region::National,
+            test,
+            Duration::days(1),
+            step,
+            &[Duration::hours(1)],
+        )
+        .await
+        .unwrap();
+
+    // L'origine décalée est ramenée sur la grille → des paires sont comparées.
+    assert_eq!(report.origins, 1);
+    let model = report
+        .model
+        .expect("paires comparées malgré l'origine décalée");
+    assert!((model.mae - 5.0).abs() < 1e-9);
+}
+
+/// Modèle *fake* indisponible avant `available_from` (simule le démarrage à
+/// froid : pas assez d'historique pour les premières origines).
+struct ColdStartForecast {
+    available_from: OffsetDateTime,
+    value: f64,
+    step: Duration,
+}
+
+#[async_trait]
+impl ForecastModel for ColdStartForecast {
+    async fn forecast(
+        &self,
+        region: Region,
+        _methodology_id: &str,
+        from: OffsetDateTime,
+        horizon: Duration,
+    ) -> Result<Vec<Measurement>, ForecastError> {
+        if from < self.available_from {
+            return Err(ForecastError::NotEnoughData);
+        }
+        let mut points = Vec::new();
+        let mut at = from;
+        while at < from + horizon {
+            points.push(measurement(at, region, self.value, Vintage::Tr));
+            at += self.step;
+        }
+        Ok(points)
+    }
+}
+
+#[tokio::test]
+async fn backtest_skips_origins_without_history() {
+    use carbonfr_core::application::BacktestForecast;
+
+    let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(30);
+    let step = Duration::minutes(15);
+
+    let repo = InMemoryRepo::default();
+    let observed: Vec<Measurement> = (0..(5 * 24 * 4))
+        .map(|i| {
+            measurement(
+                t0 - Duration::days(1) + step * i,
+                Region::National,
+                50.0,
+                Vintage::Tr,
+            )
+        })
+        .collect();
+    repo.upsert_many(&observed).await.unwrap();
+
+    // La prévision n'est disponible qu'à partir de t0 + 1 jour : la première
+    // origine (t0) est sautée, pas fatale.
+    let backtest = BacktestForecast::new(
+        ColdStartForecast {
+            available_from: t0 + Duration::days(1),
+            value: 55.0,
+            step,
+        },
+        repo,
+        "rte-direct",
+    );
+
+    let test = TimeRange::new(t0, t0 + Duration::days(3)).unwrap(); // origines t0, +1j, +2j
+    let report = backtest
+        .execute(
+            Region::National,
+            test,
+            Duration::days(1),
+            step,
+            &[Duration::hours(1)],
+        )
+        .await
+        .unwrap();
+
+    // t0 sautée → 2 origines évaluées, l'erreur reste bien définie.
+    assert_eq!(report.origins, 2);
+    assert!((report.model.unwrap().mae - 5.0).abs() < 1e-9);
+}

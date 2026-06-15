@@ -83,6 +83,9 @@ DATABASE_URL=postgres://localhost/carbonfr cargo run -p server
 # Backfill de l'historique national par export de masse (one-shot) :
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backfill
 
+# Backtest du modèle de prévision climatology@1 (walk-forward, MAE/RMSE) :
+DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest
+
 # Tests d'intégration nécessitant des ressources externes :
 DATABASE_URL=postgres://localhost/carbonfr_test \
   cargo test -p carbonfr-adapter-postgres --test pg     # Postgres réel
@@ -110,12 +113,12 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
   - [x] endpoint de lecture d'historique `/v1/intensity/date?from=&to=` (cas d'usage `GetIntensityHistory`, fenêtre ≤ 366 j).
   - [x] rollups (vues matérialisées horaire/journalier) + `/v1/intensity/stats` (résumé exact sur `measurement` + série depuis les rollups ; rafraîchis par poller & backfill).
   - [x] **méthodologie `acv-ademe`** (cycle de vie, ADR-0008) : définie + dérivée/stockée à l'ingestion + `?methodology=`. **National** (dérivé du mix complet) **et 12 régions** (mix régional `eco2mix-regional-*`, `thermique` agrégé → facteur gaz). `rte-direct` reste national.
-- [ ] Phase 3 — prévision :
+- [x] Phase 3 — prévision :
   - [x] **ADR-0009** — modèle `climatology@1` (climatologie horaire-de-semaine glissante + correction de persistance décroissante). Pur, explicable, sans dépendance externe, alimenté par le backfill. Prévisions **non persistées** (calculées à la lecture, ADR-0006 intacte). Endpoints `/v1/intensity/forecast` et `/v1/intensity/greenest-window`.
   - [x] fonction pure de domaine (`climatology_forecast`) + adapter `ClimatologyForecaster` (`ForecastModel`, lit l'historique via `IntensityRepository`).
   - [x] handlers `/v1` (`forecast` + `greenest-window`) + DTO (id de modèle `climatology@1`) + OpenAPI + câblage composition root.
   - [x] collection Bruno des deux endpoints de prévision.
-  - [ ] backtest held-out publiant l'erreur (MAE/RMSE).
+  - [x] **backtest** walk-forward (`carbonfr-server backtest`) : MAE/RMSE global + par horizon (h+1/h+6/h+24), modèle vs persistance. Maths d'erreur pures (`ErrorAccumulator`/`ErrorMetrics`), orchestration en cas d'usage `BacktestForecast` (testée avec fakes). **Phase 3 terminée.**
 
 ### Repères d'implémentation (phases 1-2)
 

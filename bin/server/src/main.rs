@@ -1,11 +1,14 @@
 //! # carbonfr-server — composition root
 //!
 //! Le seul composant qui connaît les implémentations concrètes des ports et les
-//! assemble (ADR-0002). Deux modes selon la sous-commande :
+//! assemble (ADR-0002). Trois modes selon la sous-commande :
 //!
 //! - (aucune) : sert l'API et lance le **poller** (temps réel).
 //! - `backfill` : rapatrie l'historique par **export de masse** (ADR-0003),
 //!   puis s'arrête.
+//! - `backtest` : évalue le modèle de prévision `climatology@1` sur l'historique
+//!   (walk-forward), imprime MAE/RMSE (modèle vs persistance), puis s'arrête
+//!   (ADR-0009).
 //!
 //! ## Configuration (variables d'environnement)
 //!
@@ -17,6 +20,10 @@
 //! | `CARBONFR_BACKFILL_FROM`     | `2012-01-01T00:00:00Z` | début du backfill (RFC 3339) |
 //! | `CARBONFR_BACKFILL_TO`       | maintenant     | fin du backfill (RFC 3339)        |
 //! | `CARBONFR_BACKFILL_WINDOW_DAYS` | `90`        | largeur de tranche d'export       |
+//! | `CARBONFR_BACKTEST_FROM`/`_TO` | 30 derniers jours | fenêtre de test (RFC 3339)   |
+//! | `CARBONFR_BACKTEST_REGION`   | `national`     | région évaluée (slug)             |
+//! | `CARBONFR_BACKTEST_METHODOLOGY` | `rte-direct` | méthodologie évaluée             |
+//! | `CARBONFR_BACKTEST_ORIGIN_STEP_HOURS` | `24`  | espacement des origines           |
 //! | `RUST_LOG`                   | `info`         | filtre de logs (`tracing`)        |
 
 use std::net::SocketAddr;
@@ -26,8 +33,8 @@ use carbonfr_adapter_forecast::ClimatologyForecaster;
 use carbonfr_adapter_http::{AppState, ForecastState, router};
 use carbonfr_adapter_odre::OdreClient;
 use carbonfr_adapter_postgres::PgIntensityRepository;
-use carbonfr_core::application::{BackfillHistory, IngestLatest};
-use carbonfr_core::domain::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, Region, TimeRange};
+use carbonfr_core::application::{BackfillHistory, BacktestForecast, BacktestReport, IngestLatest};
+use carbonfr_core::domain::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ErrorMetrics, Region, TimeRange};
 use carbonfr_core::ports::{Eco2mixSource, IntensityRepository};
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, Month, OffsetDateTime};
@@ -43,9 +50,10 @@ async fn main() -> anyhow::Result<()> {
     match std::env::args().nth(1).as_deref() {
         None => run_server().await,
         Some("backfill") => run_backfill().await,
+        Some("backtest") => run_backtest().await,
         Some(other) => {
             anyhow::bail!(
-                "sous-commande inconnue : « {other} » (attendu : `backfill`, ou aucune pour servir l'API)"
+                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, ou aucune pour servir l'API)"
             )
         }
     }
@@ -114,6 +122,90 @@ async fn run_backfill() -> anyhow::Result<()> {
         .context("rafraîchissement des rollups")?;
     info!("rollups rafraîchis");
     Ok(())
+}
+
+/// Mode backtest : évalue `climatology@1` sur l'historique (walk-forward),
+/// imprime MAE/RMSE (modèle vs persistance, global et par horizon), puis arrête.
+///
+/// Configuration : `CARBONFR_BACKTEST_FROM`/`_TO` (RFC 3339 ; défaut 30 derniers
+/// jours), `_REGION` (slug ; défaut `national`), `_METHODOLOGY` (défaut
+/// `rte-direct`), `_ORIGIN_STEP_HOURS` (défaut 24).
+async fn run_backtest() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let forecaster = ClimatologyForecaster::new(repo.clone());
+
+    let region_slug =
+        std::env::var("CARBONFR_BACKTEST_REGION").unwrap_or_else(|_| "national".to_string());
+    let region = Region::from_slug(&region_slug)
+        .with_context(|| format!("CARBONFR_BACKTEST_REGION : région inconnue « {region_slug} »"))?;
+    let methodology =
+        std::env::var("CARBONFR_BACKTEST_METHODOLOGY").unwrap_or_else(|_| "rte-direct".to_string());
+
+    let to = parse_rfc3339_env("CARBONFR_BACKTEST_TO")?.unwrap_or_else(OffsetDateTime::now_utc);
+    let from = parse_rfc3339_env("CARBONFR_BACKTEST_FROM")?.unwrap_or(to - Duration::days(30));
+    let test = TimeRange::new(from, to).context("fenêtre de backtest invalide (fin <= début)")?;
+
+    let origin_step_hours = std::env::var("CARBONFR_BACKTEST_ORIGIN_STEP_HOURS")
+        .ok()
+        .map(|raw| raw.parse::<i64>())
+        .transpose()
+        .context("CARBONFR_BACKTEST_ORIGIN_STEP_HOURS : entier invalide")?
+        .unwrap_or(24);
+    anyhow::ensure!(
+        origin_step_hours > 0,
+        "CARBONFR_BACKTEST_ORIGIN_STEP_HOURS doit être > 0"
+    );
+
+    // Pas natif éCO2mix ; horizons rapportés (ADR-0009).
+    let step = Duration::minutes(15);
+    let checkpoints = [Duration::hours(1), Duration::hours(6), Duration::hours(24)];
+    let model = format!("{CLIMATOLOGY_ID}@{CLIMATOLOGY_VERSION}");
+
+    info!(region = region.slug(), %methodology, model = %model, from = %from, to = %to, "backtest démarré");
+
+    let backtest = BacktestForecast::new(forecaster, repo, methodology.clone());
+    let report = backtest
+        .execute(
+            region,
+            test,
+            Duration::hours(origin_step_hours),
+            step,
+            &checkpoints,
+        )
+        .await
+        .context("backtest")?;
+
+    print_backtest_report(&model, region.slug(), &methodology, &report);
+    Ok(())
+}
+
+/// Imprime le rapport de backtest sous forme de tableau lisible (stdout).
+fn print_backtest_report(model: &str, region: &str, methodology: &str, report: &BacktestReport) {
+    println!();
+    println!("Backtest {model} — région {region}, méthodologie {methodology}");
+    println!("Origines évaluées : {}", report.origins);
+    println!();
+    println!("{:<20} {:>10} {:>10} {:>10}", "Série", "MAE", "RMSE", "n");
+    print_metrics_row("global (modèle)", report.model);
+    print_metrics_row("global (persist.)", report.persistence);
+    for horizon in &report.by_horizon {
+        let label = format!("h+{}", horizon.horizon.whole_hours());
+        print_metrics_row(&format!("{label} (modèle)"), horizon.model);
+        print_metrics_row(&format!("{label} (persist.)"), horizon.persistence);
+    }
+    println!();
+    println!(
+        "Unité : gCO₂eq/kWh. Plus bas = mieux ; le modèle n'a de valeur que s'il bat la persistance."
+    );
+}
+
+fn print_metrics_row(label: &str, metrics: Option<ErrorMetrics>) {
+    match metrics {
+        Some(m) => println!("{label:<20} {:>10.2} {:>10.2} {:>10}", m.mae, m.rmse, m.n),
+        None => println!("{label:<20} {:>10} {:>10} {:>10}", "—", "—", 0),
+    }
 }
 
 /// Ouvre le pool PostgreSQL et applique les migrations.

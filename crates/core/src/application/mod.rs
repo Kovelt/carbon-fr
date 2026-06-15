@@ -5,6 +5,7 @@
 //! adapters fournissent les implémentations des ports (ADR-0002).
 
 mod backfill;
+mod backtest;
 mod find_greenest_window;
 mod get_current;
 mod get_history;
@@ -12,6 +13,7 @@ mod get_stats;
 mod ingest_latest;
 
 pub use backfill::{BackfillHistory, BackfillReport};
+pub use backtest::{BacktestForecast, BacktestReport, HorizonError};
 pub use find_greenest_window::FindGreenestWindow;
 pub use get_current::GetCurrentIntensity;
 pub use get_history::GetIntensityHistory;

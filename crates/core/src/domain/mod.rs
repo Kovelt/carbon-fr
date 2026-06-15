@@ -6,6 +6,7 @@
 //! ces types (ex. [`greenest_window`]).
 
 mod factors;
+mod forecast;
 mod intensity;
 mod measurement;
 mod methodology;
@@ -16,6 +17,7 @@ mod visit;
 mod window;
 
 pub use factors::{EmissionFactors, acv_ademe_intensity, derive_acv_ademe};
+pub use forecast::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, climatology_forecast};
 pub use intensity::CarbonIntensity;
 pub use measurement::{GenerationMix, Measurement, MeasurementKey};
 pub use methodology::{Methodology, Vintage};

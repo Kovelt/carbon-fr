@@ -58,6 +58,13 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   (entraîne → sauve → compare `gbdt@1` vs `climatology@1` au backtest).
   *Mesuré* : sans features météo, le GBDT **ne bat pas** la climatologie calibrée
   (attendu — la météo est le levier) ; `climatology@1` **reste servi**.
+- **Backfill météo historique + features météo/climatologie** (ADR-0012,
+  tranche 2b) : archive des prévisions Open-Meteo (anti-fuite `run_at`), features
+  vent/irradiance *as-of* + climatologie de créneau (apprentissage résiduel),
+  calcul identique train/inférence. *Mesuré* : `gbdt@1` ne bat **toujours pas**
+  `climatology@1` (~2× pire), même entraîné sur l'année entière → baseline
+  calibrée difficile ; `@1` reste servi. Correctif : dédup `(region, at)` dans
+  l'upsert de charge.
 - **Store de prévision météo** (ADR-0012, tranche 1 du modèle ML) : port
   `WeatherForecastSource` + adapter `carbonfr-adapter-meteo` (Open-Meteo, vent à
   100 m + irradiance, agrégés sur 7 points de métropole), store

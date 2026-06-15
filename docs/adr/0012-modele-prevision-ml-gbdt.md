@@ -33,10 +33,26 @@ identifié par cet ADR — la **météo** — n'est pas encore en jeu. `climatol
 **reste le modèle servi** (garde de promotion : on ne sert le GBDT que s'il bat
 la baseline).
 
-**Tranche 2b — à venir** : features **météo** (le store est prêt ; backfill
-historique des prévisions via l'API archive Open-Meteo, anti-fuite) et
-**apprentissage résiduel** (climatologie comme feature). Re-mesure sous la même
-garde de promotion. C'est là que se jouera la promesse du ML.
+**Tranche 2b — features météo + apprentissage résiduel : livrée, mais le GBDT
+ne bat toujours pas `climatology@1`.** Ajouté : backfill historique des
+prévisions météo (API archive Open-Meteo, `run_at = valid_at − 24 h`,
+anti-fuite) ; features **vent/irradiance prévus** (météo *as-of* l'origine) et
+**climatologie de créneau** (apprentissage résiduel), calculées **identiquement**
+à l'entraînement et à l'inférence (fenêtre glissante). Correctif au passage :
+dédup `(region, at)` dans `upsert_loads`.
+
+Mesuré (national `rte-direct`, novembre 2024) sur plusieurs configurations —
+sans météo, avec météo, et entraîné sur l'**année entière** (pour écarter
+l'extrapolation hivernale, les arbres n'extrapolant pas) : `gbdt@1` reste
+**~2× moins bon** que `climatology@1` (RMSE ≈ 15 vs 7,5). La climatologie +
+correction d'anomalie **calibrée** est une référence difficile ; le GBDT
+(`gbdt-rs`, features/hyper-paramètres actuels) ne la dépasse pas.
+
+**Décision (garde de promotion) : `climatology@1` reste le modèle servi.** Le
+framework ML, le pipeline météo et la garde sont en place et réutilisables ;
+faire gagner le GBDT relève d'une **itération ML ouverte** (réglage
+d'hyper-paramètres, features supplémentaires, voire une implémentation de
+boosting plus riche) — non engagée tant que le bénéfice n'est pas démontré.
 
 ## Contexte
 

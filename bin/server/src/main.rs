@@ -163,6 +163,30 @@ async fn run_backfill() -> anyhow::Result<()> {
         .await
         .context("écriture de la charge")?;
     info!(loads = loads_written, "charge réalisée backfillée");
+
+    // Backfill de la **prévision météo archivée** (ADR-0012) pour entraîner le
+    // GBDT, par tranches de 30 j (limite raisonnable de l'API). `run_at =
+    // valid_at − 24 h` (anti-fuite). Échec non bloquant (best-effort).
+    let meteo = OpenMeteoClient::new().context("initialisation du client Open-Meteo")?;
+    let mut weather_written = 0usize;
+    let mut chunk_start = range.start();
+    while chunk_start < range.end() {
+        let chunk_end = (chunk_start + Duration::days(30)).min(range.end());
+        if let Some(chunk) = TimeRange::new(chunk_start, chunk_end) {
+            match meteo.historical_forecast(chunk).await {
+                Ok(forecasts) => match repo.upsert_weather(&forecasts).await {
+                    Ok(n) => weather_written += n,
+                    Err(err) => warn!(error = %err, "échec d'écriture de la météo"),
+                },
+                Err(err) => warn!(error = %err, "échec d'archive météo (tranche ignorée)"),
+            }
+        }
+        chunk_start = chunk_end;
+    }
+    info!(
+        weather = weather_written,
+        "prévisions météo archivées backfillées"
+    );
     Ok(())
 }
 
@@ -591,6 +615,25 @@ async fn run_train() -> anyhow::Result<()> {
         .iter()
         .map(|m| (m.at, m.intensity.value()))
         .collect();
+    // Météo prévue (archive backfillée) sur la période, indexée par échéance —
+    // le `run_at = valid_at − 24 h` garantit l'anti-fuite (horizons ≤ 24 h).
+    let weather_rows = repo
+        .weather_range(read)
+        .await
+        .context("lecture de la météo")?;
+    let mut weather: HashMap<OffsetDateTime, (OffsetDateTime, f64, f64)> = HashMap::new();
+    for w in weather_rows {
+        match weather.get(&w.valid_at) {
+            Some((run, _, _)) if *run >= w.run_at => {}
+            _ => {
+                weather.insert(w.valid_at, (w.run_at, w.wind, w.irradiance));
+            }
+        }
+    }
+    let weather: HashMap<OffsetDateTime, (f64, f64)> = weather
+        .into_iter()
+        .map(|(v, (_, wind, irr))| (v, (wind, irr)))
+        .collect();
 
     // Origines d'entraînement : du début +1 sem. à la fin −24 h.
     let mut origins = Vec::new();
@@ -599,7 +642,14 @@ async fn run_train() -> anyhow::Result<()> {
         origins.push(o);
         o += Duration::hours(origin_step_hours);
     }
-    let examples = build_training_examples(&intensity, &origins, params.step, Duration::hours(24));
+    let examples = build_training_examples(
+        &intensity,
+        &weather,
+        10, // fenêtre glissante (semaines), identique à l'inférence
+        &origins,
+        params.step,
+        Duration::hours(24),
+    );
     anyhow::ensure!(
         !examples.is_empty(),
         "aucun exemple d'entraînement (historique insuffisant ?)"
@@ -636,7 +686,7 @@ async fn run_train() -> anyhow::Result<()> {
         .await
         .context("backtest climatology@1")?;
 
-    let gbdt = GbdtForecaster::with_config(repo.clone(), model, 10, params.step);
+    let gbdt = GbdtForecaster::with_config(repo.clone(), repo.clone(), model, 10, params.step);
     let r2 = BacktestForecast::new(gbdt, repo.clone(), params.methodology.clone())
         .execute(
             params.region,

@@ -69,6 +69,20 @@ pub(crate) fn aggregate_national(
         .collect()
 }
 
+/// Comme [`aggregate_national`], mais pour l'**archive** : chaque prévision est
+/// datée d'un `run_at = valid_at − 24 h` (prévision J-1), ce qui préserve
+/// l'anti-fuite au backtest (ADR-0012 §6) — on n'utilise un point que pour des
+/// horizons ≥ son délai de production.
+pub(crate) fn aggregate_historical(
+    bodies: &[OpenMeteoResponse],
+) -> Result<Vec<WeatherForecast>, SourceError> {
+    let mut out = aggregate_national(time::OffsetDateTime::UNIX_EPOCH, bodies)?;
+    for f in &mut out {
+        f.run_at = f.valid_at - time::Duration::days(1);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

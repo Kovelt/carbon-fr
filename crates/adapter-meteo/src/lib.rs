@@ -14,14 +14,17 @@
 mod dto;
 
 use async_trait::async_trait;
+use carbonfr_core::domain::TimeRange;
 use carbonfr_core::domain::WeatherForecast;
 use carbonfr_core::ports::{SourceError, WeatherForecastSource};
 use time::OffsetDateTime;
 
 use dto::OpenMeteoResponse;
 
-/// URL de base de l'API Open-Meteo.
+/// URL de base de l'API Open-Meteo (prévision courante).
 const DEFAULT_BASE_URL: &str = "https://api.open-meteo.com";
+/// API d'**archive** des prévisions (historique), pour le backfill (ADR-0012).
+const HISTORICAL_BASE_URL: &str = "https://historical-forecast-api.open-meteo.com";
 
 /// Points (lat, lon) couvrant la France métropolitaine — moyennés pour un
 /// agrégat « national » du vent et de l'irradiance.
@@ -59,6 +62,49 @@ impl OpenMeteoClient {
             http,
             base_url: base_url.into(),
         }
+    }
+
+    /// Chaîne des coordonnées des points nationaux (composante `axis`).
+    fn points(axis: fn(&(f64, f64)) -> f64) -> String {
+        POINTS
+            .iter()
+            .map(|p| axis(p).to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// Prévisions météo **archivées** (historiques) sur `range`, pour le backfill
+    /// (ADR-0012) : chaque point est daté `run_at = valid_at − 24 h` (anti-fuite).
+    pub async fn historical_forecast(
+        &self,
+        range: TimeRange,
+    ) -> Result<Vec<WeatherForecast>, SourceError> {
+        let fmt = |d: time::Date| format!("{:04}-{:02}-{:02}", d.year(), d.month() as u8, d.day());
+        let resp = self
+            .http
+            .get(format!("{HISTORICAL_BASE_URL}/v1/forecast"))
+            .query(&[
+                ("latitude", Self::points(|p| p.0)),
+                ("longitude", Self::points(|p| p.1)),
+                ("hourly", "wind_speed_100m,shortwave_radiation".to_string()),
+                ("start_date", fmt(range.start().date())),
+                ("end_date", fmt(range.end().date())),
+                ("timezone", "UTC".to_string()),
+            ])
+            .send()
+            .await
+            .map_err(|e| SourceError::Unavailable(format!("archive Open-Meteo : {e}")))?;
+        if !resp.status().is_success() {
+            return Err(SourceError::Unavailable(format!(
+                "Open-Meteo (archive) a répondu {}",
+                resp.status()
+            )));
+        }
+        let bodies: Vec<OpenMeteoResponse> = resp
+            .json()
+            .await
+            .map_err(|e| SourceError::Invalid(format!("archive Open-Meteo illisible : {e}")))?;
+        dto::aggregate_historical(&bodies)
     }
 }
 

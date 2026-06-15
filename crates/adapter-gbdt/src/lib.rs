@@ -22,13 +22,13 @@ use async_trait::async_trait;
 use carbonfr_core::domain::{
     CarbonIntensity, ForecastPoint, HorizonBands, ModelVersion, Region, TimeRange,
 };
-use carbonfr_core::ports::{ForecastError, ForecastModel, IntensityRepository};
+use carbonfr_core::ports::{ForecastError, ForecastModel, IntensityRepository, WeatherRepository};
 use gbdt::config::Config;
 use gbdt::decision_tree::{Data, DataVec};
 use gbdt::gradient_boost::GBDT;
 use time::{Duration, OffsetDateTime};
 
-use features::{FEATURE_SIZE, build_features};
+use features::{FEATURE_SIZE, build_features, slot_climatology, week_slot};
 
 /// Identité versionnée du modèle ML (ADR-0012), exposée par l'API.
 pub const GBDT_ID: &str = "gbdt";
@@ -88,19 +88,45 @@ impl GbdtModel {
 /// label = intensité **observée** à la cible.
 pub fn build_training_examples(
     intensity: &HashMap<OffsetDateTime, f64>,
+    weather: &HashMap<OffsetDateTime, (f64, f64)>,
+    weeks: i64,
     origins: &[OffsetDateTime],
     step: Duration,
     max_horizon: Duration,
 ) -> Vec<(Vec<f32>, f32)> {
+    let step_secs = step.whole_seconds();
+    let history = Duration::days(weeks.max(1) * 7);
     let mut examples = Vec::new();
     for &origin in origins {
         // Ancre = dernière observation **avant** l'origine (grille dense) — même
         // convention qu'à l'inférence (l'origine n'est pas supposée publiée).
         let anchor_at = origin - step;
+        // Climatologie de créneau sur la **fenêtre glissante** de l'origine —
+        // **identique** à l'inférence (sinon la feature ne se transfère pas).
+        let lo = origin - history;
+        let trailing: HashMap<OffsetDateTime, f64> = intensity
+            .iter()
+            .filter_map(|(at, v)| {
+                let at = *at;
+                (at >= lo && at < origin).then_some((at, *v))
+            })
+            .collect();
+        let slot_climo = slot_climatology(&trailing, step_secs);
         let mut target = origin + step;
         while target <= origin + max_horizon {
+            let climo = slot_climo
+                .get(&week_slot(target, step_secs))
+                .copied()
+                .unwrap_or(0.0);
             if let (Some(features), Some(&label)) = (
-                build_features(origin, target, anchor_at, intensity),
+                build_features(
+                    origin,
+                    target,
+                    anchor_at,
+                    climo,
+                    weather.get(&target).copied(),
+                    intensity,
+                ),
                 intensity.get(&target),
             ) {
                 examples.push((features, label as f32));
@@ -144,19 +170,21 @@ pub fn train_model(examples: &[(Vec<f32>, f32)], params: GbdtHyperParams) -> Opt
 /// via [`IntensityRepository`], construit les features et prédit. Intervalles via
 /// des bandes par horizon (ADR-0011 §5), si fournies.
 #[derive(Clone)]
-pub struct GbdtForecaster<R> {
+pub struct GbdtForecaster<R, W> {
     repo: R,
+    weather: W,
     model: GbdtModel,
     weeks: i64,
     step: Duration,
     bands: Option<HorizonBands>,
 }
 
-impl<R> GbdtForecaster<R> {
+impl<R, W> GbdtForecaster<R, W> {
     /// Construit avec 10 semaines d'historique (lags) et un pas de 15 min.
-    pub fn new(repo: R, model: GbdtModel) -> Self {
+    pub fn new(repo: R, weather: W, model: GbdtModel) -> Self {
         Self {
             repo,
+            weather,
             model,
             weeks: 10,
             step: Duration::minutes(15),
@@ -165,9 +193,10 @@ impl<R> GbdtForecaster<R> {
     }
 
     /// Surcharge la profondeur d'historique et le pas.
-    pub fn with_config(repo: R, model: GbdtModel, weeks: u32, step: Duration) -> Self {
+    pub fn with_config(repo: R, weather: W, model: GbdtModel, weeks: u32, step: Duration) -> Self {
         Self {
             repo,
+            weather,
             model,
             weeks: (weeks.max(1)) as i64,
             step,
@@ -183,7 +212,7 @@ impl<R> GbdtForecaster<R> {
 }
 
 #[async_trait]
-impl<R: IntensityRepository> ForecastModel for GbdtForecaster<R> {
+impl<R: IntensityRepository, W: WeatherRepository> ForecastModel for GbdtForecaster<R, W> {
     async fn forecast(
         &self,
         region: Region,
@@ -211,12 +240,43 @@ impl<R: IntensityRepository> ForecastModel for GbdtForecaster<R> {
             .iter()
             .map(|m| (m.at, m.intensity.value()))
             .collect();
+        let step_secs = self.step.whole_seconds();
+        let slot_climo = slot_climatology(&intensity, step_secs);
         let model = ModelVersion::new(GBDT_ID, GBDT_VERSION);
+
+        // Météo **telle que disponible à `from`** : pour chaque échéance, le run
+        // le plus récent dont `run_at ≤ from` (anti-fuite).
+        let weather_window = TimeRange::new(from, from + horizon)
+            .ok_or_else(|| ForecastError::Unavailable("fenêtre météo invalide".into()))?;
+        let weather_rows = self
+            .weather
+            .weather_range(weather_window)
+            .await
+            .map_err(|e| ForecastError::Unavailable(e.to_string()))?;
+        let mut weather: HashMap<OffsetDateTime, (OffsetDateTime, f64, f64)> = HashMap::new();
+        for w in weather_rows {
+            if w.run_at > from {
+                continue;
+            }
+            match weather.get(&w.valid_at) {
+                Some((run, _, _)) if *run >= w.run_at => {}
+                _ => {
+                    weather.insert(w.valid_at, (w.run_at, w.wind, w.irradiance));
+                }
+            }
+        }
 
         let mut points = Vec::new();
         let mut target = from;
         while target < from + horizon {
-            if let Some(feature) = build_features(from, target, anchor_at, &intensity) {
+            let climo = slot_climo
+                .get(&week_slot(target, step_secs))
+                .copied()
+                .unwrap_or(0.0);
+            let weather_target = weather.get(&target).map(|&(_, wind, irr)| (wind, irr));
+            if let Some(feature) =
+                build_features(from, target, anchor_at, climo, weather_target, &intensity)
+            {
                 let expected = self.model.predict_one(&feature).max(0.0);
                 let (low, high) = match self.bands.as_ref().and_then(|b| b.at(target - from)) {
                     Some((q_low, q_high)) => (
@@ -274,13 +334,23 @@ mod tests {
             .map(|k| start + step * k)
             .collect();
 
-        let examples = build_training_examples(&intensity, &origins, step, Duration::hours(6));
+        let slot_climo = slot_climatology(&intensity, step.whole_seconds());
+        let weather = HashMap::new(); // pas de météo dans ce test unitaire
+        let examples = build_training_examples(
+            &intensity,
+            &weather,
+            2, // 2 semaines de fenêtre glissante
+            &origins,
+            step,
+            Duration::hours(6),
+        );
         assert!(!examples.is_empty());
         let model = train_model(&examples, GbdtHyperParams::default()).unwrap();
 
         let origin = start + step * (3 * 7 * 24);
         let target = origin + Duration::hours(3);
-        let feature = build_features(origin, target, origin, &intensity).unwrap();
+        let climo = slot_climo[&week_slot(target, step.whole_seconds())];
+        let feature = build_features(origin, target, origin, climo, None, &intensity).unwrap();
         let pred = model.predict_one(&feature);
         let truth = signal(target);
         assert!((pred - truth).abs() < 5.0, "pred {pred} vs truth {truth}");

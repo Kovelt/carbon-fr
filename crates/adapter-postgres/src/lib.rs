@@ -24,7 +24,7 @@ use carbonfr_core::ports::{
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, QueryBuilder, Row};
-use time::Date;
+use time::{Date, OffsetDateTime};
 
 use mapping::{
     backend, dedup_by_key, intensity_stats, mix_field, rollup_row, row_to_measurement, vintage_rank,
@@ -311,9 +311,19 @@ impl ConsumptionRepository for PgIntensityRepository {
         if loads.is_empty() {
             return Ok(0);
         }
+        // Dédup par clé `(region, at)` : un même couple ne peut être affecté deux
+        // fois dans un seul `ON CONFLICT` (la source peut renvoyer des doublons —
+        // p. ex. l'export consolidé). Le dernier l'emporte.
+        let mut seen: std::collections::HashMap<(&str, OffsetDateTime), &LoadRecord> =
+            std::collections::HashMap::with_capacity(loads.len());
+        for load in loads {
+            seen.insert((load.region.slug(), load.at), load);
+        }
+        let deduped: Vec<&LoadRecord> = seen.into_values().collect();
+
         let mut written = 0usize;
         // Paquets bornés : 4 colonnes × 10 000 = 40 000 paramètres < 65 535.
-        for chunk in loads.chunks(10_000) {
+        for chunk in deduped.chunks(10_000) {
             let mut builder =
                 QueryBuilder::new("INSERT INTO consumption (region, at, realized, forecast) ");
             builder.push_values(chunk.iter(), |mut row, load| {

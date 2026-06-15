@@ -5,6 +5,8 @@
 //! méthodologie, millésime — ainsi que la logique métier qui ne dépend que de
 //! ces types (ex. [`greenest_window`]).
 
+mod calculator;
+mod cross_border;
 mod factors;
 mod forecast;
 mod forecast_point;
@@ -21,7 +23,14 @@ mod visit;
 mod weather;
 mod window;
 
-pub use factors::{EmissionFactors, acv_ademe_intensity, derive_acv_ademe};
+pub use calculator::{
+    AcvAdemeConsumption, AcvAdemeProduction, MethodologyCalculator, MethodologyContext, RteDirect,
+};
+pub use cross_border::{CrossBorderFlow, CrossBorderFlows, Neighbor};
+pub use factors::{
+    EmissionFactors, TD_LOSS_FACTOR_V1, acv_ademe_consumption_intensity, acv_ademe_intensity,
+    derive_acv_ademe,
+};
 pub use forecast::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, climatology_forecast};
 pub use forecast_point::{ForecastPoint, ModelVersion};
 pub use horizon_bands::HorizonBands;

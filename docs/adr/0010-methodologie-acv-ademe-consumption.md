@@ -1,8 +1,36 @@
 # ADR-0010 — Méthodologie `acv-ademe` (cycle de vie + imports, *consumption-based*)
 
-- **Statut** : Proposé
+- **Statut** : Accepté (mise en œuvre **engagée** — domaine pur + endpoints de vérifiabilité livrés ; source d'import ENTSO-E à brancher)
 - **Date** : 2026-06-15
 - **Raffine** : ADR-0005 (qui *engageait* `acv-ademe`) ; **fait évoluer l'ADR-0008** (de l'`acv-ademe@1` *production-based* livré vers une méthode *consumption-based*, imports ENTSO-E inclus)
+
+## État d'implémentation (2026-06-15)
+
+**Tranche A — domaine pur + vérifiabilité : livrée.** Le calcul *consumption-based*
+est entièrement spécifié et testé **sans IO** :
+
+- value object [`CrossBorderFlows`] (flux signés par voisin + intensité du voisin)
+  porté à côté du mix (§4) ; enum `Neighbor` (6 frontières métropolitaines) ;
+- trait **`MethodologyCalculator`** (§4) avec trois implémentations pures —
+  `RteDirect` (report de la valeur publiée), `AcvAdemeProduction` (`@1`),
+  `AcvAdemeConsumption` (`@2`) ;
+- fonction pure `acv_ademe_consumption_intensity` : production − exports (à
+  l'intensité de production) + imports (à l'intensité du voisin), rapporté à la
+  consommation, **uplift pertes T&D** (`TD_LOSS_FACTOR_V1`, §3) ;
+- `acv-ademe@2` est une **version distincte** de `@1` (gouvernance ADR-0005 : `@1`
+  production reste publié, pas de modification silencieuse) ;
+- **`GET /v1/methodologies`** (catalogue + versions) et **`GET /v1/factors`**
+  (table des facteurs + facteur T&D) — le levier de vérifiabilité (§7), servis
+  **sans dépendance externe**.
+
+⚠️ `TD_LOSS_FACTOR_V1 = 0,072` est un **ordre de grandeur à sourcer précisément**
+(Bilan électrique RTE / Base Carbone ADEME) avant publication de `@2` ; tout
+changement = bump de version.
+
+**À venir (tranche B) :** adapter `adapter-entsoe` + port `CrossBorderSource` +
+store du contexte d'import + ingestion par le poller + service effectif de
+`acv-ademe@2` (statut `planned` dans `/v1/methodologies` tant que la source
+n'est pas branchée). Le défaut de l'API **reste `rte-direct`**.
 
 ## Contexte
 

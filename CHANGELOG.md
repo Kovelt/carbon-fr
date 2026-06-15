@@ -84,6 +84,18 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `N = 10 semaines`, `τ = 2 semaines`, calés par backtest sur la donnée réelle
   2024 — le modèle bat désormais la persistance à tous les horizons (l'ancien
   `τ = 6 h` la sous-performait). Formule et contrat d'API inchangés.
+- **Méthodologie `acv-ademe@2` consumption-based — domaine pur + vérifiabilité**
+  (ADR-0010, tranche A) : trait de domaine `MethodologyCalculator`
+  (`RteDirect` / `AcvAdemeProduction` / `AcvAdemeConsumption`), value object
+  `CrossBorderFlows` (flux signés par voisin + intensité du voisin, enum
+  `Neighbor`), calcul pur *consumption-based* (imports valorisés à l'intensité
+  du voisin − exports + **pertes T&D**) — **sans IO**. `acv-ademe@2` est une
+  version **distincte** de `@1` (production), qui reste publié (gouvernance
+  ADR-0005). Deux endpoints de **vérifiabilité**, sans dépendance externe :
+  `GET /v1/methodologies` (catalogue + versions) et `GET /v1/factors` (table des
+  facteurs par filière + facteur de pertes T&D). *Le calcul de `@2` sera **servi**
+  une fois la source d'import ENTSO-E branchée (tranche B) ; il apparaît `planned`
+  dans `/v1/methodologies`.* Défaut de l'API inchangé : `rte-direct`.
 - **Compteur de consultation** : `GET /v1/stats` + `POST /v1/stats/visit`
   (port `VisitCounter`). IP **jamais stockée** — empreinte SHA-256 salée
   (`CARBONFR_VISIT_SALT`), déduplication unique par IP/jour ; IP lue via

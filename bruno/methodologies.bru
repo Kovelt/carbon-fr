@@ -1,0 +1,17 @@
+meta {
+  name: Méthodologies — catalogue
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/v1/methodologies
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.methodologies[0].id: eq rte-direct
+  res.body.methodologies[0].default: eq true
+}

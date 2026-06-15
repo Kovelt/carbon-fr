@@ -1,0 +1,18 @@
+meta {
+  name: Erreur — facteurs rte-direct (400)
+  type: http
+  seq: 18
+}
+
+get {
+  url: {{baseUrl}}/v1/factors?methodology=rte-direct
+  body: none
+  auth: none
+  query {
+    methodology: rte-direct
+  }
+}
+
+assert {
+  res.status: eq 400
+}

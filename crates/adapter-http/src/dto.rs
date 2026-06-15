@@ -344,3 +344,152 @@ impl StatsResponse {
         })
     }
 }
+
+/// Une méthodologie disponible (catalogue de `GET /v1/methodologies`).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct MethodologyInfo {
+    /// Identifiant stable (`rte-direct`, `acv-ademe`).
+    id: &'static str,
+    /// Version de la méthode (la version fait partie de son identité, ADR-0005).
+    version: u32,
+    /// Périmètre de calcul.
+    basis: &'static str,
+    /// Couverture géographique servie.
+    scope: &'static str,
+    /// `true` si c'est la méthode servie par défaut quand `?methodology=` est absent.
+    default: bool,
+    /// `served` = interrogeable aujourd'hui ; `planned` = spécifiée mais pas
+    /// encore servie (dépend d'une source à brancher).
+    status: &'static str,
+    /// ADR de référence.
+    adr: &'static str,
+    description: &'static str,
+}
+
+/// Réponse de `GET /v1/methodologies` — catalogue des méthodes + versions.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct MethodologiesResponse {
+    methodologies: Vec<MethodologyInfo>,
+}
+
+impl MethodologiesResponse {
+    /// Catalogue statique des méthodes (ADR-0005/0008/0010). Le défaut est
+    /// `rte-direct` (comparabilité directe à éCO2mix).
+    pub(crate) fn catalog() -> Self {
+        Self {
+            methodologies: vec![
+                MethodologyInfo {
+                    id: "rte-direct",
+                    version: 1,
+                    basis: "combustion directe de la production FR (estimation RTE)",
+                    scope: "national",
+                    default: true,
+                    status: "served",
+                    adr: "ADR-0005",
+                    description: "Reprise du taux_co2 publié par RTE (éCO2mix). \
+                                  Émissions de la seule production française, hors cycle de vie.",
+                },
+                MethodologyInfo {
+                    id: "acv-ademe",
+                    version: 1,
+                    basis: "cycle de vie, basée production",
+                    scope: "national + 12 régions",
+                    default: false,
+                    status: "served",
+                    adr: "ADR-0008",
+                    description: "Facteurs cycle de vie ADEME (Base Carbone) pondérés par le \
+                                  mix de production. Imports exclus (production locale).",
+                },
+                MethodologyInfo {
+                    id: "acv-ademe",
+                    version: 2,
+                    basis: "cycle de vie, basée consommation (imports inclus)",
+                    scope: "national",
+                    default: false,
+                    status: "planned",
+                    adr: "ADR-0010",
+                    description: "Empreinte de l'électricité réellement consommée : imports \
+                                  valorisés à l'intensité du voisin (ENTSO-E) + pertes T&D. \
+                                  Source d'import à brancher.",
+                },
+            ],
+        }
+    }
+}
+
+/// Un facteur d'émission par filière (entrée de `GET /v1/factors`).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct FactorEntry {
+    /// Filière (`nucleaire`, `gaz`, …).
+    filiere: &'static str,
+    /// Facteur cycle de vie (gCO₂eq/kWh).
+    factor: f64,
+}
+
+/// Réponse de `GET /v1/factors` — table des facteurs d'une méthode (vérifiabilité).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct FactorsResponse {
+    methodology: String,
+    methodology_version: u32,
+    unit: &'static str,
+    source: &'static str,
+    factors: Vec<FactorEntry>,
+    /// Facteur de pertes T&D appliqué (uplift consommation), `null` hors méthode
+    /// consommation.
+    td_loss_factor: Option<f64>,
+}
+
+impl FactorsResponse {
+    /// Table des facteurs `acv-ademe` (commune à `@1` et `@2`), avec le facteur
+    /// de pertes T&D pour la version consommation (`@2`).
+    pub(crate) fn acv_ademe(version: u32) -> Self {
+        let f = carbonfr_core::domain::EmissionFactors::acv_ademe_v1();
+        let factors = vec![
+            FactorEntry {
+                filiere: "nucleaire",
+                factor: f.nucleaire,
+            },
+            FactorEntry {
+                filiere: "gaz",
+                factor: f.gaz,
+            },
+            FactorEntry {
+                filiere: "charbon",
+                factor: f.charbon,
+            },
+            FactorEntry {
+                filiere: "fioul",
+                factor: f.fioul,
+            },
+            FactorEntry {
+                filiere: "hydraulique",
+                factor: f.hydraulique,
+            },
+            FactorEntry {
+                filiere: "eolien",
+                factor: f.eolien,
+            },
+            FactorEntry {
+                filiere: "solaire",
+                factor: f.solaire,
+            },
+            FactorEntry {
+                filiere: "bioenergies",
+                factor: f.bioenergies,
+            },
+            FactorEntry {
+                filiere: "thermique",
+                factor: f.thermique,
+            },
+        ];
+        let td_loss_factor = (version >= 2).then_some(carbonfr_core::domain::TD_LOSS_FACTOR_V1);
+        Self {
+            methodology: "acv-ademe".to_string(),
+            methodology_version: version,
+            unit: "gCO2eq/kWh",
+            source: "Base Carbone ADEME (cf. ADR-0008 ; pertes T&D ADR-0010)",
+            factors,
+            td_loss_factor,
+        }
+    }
+}

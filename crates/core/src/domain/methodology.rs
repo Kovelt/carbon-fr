@@ -26,9 +26,20 @@ impl Methodology {
         Self::new("rte-direct", 1)
     }
 
-    /// Méthode cycle de vie ADEME, basée production (ADR-0008).
+    /// Méthode cycle de vie ADEME, basée **production** (ADR-0008) — `acv-ademe@1`.
     pub fn acv_ademe() -> Self {
         Self::new("acv-ademe", 1)
+    }
+
+    /// Méthode cycle de vie ADEME, basée **consommation** (imports valorisés à
+    /// l'intensité du voisin + pertes T&D, ADR-0010) — `acv-ademe@2`.
+    ///
+    /// Même identifiant que `@1`, **version distincte** : les deux coexistent
+    /// sans collision (la version fait partie de la clé d'unicité, ADR-0006) et
+    /// `@1` reste interrogeable (gouvernance ADR-0005 : pas de modification
+    /// silencieuse d'une méthode publiée).
+    pub fn acv_ademe_consumption() -> Self {
+        Self::new("acv-ademe", 2)
     }
 }
 

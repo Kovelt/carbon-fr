@@ -16,8 +16,8 @@ use time::{Duration, OffsetDateTime};
 use utoipa::IntoParams;
 
 use crate::dto::{
-    ForecastResponse, GreenestWindowResponse, HistoryResponse, IntensityResponse, MixResponse,
-    StatsResponse, VisitStatsResponse,
+    FactorsResponse, ForecastResponse, GreenestWindowResponse, HistoryResponse, IntensityResponse,
+    MethodologiesResponse, MixResponse, StatsResponse, VisitStatsResponse,
 };
 use crate::error::{ApiError, ErrorBody};
 use crate::{AppState, ForecastState};
@@ -513,4 +513,63 @@ where
 )]
 pub(crate) async fn health() -> &'static str {
     "ok"
+}
+
+/// `GET /v1/methodologies` — catalogue des méthodes carbone + versions (ADR-0010 §7).
+#[utoipa::path(
+    get,
+    path = "/v1/methodologies",
+    responses((status = 200, description = "Méthodes disponibles", body = MethodologiesResponse)),
+    tag = "méthodologie"
+)]
+pub(crate) async fn methodologies() -> Json<MethodologiesResponse> {
+    Json(MethodologiesResponse::catalog())
+}
+
+/// Paramètre de `GET /v1/factors`.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct FactorsQuery {
+    /// Méthodologie (`acv-ademe`). Défaut `acv-ademe`.
+    methodology: Option<String>,
+    /// Version (défaut : dernière version de la méthode).
+    version: Option<u32>,
+}
+
+/// `GET /v1/factors` — table des facteurs d'émission d'une méthode (ADR-0010 §7).
+///
+/// Levier de **vérifiabilité** : la méthode est auditable, pas un chiffre opaque.
+/// Seule `acv-ademe` expose une table (`rte-direct` est un report de RTE).
+#[utoipa::path(
+    get,
+    path = "/v1/factors",
+    params(FactorsQuery),
+    responses(
+        (status = 200, description = "Table des facteurs", body = FactorsResponse),
+        (status = 400, description = "Méthode sans table de facteurs", body = ErrorBody),
+    ),
+    tag = "méthodologie"
+)]
+pub(crate) async fn factors(
+    Query(query): Query<FactorsQuery>,
+) -> Result<Json<FactorsResponse>, ApiError> {
+    let methodology = resolve_methodology(&query.methodology, "acv-ademe");
+    match methodology.as_str() {
+        "acv-ademe" => {
+            let version = query.version.unwrap_or(2);
+            if version == 0 || version > 2 {
+                return Err(ApiError::bad_request(format!(
+                    "version inconnue pour acv-ademe : {version} (disponibles : 1, 2)"
+                )));
+            }
+            Ok(Json(FactorsResponse::acv_ademe(version)))
+        }
+        "rte-direct" => Err(ApiError::bad_request(
+            "rte-direct ne définit pas de table de facteurs : c'est un report direct de \
+             l'estimation publiée par RTE",
+        )),
+        other => Err(ApiError::bad_request(format!(
+            "méthodologie inconnue : {other}"
+        ))),
+    }
 }

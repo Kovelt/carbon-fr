@@ -2,7 +2,17 @@
 //! (ADR-0008). Table **versionnée** : c'est une constante de domaine, pas une
 //! dépendance IO.
 
-use crate::domain::{CarbonIntensity, GenerationMix, Measurement, Methodology};
+use crate::domain::{CarbonIntensity, CrossBorderFlows, GenerationMix, Measurement, Methodology};
+
+/// Facteur de pertes en transport & distribution (ADR-0010 §3), **versionné**.
+///
+/// Périmètre consommation : livrer 1 kWh au compteur impose d'en produire
+/// davantage (pertes réseau). On applique un *uplift* `× (1 + facteur)` à
+/// l'intensité réseau. **v1 = 0,072** (~7,2 %, ordre de grandeur des pertes du
+/// système électrique français — transport RTE ~2 % + distribution Enedis
+/// ~6 %). ⚠️ **valeur à sourcer précisément** (Bilan électrique RTE / Base
+/// Carbone ADEME) avant publication ; tout changement = bump `acv-ademe@N`.
+pub const TD_LOSS_FACTOR_V1: f64 = 0.072;
 
 /// Facteurs d'émission par filière (gCO₂eq/kWh), en analyse de cycle de vie.
 ///
@@ -40,14 +50,10 @@ impl EmissionFactors {
     }
 }
 
-/// Intensité carbone du mix de production, par la méthode `acv-ademe` (ADR-0008)
-/// : moyenne des facteurs pondérée par la production. Pompage et échanges
-/// exclus ; productions négatives bornées à 0. `None` si la production totale
-/// est nulle (ou hors domaine).
-pub fn acv_ademe_intensity(
-    mix: &GenerationMix,
-    factors: &EmissionFactors,
-) -> Option<CarbonIntensity> {
+/// Émissions cycle de vie (gCO₂eq·MW/kWh) **et** production totale (MW) du mix
+/// domestique. Pompage et échanges exclus ; productions négatives bornées à 0.
+/// Brique partagée par les méthodes `acv-ademe` production et consommation.
+fn production_emissions_output(mix: &GenerationMix, factors: &EmissionFactors) -> (f64, f64) {
     // Fossile : soit le thermique agrégé (régional), soit le détail par filière
     // (national). Les deux ne coexistent pas.
     let fossil = match mix.thermique {
@@ -75,11 +81,60 @@ pub fn acv_ademe_intensity(
         emissions += output * factor;
         production += output;
     }
+    (emissions, production)
+}
 
+/// Intensité carbone du mix de production, par la méthode `acv-ademe` (ADR-0008)
+/// : moyenne des facteurs pondérée par la production. Pompage et échanges
+/// exclus ; productions négatives bornées à 0. `None` si la production totale
+/// est nulle (ou hors domaine).
+pub fn acv_ademe_intensity(
+    mix: &GenerationMix,
+    factors: &EmissionFactors,
+) -> Option<CarbonIntensity> {
+    let (emissions, production) = production_emissions_output(mix, factors);
     if production <= 0.0 {
         return None;
     }
     CarbonIntensity::new(emissions / production)
+}
+
+/// Intensité carbone *consumption-based* (`acv-ademe@2`, ADR-0010) : empreinte
+/// de l'électricité **réellement consommée** en France.
+///
+/// > (émissions de production − exports valorisés à l'intensité de production
+/// > + imports valorisés à l'intensité du voisin) / consommation,
+/// > puis *uplift* des pertes T&D.
+///
+/// avec `consommation = production − exports + imports`. Les exports sont
+/// produits en France mais consommés ailleurs : retirés du numérateur (à
+/// l'intensité de production domestique) **et** du dénominateur. `None` si la
+/// production ou la consommation résultante est nulle.
+pub fn acv_ademe_consumption_intensity(
+    mix: &GenerationMix,
+    flows: &CrossBorderFlows,
+    factors: &EmissionFactors,
+    td_loss: f64,
+) -> Option<CarbonIntensity> {
+    let (prod_emissions, prod_mwh) = production_emissions_output(mix, factors);
+    if prod_mwh <= 0.0 {
+        return None;
+    }
+    let prod_intensity = prod_emissions / prod_mwh;
+
+    let imports_mwh = flows.imports_mw();
+    let exports_mwh = flows.exports_mw();
+    let imported_emissions = flows.imported_emissions();
+
+    let consumption = prod_mwh - exports_mwh + imports_mwh;
+    if consumption <= 0.0 {
+        return None;
+    }
+
+    let consumed_emissions = prod_emissions - exports_mwh * prod_intensity + imported_emissions;
+    let grid_intensity = (consumed_emissions / consumption).max(0.0);
+
+    CarbonIntensity::new(grid_intensity * (1.0 + td_loss))
 }
 
 /// Dérive la mesure `acv-ademe` à partir d'une mesure portant un mix de

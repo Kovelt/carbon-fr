@@ -1,0 +1,21 @@
+meta {
+  name: Facteurs — acv-ademe
+  type: http
+  seq: 17
+}
+
+get {
+  url: {{baseUrl}}/v1/factors?methodology=acv-ademe
+  body: none
+  auth: none
+  query {
+    methodology: acv-ademe
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.methodology: eq acv-ademe
+  res.body.unit: eq gCO2eq/kWh
+  res.body.factors[0].filiere: eq nucleaire
+}

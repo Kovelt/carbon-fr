@@ -32,6 +32,8 @@ bru run --env Local
 | Intensité now — national (rte-direct / acv-ademe) | `200`, méthodologie |
 | Intensité now — régional Bretagne (acv-ademe) | `200`, région |
 | Mix — national / régional | `200`, unité `MW` |
+| Méthodologies — catalogue | `200`, défaut `rte-direct` |
+| Facteurs — acv-ademe | `200`, unité, filières |
 | Intensité date — historique | `200` |
 | Intensité stats — résumé / série journalière | `200`, `intervals` |
 | Prévision — série (climatology@1) | `200`, `model`, unité |
@@ -40,6 +42,7 @@ bru run --env Local
 | Erreur — région en rte-direct | `404 no_data` |
 | Erreur — région inconnue | `400 bad_request` |
 | Erreur — date sans `from` | `400 bad_request` |
+| Erreur — facteurs en rte-direct | `400 bad_request` |
 
 > La collection n'est **pas** dans la CI : elle exige une API live (+ base,
 > + données ODRÉ). C'est un outil de dev/QA manuel.

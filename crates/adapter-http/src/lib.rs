@@ -123,6 +123,8 @@ where
         .route("/v1/intensity/date", get(handlers::intensity_date::<R>))
         .route("/v1/intensity/stats", get(handlers::intensity_stats::<R>))
         .route("/v1/mix", get(handlers::mix::<R>))
+        .route("/v1/methodologies", get(handlers::methodologies))
+        .route("/v1/factors", get(handlers::factors))
         .route("/v1/stats", get(handlers::visit_stats::<R>))
         .route("/v1/stats/visit", post(handlers::record_visit::<R>))
         .route("/v1/openapi.json", get(carbonfr_openapi::openapi))

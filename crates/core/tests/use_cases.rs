@@ -466,6 +466,13 @@ impl Eco2mixArchive for FakeArchive {
         }
         Ok(out)
     }
+
+    async fn export_national_loads(
+        &self,
+        _range: TimeRange,
+    ) -> Result<Vec<carbonfr_core::domain::LoadRecord>, SourceError> {
+        Ok(Vec::new())
+    }
 }
 
 #[tokio::test]

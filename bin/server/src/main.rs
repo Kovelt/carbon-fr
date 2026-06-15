@@ -45,7 +45,9 @@ use carbonfr_core::application::{BackfillHistory, BacktestForecast, BacktestRepo
 use carbonfr_core::domain::{
     CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, ErrorMetrics, Region, TimeRange,
 };
-use carbonfr_core::ports::{Eco2mixSource, IntensityRepository};
+use carbonfr_core::ports::{
+    ConsumptionRepository, ConsumptionSource, Eco2mixArchive, Eco2mixSource, IntensityRepository,
+};
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, Month, OffsetDateTime};
 use tokio::net::TcpListener;
@@ -116,7 +118,7 @@ async fn run_backfill() -> anyhow::Result<()> {
     let archive = OdreClient::new().context("initialisation du client ODRÉ")?;
 
     let (range, window) = backfill_params()?;
-    let backfill = BackfillHistory::new(archive, repo.clone(), window);
+    let backfill = BackfillHistory::new(archive.clone(), repo.clone(), window);
 
     info!(from = %range.start(), to = %range.end(), window_days = window.whole_days(), "backfill historique national démarré");
     let report = backfill
@@ -135,6 +137,19 @@ async fn run_backfill() -> anyhow::Result<()> {
         .await
         .context("rafraîchissement des rollups")?;
     info!("rollups rafraîchis");
+
+    // Backfill de la **charge réalisée** historique (consommation) — store de
+    // charge réutilisable (features du futur modèle ML, ADR-0012). Les prévisions
+    // de charge, elles, sont ingérées en continu par le poller.
+    let loads = archive
+        .export_national_loads(range)
+        .await
+        .context("backfill de la charge")?;
+    let loads_written = repo
+        .upsert_loads(&loads)
+        .await
+        .context("écriture de la charge")?;
+    info!(loads = loads_written, "charge réalisée backfillée");
     Ok(())
 }
 
@@ -609,10 +624,10 @@ fn parse_rfc3339_env(name: &str) -> anyhow::Result<Option<OffsetDateTime>> {
 /// boucle (la donnée sera rattrapée à la prochaine itération ou au backfill).
 fn spawn_poller<S, R>(source: S, repo: R, interval: std::time::Duration) -> JoinHandle<()>
 where
-    S: Eco2mixSource + 'static,
-    R: IntensityRepository + Clone + 'static,
+    S: Eco2mixSource + ConsumptionSource + Clone + 'static,
+    R: IntensityRepository + ConsumptionRepository + Clone + 'static,
 {
-    let ingest = IngestLatest::new(source, repo.clone());
+    let ingest = IngestLatest::new(source.clone(), repo.clone());
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
         loop {
@@ -630,6 +645,17 @@ where
                 }
             }
             info!(written, "ingestion ODRÉ (national + régions)");
+
+            // Charge nationale : consommation récente + prévisions RTE (ADR-0011
+            // §4), pour le modèle ajusté `climatology@2`.
+            match source.recent_loads(Region::National).await {
+                Ok(loads) if !loads.is_empty() => match repo.upsert_loads(&loads).await {
+                    Ok(n) => info!(loads = n, "ingestion charge (conso + prévisions)"),
+                    Err(err) => warn!(error = %err, "échec d'écriture de la charge"),
+                },
+                Ok(_) => {}
+                Err(err) => warn!(error = %err, "échec de récupération de la charge ODRÉ"),
+            }
 
             // Rollups rafraîchis une fois par cycle si la donnée a changé.
             if written > 0

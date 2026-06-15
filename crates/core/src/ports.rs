@@ -8,8 +8,8 @@ use thiserror::Error;
 use time::{Date, Duration, OffsetDateTime};
 
 use crate::domain::{
-    ForecastPoint, Granularity, IntensityStats, Measurement, Region, RollupBucket, TimeRange,
-    VisitStats,
+    ForecastPoint, Granularity, IntensityStats, LoadRecord, Measurement, Region, RollupBucket,
+    TimeRange, VisitStats,
 };
 
 /// Erreur de récupération depuis une source amont (ODRÉ, ou source de secours).
@@ -66,6 +66,11 @@ pub trait Eco2mixSource: Send + Sync {
 pub trait Eco2mixArchive: Send + Sync {
     /// Mesures nationales historiques sur `range`, obtenues par export de masse.
     async fn export_national(&self, range: TimeRange) -> Result<Vec<Measurement>, SourceError>;
+
+    /// Charges **réalisées** nationales historiques (consommation) sur `range`,
+    /// par export de masse — pour calibrer `climatology@2` (ADR-0011 §4).
+    async fn export_national_loads(&self, range: TimeRange)
+    -> Result<Vec<LoadRecord>, SourceError>;
 }
 
 /// Port sortant : persistance des mesures (read-model + historique).
@@ -117,6 +122,32 @@ pub trait IntensityRepository: Send + Sync {
     /// Rafraîchit les rollups après une ingestion ou un backfill. Sans effet
     /// pour les implémentations qui agrègent à la volée.
     async fn refresh_rollups(&self) -> Result<(), RepositoryError>;
+}
+
+/// Port sortant : store de **charge** (consommation réalisée + prévue, ADR-0011
+/// §4). Distinct du repository d'intensité car la charge n'est pas du carbone et
+/// la prévision future n'a pas d'intensité.
+#[async_trait]
+pub trait ConsumptionRepository: Send + Sync {
+    /// Insère/met à jour des charges. Un champ `None` ne doit pas écraser une
+    /// valeur déjà présente (réalisée et prévue arrivent séparément).
+    async fn upsert_loads(&self, loads: &[LoadRecord]) -> Result<usize, RepositoryError>;
+
+    /// Charges d'une région sur `range`, triées par horodatage croissant.
+    async fn load_range(
+        &self,
+        region: Region,
+        range: TimeRange,
+    ) -> Result<Vec<LoadRecord>, RepositoryError>;
+}
+
+/// Port sortant : source amont de **charge** (consommation récente + prévision
+/// J-1/J), pour alimenter le store. Jamais appelée par requête utilisateur — le
+/// poller l'ingère (ADR-0003).
+#[async_trait]
+pub trait ConsumptionSource: Send + Sync {
+    /// Charges récentes et **à venir** (réalisées + prévues) pour une région.
+    async fn recent_loads(&self, region: Region) -> Result<Vec<LoadRecord>, SourceError>;
 }
 
 /// Port sortant : compteur de consultations (visiteurs).

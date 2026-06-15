@@ -10,6 +10,7 @@ mod forecast;
 mod forecast_point;
 mod horizon_bands;
 mod intensity;
+mod load;
 mod measurement;
 mod methodology;
 mod metrics;
@@ -24,6 +25,7 @@ pub use forecast::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, clima
 pub use forecast_point::{ForecastPoint, ModelVersion};
 pub use horizon_bands::HorizonBands;
 pub use intensity::CarbonIntensity;
+pub use load::LoadRecord;
 pub use measurement::{GenerationMix, Measurement, MeasurementKey};
 pub use methodology::{Methodology, Vintage};
 pub use metrics::{ErrorAccumulator, ErrorMetrics};

@@ -51,6 +51,12 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `HorizonBands` calibré par backtest *walk-forward* (`backtest-bands`) ; les
   bornes **s'élargissent avec l'horizon**. Le serveur auto-calibre au démarrage
   (`CARBONFR_FORECAST_CALIBRATE_WEEKS`), avec repli sur la dispersion par créneau.
+- **Store de charge** (consommation réalisée + prévue RTE) : table `consumption`,
+  ports `ConsumptionRepository`/`ConsumptionSource`, ingestion par le poller
+  (conso récente + prévisions J-1/J) et backfill de la réalisée. Entrée
+  réutilisable pour le futur modèle ML (ADR-0012). *Note* : l'ajustement
+  **linéaire** de la prévision par la charge (ADR-0011 §4) a été essayé puis
+  **écarté** — mesuré moins bon que la climatologie seule (cf. ADR-0011).
 - **Backtest** du modèle de prévision (`carbonfr-server backtest`, ADR-0009) :
   évaluation *walk-forward* sur l'historique, MAE/RMSE global et par horizon
   (h+1/h+6/h+24), comparés à une référence de persistance — pour mesurer la

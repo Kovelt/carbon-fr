@@ -5,8 +5,8 @@
 //! traduit l'enregistrement brut en [`Measurement`] du domaine.
 
 use carbonfr_core::domain::{
-    CarbonIntensity, EmissionFactors, GenerationMix, Measurement, Methodology, Region, Vintage,
-    acv_ademe_intensity,
+    CarbonIntensity, EmissionFactors, GenerationMix, LoadRecord, Measurement, Methodology, Region,
+    Vintage, acv_ademe_intensity,
 };
 use carbonfr_core::ports::SourceError;
 use serde::Deserialize;
@@ -30,6 +30,8 @@ pub(crate) struct NationalRecord {
     pub date_heure: String,
     pub nature: String,
     pub taux_co2: Option<f64>,
+    #[serde(default)]
+    pub consommation: Option<f64>,
     pub nucleaire: Option<f64>,
     pub gaz: Option<f64>,
     pub charbon: Option<f64>,
@@ -80,6 +82,58 @@ impl NationalRecord {
                 thermique: None,
             }),
         })
+    }
+}
+
+impl NationalRecord {
+    /// Charge **réalisée** portée par l'enregistrement (consommation), ou `None`.
+    /// Sert au backfill de charge (proxy de calibration `climatology@2`).
+    pub(crate) fn into_realized_load(self) -> Result<Option<LoadRecord>, SourceError> {
+        let Some(mw) = self.consommation else {
+            return Ok(None);
+        };
+        let at = OffsetDateTime::parse(&self.date_heure, &Rfc3339).map_err(|e| {
+            SourceError::Invalid(format!(
+                "horodatage illisible « {} » : {e}",
+                self.date_heure
+            ))
+        })?;
+        Ok(Some(LoadRecord::realized(at, Region::National, mw)))
+    }
+}
+
+/// Enregistrement de **charge** du dataset `eco2mix-national-tr` : consommation
+/// réalisée et prévisions RTE (ADR-0011 §4). La prévision intraday (`prevision_j`)
+/// prime sur la veille (`prevision_j1`) quand elle existe.
+#[derive(Debug, Deserialize)]
+pub(crate) struct ConsumptionRecord {
+    pub date_heure: String,
+    pub consommation: Option<f64>,
+    pub prevision_j1: Option<f64>,
+    pub prevision_j: Option<f64>,
+}
+
+impl ConsumptionRecord {
+    /// Convertit en [`LoadRecord`], ou `None` si aucune charge (ni réalisée ni
+    /// prévue) n'est présente. Échoue si l'horodatage est illisible.
+    pub(crate) fn into_load(self, region: Region) -> Result<Option<LoadRecord>, SourceError> {
+        let realized = self.consommation;
+        let forecast = self.prevision_j.or(self.prevision_j1);
+        if realized.is_none() && forecast.is_none() {
+            return Ok(None);
+        }
+        let at = OffsetDateTime::parse(&self.date_heure, &Rfc3339).map_err(|e| {
+            SourceError::Invalid(format!(
+                "horodatage illisible « {} » : {e}",
+                self.date_heure
+            ))
+        })?;
+        Ok(Some(LoadRecord {
+            at,
+            region,
+            realized,
+            forecast,
+        }))
     }
 }
 

@@ -20,12 +20,12 @@
 mod dto;
 
 use async_trait::async_trait;
-use carbonfr_core::domain::{Measurement, Region, TimeRange};
-use carbonfr_core::ports::{Eco2mixArchive, Eco2mixSource, SourceError};
+use carbonfr_core::domain::{LoadRecord, Measurement, Region, TimeRange};
+use carbonfr_core::ports::{ConsumptionSource, Eco2mixArchive, Eco2mixSource, SourceError};
 use serde::de::DeserializeOwned;
 use time::format_description::well_known::Rfc3339;
 
-use dto::{NationalRecord, RecordsResponse, RegionalRecord};
+use dto::{ConsumptionRecord, NationalRecord, RecordsResponse, RegionalRecord};
 
 /// URL de base de l'API Explore d'ODRÉ.
 const DEFAULT_BASE_URL: &str = "https://odre.opendatasoft.com";
@@ -44,6 +44,7 @@ const PAGE_SIZE: u64 = 100;
 ///
 /// Sans état métier : un seul client peut être partagé (`reqwest::Client` gère
 /// son propre pool de connexions et est `Clone`).
+#[derive(Clone)]
 pub struct OdreClient {
     http: reqwest::Client,
     base_url: String,
@@ -306,6 +307,37 @@ impl Eco2mixSource for OdreClient {
 }
 
 #[async_trait]
+impl ConsumptionSource for OdreClient {
+    async fn recent_loads(&self, region: Region) -> Result<Vec<LoadRecord>, SourceError> {
+        // Charge nationale uniquement (le modèle ajusté est national `rte-direct`,
+        // ADR-0011 §4). Régional : pas de charge ingérée → vide (pas d'ajustement).
+        if region != Region::National {
+            return Ok(Vec::new());
+        }
+        // Les ~100 horodatages les plus récents : tri décroissant → les créneaux
+        // **futurs** (prévision sans réalisée) en tête, puis le passé proche.
+        let query = [
+            (
+                "where",
+                "consommation is not null or prevision_j1 is not null".to_string(),
+            ),
+            ("order_by", "date_heure desc".to_string()),
+            ("limit", PAGE_SIZE.to_string()),
+        ];
+        let page = self
+            .fetch::<ConsumptionRecord>(NATIONAL_DATASET, &query)
+            .await?;
+        let mut loads = Vec::with_capacity(page.results.len());
+        for record in page.results {
+            if let Some(load) = record.into_load(region)? {
+                loads.push(load);
+            }
+        }
+        Ok(loads)
+    }
+}
+
+#[async_trait]
 impl Eco2mixArchive for OdreClient {
     async fn export_national(&self, range: TimeRange) -> Result<Vec<Measurement>, SourceError> {
         let filter = Self::time_filter(range)?;
@@ -315,6 +347,31 @@ impl Eco2mixArchive for OdreClient {
             .into_iter()
             .map(NationalRecord::into_measurement)
             .collect()
+    }
+
+    async fn export_national_loads(
+        &self,
+        range: TimeRange,
+    ) -> Result<Vec<LoadRecord>, SourceError> {
+        let start = range
+            .start()
+            .format(&Rfc3339)
+            .map_err(|e| SourceError::Invalid(format!("borne de début : {e}")))?;
+        let end = range
+            .end()
+            .format(&Rfc3339)
+            .map_err(|e| SourceError::Invalid(format!("borne de fin : {e}")))?;
+        let filter = format!(
+            "date_heure >= '{start}' and date_heure < '{end}' and consommation is not null"
+        );
+        let records = self.fetch_export(NATIONAL_ARCHIVE_DATASET, &filter).await?;
+        let mut loads = Vec::with_capacity(records.len());
+        for record in records {
+            if let Some(load) = record.into_realized_load()? {
+                loads.push(load);
+            }
+        }
+        Ok(loads)
     }
 }
 

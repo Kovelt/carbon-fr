@@ -22,8 +22,19 @@ h+24) et capturent l'**asymétrie** du modèle. Le serveur **auto-calibre au
 démarrage** sur l'historique récent (repli sur la dispersion par créneau si
 insuffisant) ; la sous-commande `backtest-bands` imprime la table.
 
-**Restant, derrière le même contrat** (donc sans rupture) : ajustement du
-`StatForecaster` par la **consommation prévue RTE** (§4) ; re-calibration
+**Ajustement par la consommation prévue (§4) — essayé, mesuré, écarté.** Un
+modèle `climatology@2` ajoutant `β · (charge prévue − charge climatologique)` a
+été implémenté et backtesté (β intra-créneau, charge proxy = réalisée, soit une
+**borne supérieure** du gain). Verdict : il **dégrade nettement** `@1` (RMSE
+17,5 vs 7,5 sur novembre 2024), surtout à court horizon — la correction
+d'anomalie de `@1` capte déjà l'état récent, le terme de charge sur-corrige.
+**Conclusion : le signal de charge n'aide pas en ajustement linéaire isolé ; il
+a sa place comme *feature* d'un modèle ML multi-variables (ADR-0012), pas comme
+`@2`.** `@1` reste le modèle servi. Le **store de charge** (consommation réalisée
++ prévue, ingéré par le poller) est néanmoins **conservé** : c'est l'entrée
+réutilisable de ce futur ML.
+
+**Restant, derrière le même contrat** (donc sans rupture) : re-calibration
 périodique des bandes (après révision de millésime) ; publication de la
 précision par horizon. Le contrat étant figé, ces raffinements n'impacteront
 plus le `/v1` public.

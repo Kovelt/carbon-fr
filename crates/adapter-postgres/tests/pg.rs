@@ -15,10 +15,10 @@
 
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_core::domain::{
-    CarbonIntensity, GenerationMix, Granularity, Measurement, Methodology, Region, TimeRange,
-    Vintage,
+    CarbonIntensity, GenerationMix, Granularity, LoadRecord, Measurement, Methodology, Region,
+    TimeRange, Vintage,
 };
-use carbonfr_core::ports::{IntensityRepository, VisitCounter};
+use carbonfr_core::ports::{ConsumptionRepository, IntensityRepository, VisitCounter};
 use time::{Date, Duration, Month, OffsetDateTime};
 
 /// Repository prêt (migré, lignes de `methodology` purgées), ou `None` si
@@ -286,6 +286,35 @@ async fn visit_counter_dedups_per_day() {
     let stats = repo.record_visit("hash-b", day).await.unwrap();
     assert_eq!(stats.unique, 2);
     assert_eq!(stats.total, 2);
+}
+
+#[tokio::test]
+async fn consumption_merges_realized_and_forecast() {
+    let Some(repo) = setup("test-pg-conso").await else {
+        return;
+    };
+    // Horodatage dédié au test (clé = region + at), nettoyé pour la ré-exécution.
+    let t = OffsetDateTime::UNIX_EPOCH + Duration::days(6000);
+    sqlx::query("DELETE FROM consumption WHERE at = $1")
+        .bind(t)
+        .execute(repo.pool())
+        .await
+        .expect("nettoyage consumption");
+
+    // La prévision arrive d'abord (créneau futur), puis la réalisée : l'upsert
+    // fusionne sans qu'un NULL n'écrase l'existant (COALESCE).
+    repo.upsert_loads(&[LoadRecord::forecast(t, Region::National, 45_000.0)])
+        .await
+        .unwrap();
+    repo.upsert_loads(&[LoadRecord::realized(t, Region::National, 44_500.0)])
+        .await
+        .unwrap();
+
+    let window = TimeRange::new(t, t + Duration::minutes(15)).unwrap();
+    let got = repo.load_range(Region::National, window).await.unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].realized, Some(44_500.0));
+    assert_eq!(got[0].forecast, Some(45_000.0));
 }
 
 /// Deux lignes de **même clé** dans un **seul** `upsert_many` : sans la dédup

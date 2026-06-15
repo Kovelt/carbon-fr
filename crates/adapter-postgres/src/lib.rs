@@ -16,9 +16,12 @@ mod mapping;
 
 use async_trait::async_trait;
 use carbonfr_core::domain::{
-    Granularity, IntensityStats, Measurement, Region, RollupBucket, TimeRange, VisitStats,
+    Granularity, IntensityStats, LoadRecord, Measurement, Region, RollupBucket, TimeRange,
+    VisitStats,
 };
-use carbonfr_core::ports::{IntensityRepository, RepositoryError, VisitCounter};
+use carbonfr_core::ports::{
+    ConsumptionRepository, IntensityRepository, RepositoryError, VisitCounter,
+};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, QueryBuilder, Row};
 use time::Date;
@@ -299,5 +302,75 @@ impl VisitCounter for PgIntensityRepository {
             total: total.max(0) as u64,
             since,
         })
+    }
+}
+
+#[async_trait]
+impl ConsumptionRepository for PgIntensityRepository {
+    async fn upsert_loads(&self, loads: &[LoadRecord]) -> Result<usize, RepositoryError> {
+        if loads.is_empty() {
+            return Ok(0);
+        }
+        let mut written = 0usize;
+        // Paquets bornés : 4 colonnes × 10 000 = 40 000 paramètres < 65 535.
+        for chunk in loads.chunks(10_000) {
+            let mut builder =
+                QueryBuilder::new("INSERT INTO consumption (region, at, realized, forecast) ");
+            builder.push_values(chunk.iter(), |mut row, load| {
+                row.push_bind(load.region.slug())
+                    .push_bind(load.at)
+                    .push_bind(load.realized)
+                    .push_bind(load.forecast);
+            });
+            // Réalisée et prévue arrivent séparément : un NULL n'écrase pas une
+            // valeur déjà présente (COALESCE garde l'existante).
+            builder.push(
+                " ON CONFLICT (region, at) DO UPDATE SET \
+                 realized = COALESCE(EXCLUDED.realized, consumption.realized), \
+                 forecast = COALESCE(EXCLUDED.forecast, consumption.forecast)",
+            );
+            let result = builder
+                .build()
+                .execute(&self.pool)
+                .await
+                .map_err(|e| backend(format!("upsert_loads : {e}")))?;
+            written += result.rows_affected() as usize;
+        }
+        Ok(written)
+    }
+
+    async fn load_range(
+        &self,
+        region: Region,
+        range: TimeRange,
+    ) -> Result<Vec<LoadRecord>, RepositoryError> {
+        let rows = sqlx::query(
+            "SELECT region, at, realized, forecast FROM consumption \
+             WHERE region = $1 AND at >= $2 AND at < $3 ORDER BY at ASC",
+        )
+        .bind(region.slug())
+        .bind(range.start())
+        .bind(range.end())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| backend(format!("load_range : {e}")))?;
+
+        rows.iter()
+            .map(|row| {
+                let slug: String = row.try_get("region").map_err(|e| backend(e.to_string()))?;
+                let region = Region::from_slug(&slug)
+                    .ok_or_else(|| backend(format!("région inconnue en base : {slug}")))?;
+                Ok(LoadRecord {
+                    region,
+                    at: row.try_get("at").map_err(|e| backend(e.to_string()))?,
+                    realized: row
+                        .try_get("realized")
+                        .map_err(|e| backend(e.to_string()))?,
+                    forecast: row
+                        .try_get("forecast")
+                        .map_err(|e| backend(e.to_string()))?,
+                })
+            })
+            .collect()
     }
 }

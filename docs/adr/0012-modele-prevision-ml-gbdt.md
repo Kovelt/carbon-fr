@@ -1,0 +1,77 @@
+# ADR-0012 — Modèle de prévision ML : `GbdtForecaster` (tout-Rust) + features météo
+
+- **Statut** : Proposé
+- **Date** : 2026-06-15
+- **Raffine** : ADR-0011 (tranche la fourche *runtime* qu'il avait laissée ouverte)
+
+## Contexte
+
+L'ADR-0011 a fixé le **contrat** de prévision (`ForecastPoint` + intervalles, port `ForecastModel` retypé) et un premier modèle **saisonnier** (`StatForecaster`). Le ML y était explicitement **reporté**, et le choix de *runtime* laissé ouvert.
+
+Cet ADR décide le **premier modèle ML**. Il se branche derrière `ForecastModel` — c'est le *drop-in* annoncé par l'ADR-0002 — et n'a le droit d'être livré que s'il **bat le `StatForecaster`** sur le harnais de backtest (ADR-0011). Le `StatForecaster` n'est donc pas un concurrent : c'est l'**étalon** qui empêche le « ML théâtre ».
+
+Décisions de cadrage (cette itération) : **runtime tout-Rust, rebuildable au `cargo`** ; **features incluant la météo** (nouvelle source). Périmètre `rte-direct`, national.
+
+## Décision
+
+### 1. Modèle : arbres de gradient boosté, tout-Rust
+
+**Entraînement *et* inférence en Rust** (`gbdt` / `linfa`). Pas de Python, pas de dépendance C, pas d'ONNX. Le projet reste **rebuildable au `cargo` de bout en bout** et le serveur **mono-binaire** — la souveraineté est préservée *à l'exécution comme au ré-entraînement*. Les arbres boostés sont par ailleurs un choix solide sur des features tabulaires comme l'intensité.
+
+### 2. Adapter `GbdtForecaster` derrière `ForecastModel`
+
+Il produit des `ForecastPoint` (`expected` + `lower`/`upper` + `model` + `methodology`) : **aucun changement de contrat**, l'ADR-0011 a déjà tout posé. Il lit ses features depuis le repository / les rollups et le store météo. **Zéro IO dans `core`** — toute la *feature engineering* vit dans l'adapter.
+
+### 3. La météo n'entre **pas** dans le domaine
+
+Point de frontière important : `core` ne connaît que `ForecastPoint`. La météo est un **détail d'adapter de prévision**, pas un concept métier. On ne crée donc **aucun type météo dans `core`** — sinon on ferait fuiter une préoccupation d'infrastructure dans le domaine (ADR-0002).
+
+### 4. Features
+
+- **calendrier** : créneau horaire, type de jour (ouvré / week-end / férié), saison ;
+- **lags récents** d'intensité (autorégressif) ;
+- **consommation prévue RTE** (J-1 / J), déjà ingérée via ODRÉ ;
+- **météo prévue** (vent / irradiance solaire) — **nouvelle source**.
+
+### 5. Source météo = nouveau port + adapter
+
+Un port sortant `WeatherForecastSource` (prévisions vent / irradiance, agrégées au niveau national, au pas compatible quart d'heure ou interpolées), implémenté par un adapter. Source **FR/EU** privilégiée pour la souveraineté : Météo-France open data (AROME/ARPEGE) ou les **prévisions de génération éolien/solaire d'ENTSO-E** ; Open-Meteo en repli. Comme pour ODRÉ et ENTSO-E : **jamais appelée par requête utilisateur** — le **poller** l'ingère.
+
+### 6. Anti-fuite : on entraîne sur la météo **prévue**, pas observée
+
+C'est le piège central. Une prévision d'intensité à 24 h ne disposera, en production, que d'une **prévision météo**, pas de l'observation. Entraîner sur la météo *observée* surévaluerait la performance (fuite de données) et donnerait un modèle décevant en prod. Le store de features météo est donc daté par **`(run_time, valid_time)`**, et l'entraînement n'utilise que la prévision **telle qu'elle était disponible** à l'instant de la prédiction simulée.
+
+### 7. Cycle de vie (MLOps) tout-Rust
+
+- **`bin/train`** : binaire d'entraînement **offline** qui lit l'historique (consolidé/définitif, 2012→) + les features, entraîne le GBDT, et produit un **artefact versionné** (`ModelVersion`).
+- **Livraison** : l'artefact est **chargé depuis un chemin** au composition root (pas embarqué dans le binaire serveur) → republier un modèle = déposer un fichier + bump `ModelVersion`, **sans recompiler** le serveur.
+- **Garde de promotion** : réutilise le harnais de backtest (ADR-0011). Un nouveau modèle ne remplace l'actuel que s'il bat **(a)** le `StatForecaster` *et* **(b)** le modèle en place, sur MAE **et** taux de couverture, en *walk-forward*. Sinon : pas de livraison.
+- **Intervalles** : **mêmes quantiles empiriques de résidus par horizon** que l'ADR-0011, calculés sur le backtest du modèle ML — méthode d'incertitude inchangée, juste un meilleur estimateur central.
+- **Ré-entraînement** : périodique (dérive du réseau), idéalement déclenché aussi après révision de millésime (ADR-0006).
+
+### 8. Périmètre
+
+`rte-direct`, **national**. La prévision **`acv-ademe`** (imports prévus + intensités voisines prévues) reste **couplée à l'axe 1** → reportée.
+
+## Conséquences
+
+- **Souveraineté préservée** : tout rebuildable au `cargo`, entraînement + inférence Rust, serveur mono-binaire (+ `bin/train` offline).
+- **Domaine inchangé** : le contrat de l'ADR-0011 suffit ; la météo ne le touche pas. La frontière hexagonale tient.
+- **Infra** : nouveau port `WeatherForecastSource` + adapter ; **store de features météo prévisionnelles** (daté `run/valid`) ; `bin/train` ; le poller ingère désormais aussi la météo. Le harnais de backtest devient **critique** (garde de livraison).
+- **Réversibilité** : si `gbdt` plafonne en qualité, l'option « entraînement offline + chargement d'artefact » reste un *drop-in* **derrière le même port**, sans dette d'architecture.
+- **Coût assumé** : `gbdt`/`linfa` offrent un outillage de *tuning* plus maigre que LightGBM/XGBoost (gestion des catégorielles, régularisation, vitesse). C'est le prix de la souveraineté ; le baseline saisonnier + la garde backtest sont le filet.
+
+## Alternatives envisagées
+
+- **Entraînement offline Python (LightGBM/XGBoost) + ONNX** : meilleur outillage, mais Python dans la boucle de ré-entraînement + soit dépendance C (`ort`), soit `ai.onnx.ml` (arbres) mal couvert par `tract`. Écarté pour cette itération (souveraineté), **gardé en réserve** (réversible derrière le port).
+- **Réseau de neurones (`tract`)** : `tract` excelle sur le NN, mais c'est de la sur-ingénierie pour ce volume tabulaire face à un GBDT, et l'entraînement NN en Rust pur est moins mûr. Écarté.
+- **Entraîner sur la météo observée** : pipeline plus simple, mais **fuite de données** → performance surévaluée. Écarté fermement (voir §6).
+- **Pas de météo (features déjà ingérées seulement)** : plus simple, aucune nouvelle source — mais c'est précisément le levier qui fait gagner le ML sur la saisonnalité. Sans lui, le ML peine à justifier son existence face au `StatForecaster`. Écarté (décision : météo incluse).
+- **Artefact embarqué dans le binaire** : repro maximale, mais impose de recompiler/redéployer le serveur pour republier un modèle. Écarté au profit du chargement par chemin.
+
+## Questions ouvertes (implémentation — n'impactent pas le contrat)
+
+- Source météo exacte (Météo-France AROME/ARPEGE vs prévisions de génération ENTSO-E vs Open-Meteo) et granularité spatiale (maille → agrégation nationale).
+- Cadence de ré-entraînement et **seuil de gain minimal** pour promouvoir un modèle.
+- Format de sérialisation de l'artefact GBDT (format du crate vs format maison versionné).
+- Alignement temporel `run_time` / `valid_time` de la météo dans le store de features.

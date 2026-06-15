@@ -106,6 +106,17 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 - ADR-0008 (méthodologie `acv-ademe` & régional) — **Accepté** : intensité cycle de vie (facteurs ADEME × mix), `acv-ademe@1` basée production (imports = v2), dérivée à l'ingestion, sélectionnable via `?methodology=`. Base du futur régional.
 - ADR-0009 (modèle de prévision) — **Accepté** (+ addendum calibration) : `climatology@1` = climatologie horaire-de-semaine glissante (`N` sem.) + correction d'anomalie décroissante (`τ`). Pur/explicable, sans dépendance externe, alimenté par le backfill ; prévisions **non persistées** (calculées à la lecture). **Défauts calés par backtest : N=10 sem., τ=2 sem.** (bat la persistance ; τ court la dégradait). Versionné comme la méthodologie. Évolution engagée : `forecast@2` dérivé des prévisions RTE J-1, même port.
 
+### ADR **proposés** (vision forward — non implémentés)
+
+> Ces décisions cadrent la suite ; statut `Proposé`. La seule **rework de phase 3 avant de figer le `/v1` public** est l'ADR-0011 ; le reste est post-phase 4.
+
+- ADR-0010 — `acv-ademe` **consumption-based** : imports valorisés à l'intensité du pays d'origine (ENTSO-E via `adapter-entsoe`), `MethodologyCalculator` (trait domaine pur), endpoints `/v1/methodologies` & `/v1/factors`. **Fait évoluer** l'ADR-0008 (livré en `@1` production-based).
+- ADR-0011 — **contrat de prévision `ForecastPoint`** : type domaine dédié (intervalles `lower`/`expected`/`upper`, `ModelVersion`, **pas de `vintage`**), remplaçant le `Vec<Measurement>` actuel du port. **Rework de phase 3** : à boucler avant que le SDK/OpenAPI ne figent un `/forecast` sans incertitude (sinon breaking change du `/v1`).
+- ADR-0012 — modèle de prévision **ML** (`GbdtForecaster`, GBDT tout-Rust + features météo) derrière le même port ; ne livre que s'il bat le `StatForecaster` au backtest. **Post-phase 4.**
+- ADR-0013 — **prévision `acv-ademe`** : prévoir les entrées (mix + imports) puis appliquer le calculateur ; `MixForecaster` + `CrossBorderForecastSource`. **Post-phase 4** (dépend de 0010 + 0012).
+- ADR-0014 — **usage** : primitives carbon-aware (créneau sous échéance, lowest-k, seuil, annotation d'économie) + livraison live **SSE** (`/v1/intensity/stream`, `LISTEN`/`NOTIFY`) ; webhooks reportés (gated sur le tier hébergé). **Post-phase 4.**
+- ADR-0015 — **tier hébergé** : clés API (`Bearer`) en **middleware de bord** (`core` intact, ports `ApiKeyRepository`/`UsageMeter` sur Postgres), **anonyme conservé par défaut** (auth opt-in, self-hosting préservé), payant = extension future non-bloquante. Débloque les webhooks (fournit l'*ownership*). **Post-phase 4.**
+
 ## État d'avancement
 
 - [x] Cadrage + documentation (ADR, ARCHITECTURE).
@@ -115,13 +126,21 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
   - [x] endpoint de lecture d'historique `/v1/intensity/date?from=&to=` (cas d'usage `GetIntensityHistory`, fenêtre ≤ 366 j).
   - [x] rollups (vues matérialisées horaire/journalier) + `/v1/intensity/stats` (résumé exact sur `measurement` + série depuis les rollups ; rafraîchis par poller & backfill).
   - [x] **méthodologie `acv-ademe`** (cycle de vie, ADR-0008) : définie + dérivée/stockée à l'ingestion + `?methodology=`. **National** (dérivé du mix complet) **et 12 régions** (mix régional `eco2mix-regional-*`, `thermique` agrégé → facteur gaz). `rte-direct` reste national.
-- [x] Phase 3 — prévision :
+- [~] Phase 3 — prévision (modèle livré & calé ; **rework de contrat `ForecastPoint` en attente**, ADR-0011) :
   - [x] **ADR-0009** — modèle `climatology@1` (climatologie horaire-de-semaine glissante + correction de persistance décroissante). Pur, explicable, sans dépendance externe, alimenté par le backfill. Prévisions **non persistées** (calculées à la lecture, ADR-0006 intacte). Endpoints `/v1/intensity/forecast` et `/v1/intensity/greenest-window`.
   - [x] fonction pure de domaine (`climatology_forecast`) + adapter `ClimatologyForecaster` (`ForecastModel`, lit l'historique via `IntensityRepository`).
   - [x] handlers `/v1` (`forecast` + `greenest-window`) + DTO (id de modèle `climatology@1`) + OpenAPI + câblage composition root.
   - [x] collection Bruno des deux endpoints de prévision.
   - [x] **backtest** walk-forward (`carbonfr-server backtest`) : MAE/RMSE global + par horizon (h+1/h+6/h+24), modèle vs persistance. Maths d'erreur pures (`ErrorAccumulator`/`ErrorMetrics`), orchestration en cas d'usage `BacktestForecast` (testée avec fakes).
-  - [x] **calage N/τ mesuré** (`backtest-sweep`, balayage N × τ) sur la vraie donnée 2024 (national `rte-direct`, 2 mois indépendants). Défauts révisés : **N = 10 sem., τ = 2 sem.** (l'ancien τ=6 h sous-performait la persistance ; un τ long = climatologie corrigée de l'anomalie, bat la persistance). Cf. addendum ADR-0009. ⚠️ Le jeu consolidé est au **pas 30 min** (`CARBONFR_BACKTEST_STEP_MINUTES`). **Phase 3 terminée.**
+  - [x] **calage N/τ mesuré** (`backtest-sweep`, balayage N × τ) sur la vraie donnée 2024 (national `rte-direct`, 2 mois indépendants). Défauts révisés : **N = 10 sem., τ = 2 sem.** (l'ancien τ=6 h sous-performait la persistance ; un τ long = climatologie corrigée de l'anomalie, bat la persistance). Cf. addendum ADR-0009. ⚠️ Le jeu consolidé est au **pas 30 min** (`CARBONFR_BACKTEST_STEP_MINUTES`).
+  - [ ] **rework de contrat `ForecastPoint`** (ADR-0011, proposé) — **à boucler avant phase 4** : remplacer le `Vec<Measurement>` (qui détourne `vintage=Tr`) par un type dédié avec **intervalles d'incertitude** + `ModelVersion`, avant que le SDK/OpenAPI ne figent le `/v1` public. Intervalles = quantiles empiriques de résidus par horizon (issus du backtest).
+
+- [ ] Phase 4 — **enrichissement & usage** (ADR proposés 0010, 0012-0014) :
+  - [ ] `acv-ademe` **consumption-based** + `adapter-entsoe` + `/v1/factors` (ADR-0010).
+  - [ ] modèle **ML GBDT** (tout-Rust) + features météo, derrière le port, gardé par le backtest (ADR-0012).
+  - [ ] **prévision `acv-ademe`** (prévoir les entrées → calculateur ; `MixForecaster`, ENTSO-E day-ahead) (ADR-0013).
+  - [ ] **usage** : primitives de scheduling carbon-aware + streaming **SSE** (ADR-0014) ; webhooks reportés (tier hébergé).
+  - [ ] **tier hébergé** : clés API en middleware de bord, anonyme par défaut, `core` intact (ADR-0015) ; débloque les webhooks. Direction posée, calendrier libre.
 
 ### Repères d'implémentation (phases 1-2)
 

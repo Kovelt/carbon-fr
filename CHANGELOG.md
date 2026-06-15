@@ -54,7 +54,10 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   (port `VisitCounter`). IP **jamais stockée** — empreinte SHA-256 salée
   (`CARBONFR_VISIT_SALT`), déduplication unique par IP/jour ; IP lue via
   `X-Forwarded-For`/`X-Real-IP`.
-- **Documentation & gouvernance** : ADR 0001–0009 (+ addendum ADR-0003),
+- **Documentation & gouvernance** : ADR 0001–0009 acceptés (+ addendum ADR-0003),
+  ADR 0010–0015 **proposés** (vision forward : `acv-ademe` consumption-based,
+  contrat `ForecastPoint`, modèle ML, prévision `acv-ademe`, usage/streaming,
+  tier hébergé),
   `ARCHITECTURE.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `GOUVERNANCE.md`,
   et intégration continue GitHub Actions (fmt, clippy, tests + PostgreSQL).
 - **Chaîne d'approvisionnement** : politique `cargo-deny` (`deny.toml`) vérifiée

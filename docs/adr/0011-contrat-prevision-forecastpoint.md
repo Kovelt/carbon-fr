@@ -11,15 +11,22 @@
 à la construction) ; port `ForecastModel` et `greenest_window` retypés ;
 `climatology@1` produit des `ForecastPoint` ; `/v1/intensity/forecast` expose
 `expected`/`lower`/`upper`/`model` ; `greenest-window` gagne le sélecteur
-`?estimator=central|prudent`. L'intervalle v1 vient de la **dispersion empirique
-par créneau** (quantiles 10 %/90 % des échantillons historiques, recentrés sur
-la valeur corrigée) — *data-driven*, pas gaussien.
+`?estimator=central|prudent`.
 
-**Restant, derrière le même contrat** (donc sans rupture) : calibration des
-bornes par **quantiles de résidus par horizon** issus du backtest (§5/§6) ;
-ajustement du `StatForecaster` par la **consommation prévue RTE** (§4) ;
-publication de la précision par horizon. Le contrat étant figé, ces raffinements
-n'impacteront plus le `/v1` public.
+**Intervalles par quantiles de résidus par horizon (§5/§6) — livrés** : un type
+`HorizonBands` calibré par le backtest *walk-forward* (`BacktestForecast::
+calibrate_bands`) ; l'erreur `observé − prévu` est collectée par décalage
+d'horizon, dont on retient les quantiles 10 %/90 %. Les bornes **s'élargissent
+avec l'horizon** (mesuré sur 2024 : largeur ≈ 8 → 12 → 17 gCO₂eq/kWh à h+1/h+6/
+h+24) et capturent l'**asymétrie** du modèle. Le serveur **auto-calibre au
+démarrage** sur l'historique récent (repli sur la dispersion par créneau si
+insuffisant) ; la sous-commande `backtest-bands` imprime la table.
+
+**Restant, derrière le même contrat** (donc sans rupture) : ajustement du
+`StatForecaster` par la **consommation prévue RTE** (§4) ; re-calibration
+périodique des bandes (après révision de millésime) ; publication de la
+précision par horizon. Le contrat étant figé, ces raffinements n'impacteront
+plus le `/v1` public.
 
 ## Contexte
 

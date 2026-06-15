@@ -21,7 +21,7 @@ use std::collections::HashMap;
 
 use time::{Duration, OffsetDateTime, UtcOffset};
 
-use crate::domain::{CarbonIntensity, ForecastPoint, Measurement, ModelVersion};
+use crate::domain::{CarbonIntensity, ForecastPoint, HorizonBands, Measurement, ModelVersion};
 
 /// Quantile de bord de l'intervalle d'incertitude (ADR-0011) : 0,1 → bande
 /// centrale ~80 % (quantiles empiriques 10 %/90 % par créneau). La calibration
@@ -78,10 +78,11 @@ const MAX_STEPS: i64 = 100_000;
 /// (une prévision n'est pas une mesure, ADR-0011) et portent le `model`
 /// `climatology@1`.
 ///
-/// **Intervalle** : pour chaque créneau, la dispersion **empirique** de ses
-/// échantillons historiques (quantiles 10 %/90 %, [`BAND_QUANTILE`]) est
-/// recentrée autour de la valeur corrigée — un encadrement *data-driven*, pas
-/// une hypothèse gaussienne (ADR-0011).
+/// **Intervalle** : si `bands` est fourni (calibré par backtest, ADR-0011 §5),
+/// l'encadrement vient des **quantiles de résidus par horizon** — il s'élargit
+/// avec l'horizon. Sinon (non calibré, démarrage à froid), repli sur la
+/// **dispersion empirique par créneau** (quantiles [`BAND_QUANTILE`]). Dans les
+/// deux cas, *data-driven*, pas gaussien.
 ///
 /// Retourne `None` si l'historique est vide ou si les paramètres/horizon sont
 /// invalides (pas/τ/horizon ≤ 0, ou horizon démesuré).
@@ -90,6 +91,7 @@ pub fn climatology_forecast(
     from: OffsetDateTime,
     horizon: Duration,
     params: ClimatologyParams,
+    bands: Option<&HorizonBands>,
 ) -> Option<Vec<ForecastPoint>> {
     let step_secs = params.step.whole_seconds();
     let tau_secs = params.tau.whole_seconds() as f64;
@@ -145,17 +147,29 @@ pub fn climatology_forecast(
         let dt = (t - t0).abs().whole_seconds() as f64;
         let expected_value = (mean + bias * (-dt / tau_secs).exp()).max(0.0);
 
-        // Dispersion empirique du créneau (repli sur la distribution globale),
-        // recentrée sur `expected`.
-        let (low_off, high_off) = match samples {
-            Some(s) if s.len() >= 2 => band_offsets(s, mean),
-            _ => band_offsets(&all, mean),
+        // Intervalle : quantiles de résidus par horizon si calibrés, sinon
+        // dispersion empirique du créneau (recentrée sur `expected`).
+        let (lower_value, upper_value) = match bands.and_then(|b| b.at(t - from)) {
+            Some((q_low, q_high)) => (
+                (expected_value + q_low).max(0.0),
+                (expected_value + q_high).max(expected_value),
+            ),
+            None => {
+                let (low_off, high_off) = match samples {
+                    Some(s) if s.len() >= 2 => band_offsets(s, mean),
+                    _ => band_offsets(&all, mean),
+                };
+                (
+                    (expected_value - low_off).max(0.0),
+                    expected_value + high_off,
+                )
+            }
         };
 
         if let (Some(expected), Some(lower), Some(upper)) = (
             CarbonIntensity::new(expected_value),
-            CarbonIntensity::new((expected_value - low_off).max(0.0)),
-            CarbonIntensity::new(expected_value + high_off),
+            CarbonIntensity::new(lower_value),
+            CarbonIntensity::new(upper_value),
         ) {
             points.push(ForecastPoint::new(
                 t,
@@ -248,8 +262,14 @@ mod tests {
     fn empty_history_returns_none() {
         let from = OffsetDateTime::UNIX_EPOCH;
         assert!(
-            climatology_forecast(&[], from, Duration::hours(24), ClimatologyParams::default())
-                .is_none()
+            climatology_forecast(
+                &[],
+                from,
+                Duration::hours(24),
+                ClimatologyParams::default(),
+                None
+            )
+            .is_none()
         );
     }
 
@@ -259,14 +279,15 @@ mod tests {
         let h = history(from, Duration::hours(1), 24, |_| 50.0);
         // Horizon nul.
         assert!(
-            climatology_forecast(&h, from, Duration::ZERO, ClimatologyParams::default()).is_none()
+            climatology_forecast(&h, from, Duration::ZERO, ClimatologyParams::default(), None)
+                .is_none()
         );
         // Pas nul.
         let bad = ClimatologyParams {
             step: Duration::ZERO,
             tau: Duration::hours(6),
         };
-        assert!(climatology_forecast(&h, from, Duration::hours(24), bad).is_none());
+        assert!(climatology_forecast(&h, from, Duration::hours(24), bad, None).is_none());
     }
 
     #[test]
@@ -282,6 +303,7 @@ mod tests {
                 step,
                 tau: Duration::hours(6),
             },
+            None,
         )
         .unwrap();
         assert_eq!(out.len(), 24);
@@ -302,6 +324,7 @@ mod tests {
                 step,
                 tau: Duration::hours(6),
             },
+            None,
         )
         .unwrap();
 
@@ -340,6 +363,7 @@ mod tests {
             from,
             Duration::hours(24),
             ClimatologyParams { step, tau },
+            None,
         )
         .unwrap();
 
@@ -371,6 +395,7 @@ mod tests {
                 step,
                 tau: Duration::hours(6),
             },
+            None,
         )
         .unwrap();
         // Un point bien au-delà des créneaux observés vaut la moyenne globale.
@@ -391,6 +416,7 @@ mod tests {
                 step,
                 tau: Duration::hours(6),
             },
+            None,
         )
         .unwrap();
         assert_eq!(out.len(), 4);
@@ -449,6 +475,7 @@ mod tests {
                 step,
                 tau: Duration::hours(6),
             },
+            None,
         )
         .unwrap();
 
@@ -480,6 +507,7 @@ mod tests {
                 step,
                 tau: Duration::hours(6),
             },
+            None,
         )
         .unwrap();
         assert!(out.iter().all(|p| p.expected.value() >= 0.0));

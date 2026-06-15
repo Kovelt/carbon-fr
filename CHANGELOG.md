@@ -46,8 +46,11 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   **intervalle d'incertitude** (`expected`/`lower`/`upper`), `ModelVersion` et
   **sans `vintage`** — remplace le `Vec<Measurement>` du port `ForecastModel`.
   `GET /v1/intensity/forecast` expose l'intervalle ; `greenest-window` gagne un
-  sélecteur `?estimator=central|prudent`. Intervalle v1 dérivé de la dispersion
-  empirique par créneau (quantiles 10/90).
+  sélecteur `?estimator=central|prudent`.
+- **Intervalles par quantiles de résidus par horizon** (ADR-0011 §5) : type
+  `HorizonBands` calibré par backtest *walk-forward* (`backtest-bands`) ; les
+  bornes **s'élargissent avec l'horizon**. Le serveur auto-calibre au démarrage
+  (`CARBONFR_FORECAST_CALIBRATE_WEEKS`), avec repli sur la dispersion par créneau.
 - **Backtest** du modèle de prévision (`carbonfr-server backtest`, ADR-0009) :
   évaluation *walk-forward* sur l'historique, MAE/RMSE global et par horizon
   (h+1/h+6/h+24), comparés à une référence de persistance — pour mesurer la

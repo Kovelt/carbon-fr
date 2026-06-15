@@ -87,6 +87,8 @@ DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backfill
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest
 # Calage des paramètres (balayage N × τ, classé par RMSE) :
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-sweep
+# Calibration des intervalles (quantiles de résidus par horizon) :
+DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-bands
 
 # Tests d'intégration nécessitant des ressources externes :
 DATABASE_URL=postgres://localhost/carbonfr_test \
@@ -133,7 +135,8 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
   - [x] collection Bruno des deux endpoints de prévision.
   - [x] **backtest** walk-forward (`carbonfr-server backtest`) : MAE/RMSE global + par horizon (h+1/h+6/h+24), modèle vs persistance. Maths d'erreur pures (`ErrorAccumulator`/`ErrorMetrics`), orchestration en cas d'usage `BacktestForecast` (testée avec fakes).
   - [x] **calage N/τ mesuré** (`backtest-sweep`, balayage N × τ) sur la vraie donnée 2024 (national `rte-direct`, 2 mois indépendants). Défauts révisés : **N = 10 sem., τ = 2 sem.** (l'ancien τ=6 h sous-performait la persistance ; un τ long = climatologie corrigée de l'anomalie, bat la persistance). Cf. addendum ADR-0009. ⚠️ Le jeu consolidé est au **pas 30 min** (`CARBONFR_BACKTEST_STEP_MINUTES`).
-  - [x] **rework de contrat `ForecastPoint`** (ADR-0011) — type domaine `ForecastPoint` (`expected`/`lower`/`upper` + `ModelVersion`, **sans `vintage`**, invariant garanti) remplaçant le `Vec<Measurement>` ; port + `greenest_window` retypés ; `/v1/intensity/forecast` expose l'intervalle, `greenest-window` gagne `?estimator=central|prudent`. Intervalle v1 = **dispersion empirique par créneau** (quantiles 10/90). Reste, **derrière le même contrat** : quantiles de résidus par horizon (backtest) + ajustement conso RTE.
+  - [x] **rework de contrat `ForecastPoint`** (ADR-0011) — type domaine `ForecastPoint` (`expected`/`lower`/`upper` + `ModelVersion`, **sans `vintage`**, invariant garanti) remplaçant le `Vec<Measurement>` ; port + `greenest_window` retypés ; `/v1/intensity/forecast` expose l'intervalle, `greenest-window` gagne `?estimator=central|prudent`.
+  - [x] **intervalles par quantiles de résidus par horizon** (ADR-0011 §5) — type `HorizonBands` calibré par `BacktestForecast::calibrate_bands` (erreur observé−prévu par horizon, quantiles 10/90) ; **s'élargit avec l'horizon** (mesuré 2024 : ~8→12→17 à h+1/h+6/h+24). Serveur **auto-calibre au démarrage** (`CARBONFR_FORECAST_CALIBRATE_WEEKS`, repli dispersion par créneau) ; sous-commande `backtest-bands`. Reste, **derrière le même contrat** : ajustement conso RTE, re-calibration périodique.
 
 - [ ] Phase 4 — **enrichissement & usage** (ADR proposés 0010, 0012-0014) :
   - [ ] `acv-ademe` **consumption-based** + `adapter-entsoe` + `/v1/factors` (ADR-0010).

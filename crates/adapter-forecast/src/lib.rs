@@ -11,7 +11,7 @@
 
 use async_trait::async_trait;
 use carbonfr_core::domain::{
-    ClimatologyParams, ForecastPoint, Region, TimeRange, climatology_forecast,
+    ClimatologyParams, ForecastPoint, HorizonBands, Region, TimeRange, climatology_forecast,
 };
 use carbonfr_core::ports::{ForecastError, ForecastModel, IntensityRepository};
 use time::{Duration, OffsetDateTime};
@@ -31,16 +31,22 @@ pub struct ClimatologyForecaster<R> {
     repo: R,
     weeks: i64,
     params: ClimatologyParams,
+    /// Bandes d'incertitude par horizon (ADR-0011 §5), calibrées par backtest.
+    /// `None` → intervalle de repli par dispersion de créneau.
+    bands: Option<HorizonBands>,
 }
 
 impl<R> ClimatologyForecaster<R> {
     /// Construit avec les défauts calés (addendum ADR-0009) : 10 semaines
-    /// d'historique ; pas 15 min ; τ = 2 semaines.
+    /// d'historique ; pas 15 min ; τ = 2 semaines. Intervalles non calibrés
+    /// (repli par créneau) tant que [`with_bands`](Self::with_bands) n'est pas
+    /// appelé.
     pub fn new(repo: R) -> Self {
         Self {
             repo,
             weeks: DEFAULT_WEEKS,
             params: ClimatologyParams::default(),
+            bands: None,
         }
     }
 
@@ -51,7 +57,15 @@ impl<R> ClimatologyForecaster<R> {
             repo,
             weeks: weeks.max(1) as i64,
             params,
+            bands: None,
         }
+    }
+
+    /// Injecte les bandes d'incertitude par horizon (calibrées par backtest,
+    /// ADR-0011) : les intervalles s'élargiront alors avec l'horizon.
+    pub fn with_bands(mut self, bands: HorizonBands) -> Self {
+        self.bands = Some(bands);
+        self
     }
 }
 
@@ -79,7 +93,7 @@ impl<R: IntensityRepository> ForecastModel for ClimatologyForecaster<R> {
 
         // None (historique vide / paramètres invalides) ou série vide → on ne
         // peut pas prévoir.
-        climatology_forecast(&history, from, horizon, self.params)
+        climatology_forecast(&history, from, horizon, self.params, self.bands.as_ref())
             .filter(|points| !points.is_empty())
             .ok_or(ForecastError::NotEnoughData)
     }
@@ -89,8 +103,8 @@ impl<R: IntensityRepository> ForecastModel for ClimatologyForecaster<R> {
 mod tests {
     use super::*;
     use carbonfr_core::domain::{
-        CarbonIntensity, Granularity, IntensityStats, Measurement, Methodology, RollupBucket,
-        Vintage,
+        CarbonIntensity, Granularity, HorizonBands, IntensityStats, Measurement, Methodology,
+        RollupBucket, Vintage,
     };
     use carbonfr_core::ports::RepositoryError;
 
@@ -283,6 +297,58 @@ mod tests {
         assert!(
             out.iter().all(|m| m.expected.value() < 100.0),
             "la valeur hors fenêtre (9999) ne doit pas influencer la prévision"
+        );
+    }
+
+    #[tokio::test]
+    async fn injected_bands_drive_the_interval() {
+        // Historique plat à 40 → sans bandes, l'intervalle est dégénéré (40,40).
+        // Avec des bandes calibrées (résidus −10..+20), il s'ouvre autour de 40.
+        let from = OffsetDateTime::UNIX_EPOCH + Duration::days(60);
+        let step = Duration::minutes(15);
+        let history: Vec<Measurement> = (1..=8 * 7 * 96)
+            .map(|i: i32| point(from - step * i, Region::National, "rte-direct", 40.0))
+            .collect();
+
+        let residuals: Vec<f64> = (-10..=20).map(|x| x as f64).collect();
+        let bands = HorizonBands::from_residuals(
+            step,
+            &[
+                residuals.clone(),
+                residuals.clone(),
+                residuals.clone(),
+                residuals,
+            ],
+            0.1,
+        );
+
+        let forecaster = ClimatologyForecaster::with_config(
+            FakeRepo { points: history },
+            8,
+            ClimatologyParams {
+                step,
+                tau: Duration::hours(6),
+            },
+        )
+        .with_bands(bands);
+
+        let out = forecaster
+            .forecast(Region::National, "rte-direct", from, Duration::hours(1))
+            .await
+            .unwrap();
+
+        let p = &out[0];
+        assert!((p.expected.value() - 40.0).abs() < 1.0);
+        // L'intervalle vient des bandes (résidus signés), pas dégénéré.
+        assert!(
+            p.lower.value() < p.expected.value(),
+            "lower = {}",
+            p.lower.value()
+        );
+        assert!(
+            p.upper.value() > p.expected.value(),
+            "upper = {}",
+            p.upper.value()
         );
     }
 }

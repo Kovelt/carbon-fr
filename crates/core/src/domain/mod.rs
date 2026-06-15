@@ -8,6 +8,7 @@
 mod factors;
 mod forecast;
 mod forecast_point;
+mod horizon_bands;
 mod intensity;
 mod measurement;
 mod methodology;
@@ -21,6 +22,7 @@ mod window;
 pub use factors::{EmissionFactors, acv_ademe_intensity, derive_acv_ademe};
 pub use forecast::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, climatology_forecast};
 pub use forecast_point::{ForecastPoint, ModelVersion};
+pub use horizon_bands::HorizonBands;
 pub use intensity::CarbonIntensity;
 pub use measurement::{GenerationMix, Measurement, MeasurementKey};
 pub use methodology::{Methodology, Vintage};

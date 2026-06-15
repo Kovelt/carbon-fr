@@ -1,14 +1,17 @@
 //! # carbonfr-server — composition root
 //!
 //! Le seul composant qui connaît les implémentations concrètes des ports et les
-//! assemble (ADR-0002). Trois modes selon la sous-commande :
+//! assemble (ADR-0002). Modes selon la sous-commande :
 //!
-//! - (aucune) : sert l'API et lance le **poller** (temps réel).
+//! - (aucune) : sert l'API et lance le **poller** (temps réel) ; calibre les
+//!   intervalles de prévision au démarrage (ADR-0011).
 //! - `backfill` : rapatrie l'historique par **export de masse** (ADR-0003),
 //!   puis s'arrête.
-//! - `backtest` : évalue le modèle de prévision `climatology@1` sur l'historique
-//!   (walk-forward), imprime MAE/RMSE (modèle vs persistance), puis s'arrête
-//!   (ADR-0009).
+//! - `backtest` : évalue `climatology@1` (walk-forward) — MAE/RMSE modèle vs
+//!   persistance (ADR-0009).
+//! - `backtest-sweep` : balaie une grille N × τ, classe par RMSE.
+//! - `backtest-bands` : calibre et imprime les bandes d'incertitude par horizon
+//!   (ADR-0011).
 //!
 //! ## Configuration (variables d'environnement)
 //!
@@ -26,6 +29,9 @@
 //! | `CARBONFR_BACKTEST_ORIGIN_STEP_HOURS` | `24`  | espacement des origines           |
 //! | `CARBONFR_BACKTEST_STEP_MINUTES` | `15`       | pas natif (30 pour le jeu consolidé) |
 //! | `CARBONFR_BACKTEST_WEEKS`/`_TAU_HOURS` | grilles | `backtest-sweep` : N et τ balayés |
+//! | `CARBONFR_BACKTEST_HORIZON_HOURS` | `24`      | `backtest-bands` : horizon calibré |
+//! | `CARBONFR_BACKTEST_BAND_QUANTILE` | `0.1`     | `backtest-bands` : quantile de bord |
+//! | `CARBONFR_FORECAST_CALIBRATE_WEEKS` | `8`     | auto-calibration au démarrage (0 = off) |
 //! | `RUST_LOG`                   | `info`         | filtre de logs (`tracing`)        |
 
 use std::net::SocketAddr;
@@ -56,9 +62,10 @@ async fn main() -> anyhow::Result<()> {
         Some("backfill") => run_backfill().await,
         Some("backtest") => run_backtest().await,
         Some("backtest-sweep") => run_backtest_sweep().await,
+        Some("backtest-bands") => run_backtest_bands().await,
         Some(other) => {
             anyhow::bail!(
-                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-sweep`, ou aucune pour servir l'API)"
+                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-sweep`, `backtest-bands`, ou aucune pour servir l'API)"
             )
         }
     }
@@ -75,8 +82,10 @@ async fn run_server() -> anyhow::Result<()> {
     let poller = spawn_poller(source, repo.clone(), config.poll_interval);
 
     // Prévision (ADR-0009) : modèle climatology@1 alimenté par le même
-    // repository. Son identité versionnée est annoncée au client.
-    let forecaster = ClimatologyForecaster::new(repo.clone());
+    // repository. Intervalles **calibrés** au démarrage par quantiles de résidus
+    // par horizon (ADR-0011), repli sur la dispersion par créneau si l'historique
+    // récent est insuffisant. Son identité versionnée est annoncée au client.
+    let forecaster = build_calibrated_forecaster(repo.clone()).await;
     let model = format!("{CLIMATOLOGY_ID}@{CLIMATOLOGY_VERSION}");
     let forecast_state = ForecastState::new(forecaster, model);
 
@@ -376,6 +385,144 @@ fn print_metrics_row(label: &str, metrics: Option<ErrorMetrics>) {
         Some(m) => println!("{label:<20} {:>10.2} {:>10.2} {:>10}", m.mae, m.rmse, m.n),
         None => println!("{label:<20} {:>10} {:>10} {:>10}", "—", "—", 0),
     }
+}
+
+/// Construit le modèle de prévision avec **intervalles calibrés** : auto-
+/// calibration des quantiles de résidus par horizon (ADR-0011) sur l'historique
+/// récent. Repli silencieux sur les bandes par créneau si l'historique est
+/// insuffisant ou si `CARBONFR_FORECAST_CALIBRATE_WEEKS=0`.
+async fn build_calibrated_forecaster(
+    repo: PgIntensityRepository,
+) -> ClimatologyForecaster<PgIntensityRepository> {
+    let base = ClimatologyForecaster::new(repo.clone());
+
+    let weeks = std::env::var("CARBONFR_FORECAST_CALIBRATE_WEEKS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(8);
+    if weeks <= 0 {
+        info!("auto-calibration des intervalles désactivée (bandes par créneau)");
+        return base;
+    }
+
+    let now = OffsetDateTime::now_utc();
+    let Some(window) = TimeRange::new(now - Duration::weeks(weeks), now) else {
+        return base;
+    };
+
+    let calibrator =
+        BacktestForecast::new(ClimatologyForecaster::new(repo.clone()), repo, "rte-direct");
+    match calibrator
+        .calibrate_bands(
+            Region::National,
+            window,
+            Duration::days(1),
+            Duration::minutes(15),
+            Duration::hours(24),
+            0.1,
+        )
+        .await
+    {
+        Ok(bands) if !bands.is_empty() => {
+            info!(
+                horizons = bands.len(),
+                "intervalles de prévision calibrés (quantiles de résidus par horizon)"
+            );
+            base.with_bands(bands)
+        }
+        Ok(_) => {
+            info!(
+                "historique récent insuffisant pour calibrer les intervalles — bandes par créneau"
+            );
+            base
+        }
+        Err(err) => {
+            warn!(error = %err, "calibration des intervalles impossible — bandes par créneau");
+            base
+        }
+    }
+}
+
+/// Mode `backtest-bands` : calibre et imprime les bandes d'incertitude par
+/// horizon (ADR-0011), puis arrête. Mêmes paramètres de fenêtre que `backtest`,
+/// plus `CARBONFR_BACKTEST_HORIZON_HOURS` (déf. 24) et
+/// `CARBONFR_BACKTEST_BAND_QUANTILE` (déf. 0.1).
+async fn run_backtest_bands() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let params = BacktestParams::from_env()?;
+
+    let horizon_hours = std::env::var("CARBONFR_BACKTEST_HORIZON_HOURS")
+        .ok()
+        .map(|raw| raw.parse::<i64>())
+        .transpose()
+        .context("CARBONFR_BACKTEST_HORIZON_HOURS : entier invalide")?
+        .unwrap_or(24);
+    anyhow::ensure!(
+        horizon_hours > 0,
+        "CARBONFR_BACKTEST_HORIZON_HOURS doit être > 0"
+    );
+    let q = std::env::var("CARBONFR_BACKTEST_BAND_QUANTILE")
+        .ok()
+        .map(|raw| raw.parse::<f64>())
+        .transpose()
+        .context("CARBONFR_BACKTEST_BAND_QUANTILE : réel invalide")?
+        .unwrap_or(0.1);
+
+    // Forecaster aligné sur le pas de la donnée évaluée (30 min pour le jeu
+    // consolidé) ; défauts calés N=10, τ=2 sem.
+    let forecaster = ClimatologyForecaster::with_config(
+        repo.clone(),
+        10,
+        ClimatologyParams {
+            step: params.step,
+            tau: Duration::days(14),
+        },
+    );
+    let calibrator = BacktestForecast::new(forecaster, repo, params.methodology.clone());
+    let bands = calibrator
+        .calibrate_bands(
+            params.region,
+            params.test,
+            params.origin_step,
+            params.step,
+            Duration::hours(horizon_hours),
+            q,
+        )
+        .await
+        .context("calibration des bandes")?;
+
+    println!();
+    println!(
+        "Bandes d'incertitude — région {}, méthodologie {}, q={q}",
+        params.region.slug(),
+        params.methodology
+    );
+    println!(
+        "Horizons calibrés : {} (pas {} min)",
+        bands.len(),
+        params.step.whole_minutes()
+    );
+    println!();
+    println!(
+        "{:>8} {:>10} {:>10} {:>10}",
+        "Horizon", "bas", "haut", "largeur"
+    );
+    for cp in BACKTEST_CHECKPOINTS {
+        if let Some((low, high)) = bands.at(cp) {
+            println!(
+                "{:>7}h {:>10.2} {:>10.2} {:>10.2}",
+                cp.whole_hours(),
+                low,
+                high,
+                high - low
+            );
+        }
+    }
+    println!();
+    println!("Bornes en gCO₂eq/kWh, relatives à l'estimation centrale (erreur = observé − prévu).");
+    Ok(())
 }
 
 /// Ouvre le pool PostgreSQL et applique les migrations.

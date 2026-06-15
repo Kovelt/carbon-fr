@@ -706,3 +706,45 @@ async fn backtest_skips_origins_without_history() {
     assert_eq!(report.origins, 2);
     assert!((report.model.unwrap().mae - 5.0).abs() < 1e-9);
 }
+
+#[tokio::test]
+async fn backtest_calibrate_bands_captures_residual() {
+    use carbonfr_core::application::BacktestForecast;
+
+    let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(30);
+    let step = Duration::minutes(15);
+
+    // Observé plat à 50 ; modèle constant à 55 → erreur (observed − expected)
+    // = −5 à chaque horizon.
+    let repo = InMemoryRepo::default();
+    let observed: Vec<Measurement> = (0..(4 * 24 * 4))
+        .map(|i| {
+            measurement(
+                t0 - Duration::days(1) + step * i,
+                Region::National,
+                50.0,
+                Vintage::Tr,
+            )
+        })
+        .collect();
+    repo.upsert_many(&observed).await.unwrap();
+
+    let backtest = BacktestForecast::new(GridForecast { value: 55.0, step }, repo, "rte-direct");
+    let test = TimeRange::new(t0, t0 + Duration::days(2)).unwrap();
+    let bands = backtest
+        .calibrate_bands(
+            Region::National,
+            test,
+            Duration::days(1),
+            step,
+            Duration::hours(2),
+            0.1,
+        )
+        .await
+        .unwrap();
+
+    assert!(!bands.is_empty());
+    let (low, high) = bands.at(Duration::ZERO).unwrap();
+    assert!((low + 5.0).abs() < 1e-9, "low = {low}");
+    assert!((high + 5.0).abs() < 1e-9, "high = {high}");
+}

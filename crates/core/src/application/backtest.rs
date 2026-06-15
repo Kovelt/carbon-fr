@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use time::{Duration, OffsetDateTime};
 
-use crate::domain::{ErrorAccumulator, ErrorMetrics, Region, TimeRange};
+use crate::domain::{ErrorAccumulator, ErrorMetrics, HorizonBands, Region, TimeRange};
 use crate::ports::{ForecastError, ForecastModel, IntensityRepository};
 
 use super::ApplicationError;
@@ -174,6 +174,73 @@ impl<F: ForecastModel, R: IntensityRepository> BacktestForecast<F, R> {
             persistence: persistence.metrics(),
             by_horizon,
         })
+    }
+
+    /// Calibre les **bandes d'incertitude par horizon** (ADR-0011 §5) : *walk-
+    /// forward* collectant, par décalage d'horizon, les résidus `observed −
+    /// expected`, puis retient les quantiles `q` / `1 − q`. Les bandes obtenues
+    /// alimentent le modèle (intervalles s'élargissant avec l'horizon).
+    pub async fn calibrate_bands(
+        &self,
+        region: Region,
+        test: TimeRange,
+        origin_step: Duration,
+        step: Duration,
+        horizon: Duration,
+        q: f64,
+    ) -> Result<HorizonBands, ApplicationError> {
+        let step_secs = step.whole_seconds();
+        if step_secs <= 0 || horizon <= Duration::ZERO {
+            return Ok(HorizonBands::from_residuals(step, &[], q));
+        }
+
+        // Résidus par index d'horizon (k·step).
+        let mut residuals: Vec<Vec<f64>> = Vec::new();
+        let mut cursor = test.start();
+        while cursor < test.end() {
+            let origin = align_down(cursor, step_secs);
+            let predicted = match self
+                .forecast
+                .forecast(region, &self.methodology_id, origin, horizon)
+                .await
+            {
+                Ok(points) => points,
+                Err(ForecastError::NotEnoughData) => {
+                    cursor += origin_step;
+                    continue;
+                }
+                Err(other) => return Err(other.into()),
+            };
+
+            if !predicted.is_empty() {
+                let observed = if let Some(range) = TimeRange::new(origin, origin + horizon) {
+                    self.repository
+                        .range(region, &self.methodology_id, range)
+                        .await?
+                } else {
+                    Vec::new()
+                };
+                let actual: HashMap<OffsetDateTime, f64> = observed
+                    .iter()
+                    .map(|m| (m.at, m.intensity.value()))
+                    .collect();
+
+                for point in &predicted {
+                    if let Some(&truth) = actual.get(&point.at) {
+                        let idx = ((point.at - origin).whole_seconds() / step_secs).max(0) as usize;
+                        if residuals.len() <= idx {
+                            residuals.resize(idx + 1, Vec::new());
+                        }
+                        // Erreur = observé − estimation centrale.
+                        residuals[idx].push(truth - point.expected.value());
+                    }
+                }
+            }
+
+            cursor += origin_step;
+        }
+
+        Ok(HorizonBands::from_residuals(step, &residuals, q))
     }
 }
 

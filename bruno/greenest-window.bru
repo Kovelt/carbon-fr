@@ -1,0 +1,29 @@
+meta {
+  name: Prévision — créneau le plus bas-carbone (national)
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/greenest-window?from=2024-01-08T00:00:00Z&horizon_hours=24&window_minutes=60
+  body: none
+  auth: none
+}
+
+params:query {
+  from: 2024-01-08T00:00:00Z
+  horizon_hours: 24
+  window_minutes: 60
+}
+
+docs {
+  Créneau minimisant l'intensité carbone moyenne sur l'horizon prévu
+  (climatology@1, ADR-0009). Suppose l'historique backfillé en amont de `from`.
+}
+
+assert {
+  res.status: eq 200
+  res.body.model: eq climatology@1
+  res.body.unit: eq gCO2eq/kWh
+  res.body.average_intensity: isNumber
+}

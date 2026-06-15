@@ -19,9 +19,10 @@ cd bruno
 bru run --env Local
 ```
 
-> Certaines requêtes (`Intensité date`, `stats`) supposent que l'historique a
-> été backfillé (`carbonfr-server backfill`). Les requêtes régionales supposent
-> que le poller a tourné au moins une fois.
+> Certaines requêtes (`Intensité date`, `stats`, `Prévision`) supposent que
+> l'historique a été backfillé (`carbonfr-server backfill`) — la prévision
+> s'appuie sur ~8 semaines en amont du `from`. Les requêtes régionales
+> supposent que le poller a tourné au moins une fois.
 
 ## Contenu
 
@@ -33,6 +34,8 @@ bru run --env Local
 | Mix — national / régional | `200`, unité `MW` |
 | Intensité date — historique | `200` |
 | Intensité stats — résumé / série journalière | `200`, `intervals` |
+| Prévision — série (climatology@1) | `200`, `model`, unité |
+| Prévision — créneau le plus bas-carbone | `200`, `average_intensity` |
 | OpenAPI — spec | `200`, `openapi: 3.1.0` |
 | Erreur — région en rte-direct | `404 no_data` |
 | Erreur — région inconnue | `400 bad_request` |

@@ -1,0 +1,29 @@
+meta {
+  name: Prévision — série (national, climatology@1)
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/forecast?from=2024-01-08T00:00:00Z&horizon_hours=24
+  body: none
+  auth: none
+}
+
+params:query {
+  from: 2024-01-08T00:00:00Z
+  horizon_hours: 24
+}
+
+docs {
+  Prévision d'intensité par le modèle climatology@1 (ADR-0009). Suppose que
+  l'historique précédant `from` a été backfillé (`carbonfr-server backfill`) —
+  le modèle s'appuie sur ~8 semaines en amont.
+}
+
+assert {
+  res.status: eq 200
+  res.body.model: eq climatology@1
+  res.body.unit: eq gCO2eq/kWh
+  res.body.count: isNumber
+}

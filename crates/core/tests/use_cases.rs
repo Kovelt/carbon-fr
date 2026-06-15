@@ -14,8 +14,9 @@ use carbonfr_core::application::{
     GetIntensityStats, IngestLatest,
 };
 use carbonfr_core::domain::{
-    CarbonIntensity, GenerationMix, Granularity, IntensityStats, Measurement, MeasurementKey,
-    Methodology, Region, RollupBucket, TimeRange, Vintage,
+    CarbonIntensity, ForecastPoint, GenerationMix, Granularity, IntensityStats, Measurement,
+    MeasurementKey, Methodology, ModelVersion, Region, RollupBucket, TimeRange, Vintage,
+    WindowEstimator,
 };
 use carbonfr_core::ports::{
     Eco2mixArchive, Eco2mixSource, ForecastError, ForecastModel, IntensityRepository,
@@ -31,6 +32,19 @@ fn measurement(at: OffsetDateTime, region: Region, g: f64, vintage: Vintage) -> 
         vintage,
         mix: None,
     }
+}
+
+/// Point de prévision *fake* à bande symétrique de demi-largeur `half`.
+fn forecast_point(at: OffsetDateTime, region: Region, g: f64, half: f64) -> ForecastPoint {
+    ForecastPoint::new(
+        at,
+        region,
+        CarbonIntensity::new(g).unwrap(),
+        CarbonIntensity::new((g - half).max(0.0)).unwrap(),
+        CarbonIntensity::new(g + half).unwrap(),
+        Methodology::rte_direct(),
+        ModelVersion::new("climatology", 1),
+    )
 }
 
 /// Repository en mémoire, avec upsert conditionnel au millésime (ADR-0006).
@@ -184,7 +198,7 @@ impl Eco2mixSource for FakeSource {
 }
 
 struct FakeForecast {
-    points: Vec<Measurement>,
+    points: Vec<ForecastPoint>,
 }
 
 #[async_trait]
@@ -195,7 +209,7 @@ impl ForecastModel for FakeForecast {
         _methodology_id: &str,
         _from: OffsetDateTime,
         _horizon: Duration,
-    ) -> Result<Vec<Measurement>, ForecastError> {
+    ) -> Result<Vec<ForecastPoint>, ForecastError> {
         if self.points.is_empty() {
             return Err(ForecastError::NotEnoughData);
         }
@@ -332,10 +346,10 @@ async fn find_greenest_window_uses_forecast() {
     let t0 = OffsetDateTime::UNIX_EPOCH;
     let step = Duration::minutes(15);
     let values = [120.0, 110.0, 15.0, 18.0, 90.0];
-    let points: Vec<Measurement> = values
+    let points: Vec<ForecastPoint> = values
         .iter()
         .enumerate()
-        .map(|(i, &g)| measurement(t0 + step * (i as i32), Region::National, g, Vintage::Tr))
+        .map(|(i, &g)| forecast_point(t0 + step * (i as i32), Region::National, g, 5.0))
         .collect();
 
     let uc = FindGreenestWindow::new(FakeForecast { points });
@@ -346,6 +360,7 @@ async fn find_greenest_window_uses_forecast() {
             t0,
             Duration::hours(24),
             Duration::minutes(30),
+            WindowEstimator::Central,
         )
         .await
         .unwrap();
@@ -503,11 +518,11 @@ impl ForecastModel for GridForecast {
         _methodology_id: &str,
         from: OffsetDateTime,
         horizon: Duration,
-    ) -> Result<Vec<Measurement>, ForecastError> {
+    ) -> Result<Vec<ForecastPoint>, ForecastError> {
         let mut points = Vec::new();
         let mut at = from;
         while at < from + horizon {
-            points.push(measurement(at, region, self.value, Vintage::Tr));
+            points.push(forecast_point(at, region, self.value, 0.0));
             at += self.step;
         }
         Ok(points)
@@ -629,14 +644,14 @@ impl ForecastModel for ColdStartForecast {
         _methodology_id: &str,
         from: OffsetDateTime,
         horizon: Duration,
-    ) -> Result<Vec<Measurement>, ForecastError> {
+    ) -> Result<Vec<ForecastPoint>, ForecastError> {
         if from < self.available_from {
             return Err(ForecastError::NotEnoughData);
         }
         let mut points = Vec::new();
         let mut at = from;
         while at < from + horizon {
-            points.push(measurement(at, region, self.value, Vintage::Tr));
+            points.push(forecast_point(at, region, self.value, 0.0));
             at += self.step;
         }
         Ok(points)

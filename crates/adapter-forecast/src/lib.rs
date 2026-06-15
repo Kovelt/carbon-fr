@@ -11,7 +11,7 @@
 
 use async_trait::async_trait;
 use carbonfr_core::domain::{
-    ClimatologyParams, Measurement, Region, TimeRange, climatology_forecast,
+    ClimatologyParams, ForecastPoint, Region, TimeRange, climatology_forecast,
 };
 use carbonfr_core::ports::{ForecastError, ForecastModel, IntensityRepository};
 use time::{Duration, OffsetDateTime};
@@ -63,7 +63,7 @@ impl<R: IntensityRepository> ForecastModel for ClimatologyForecaster<R> {
         methodology_id: &str,
         from: OffsetDateTime,
         horizon: Duration,
-    ) -> Result<Vec<Measurement>, ForecastError> {
+    ) -> Result<Vec<ForecastPoint>, ForecastError> {
         // Fenêtre d'historique : [from − N semaines, from). Semi-ouverte → exclut
         // `from` et le futur : on ne nourrit la climatologie que d'observations
         // passées (la plus récente sert d'ancre de persistance).
@@ -89,7 +89,8 @@ impl<R: IntensityRepository> ForecastModel for ClimatologyForecaster<R> {
 mod tests {
     use super::*;
     use carbonfr_core::domain::{
-        CarbonIntensity, Granularity, IntensityStats, Methodology, RollupBucket, Vintage,
+        CarbonIntensity, Granularity, IntensityStats, Measurement, Methodology, RollupBucket,
+        Vintage,
     };
     use carbonfr_core::ports::RepositoryError;
 
@@ -211,13 +212,13 @@ mod tests {
             .iter()
             .find(|m| m.at.hour() == 3)
             .unwrap()
-            .intensity
+            .expected
             .value();
         let day = out
             .iter()
             .find(|m| m.at.hour() == 14)
             .unwrap()
-            .intensity
+            .expected
             .value();
         assert!(night < day, "nuit {night} doit être < jour {day}");
     }
@@ -280,7 +281,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            out.iter().all(|m| m.intensity.value() < 100.0),
+            out.iter().all(|m| m.expected.value() < 100.0),
             "la valeur hors fenêtre (9999) ne doit pas influencer la prévision"
         );
     }

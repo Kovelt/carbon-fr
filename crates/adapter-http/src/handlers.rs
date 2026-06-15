@@ -7,7 +7,7 @@ use axum::http::HeaderMap;
 use carbonfr_core::application::{
     FindGreenestWindow, GetCurrentIntensity, GetIntensityHistory, GetIntensityStats,
 };
-use carbonfr_core::domain::{Granularity, Region, TimeRange};
+use carbonfr_core::domain::{Granularity, Region, TimeRange, WindowEstimator};
 use carbonfr_core::ports::{ForecastModel, IntensityRepository, VisitCounter};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -374,6 +374,20 @@ pub(crate) struct GreenestWindowQuery {
     horizon_hours: Option<u32>,
     /// Durée du créneau recherché, en minutes. Défaut 60.
     window_minutes: Option<u32>,
+    /// Estimateur : `central` (estimation, défaut) ou `prudent` (borne haute).
+    estimator: Option<String>,
+}
+
+/// Résout l'estimateur de créneau (`central` par défaut, `prudent` sur la borne
+/// haute) ; 400 si la valeur est inconnue.
+fn resolve_estimator(raw: &Option<String>) -> Result<WindowEstimator, ApiError> {
+    match raw.as_deref() {
+        None | Some("central") => Ok(WindowEstimator::Central),
+        Some("prudent") => Ok(WindowEstimator::Prudent),
+        Some(other) => Err(ApiError::bad_request(format!(
+            "`estimator` doit valoir `central` ou `prudent` (reçu : {other})"
+        ))),
+    }
 }
 
 /// `GET /v1/intensity/greenest-window` — créneau le plus bas-carbone à venir, sur
@@ -405,6 +419,7 @@ where
             "`window_minutes` doit être > 0 et tenir dans l'horizon",
         ));
     }
+    let estimator = resolve_estimator(&query.estimator)?;
 
     let use_case = FindGreenestWindow::new(state.forecaster.clone());
     let window = use_case
@@ -414,6 +429,7 @@ where
             from,
             Duration::hours(horizon_hours as i64),
             Duration::minutes(window_minutes as i64),
+            estimator,
         )
         .await?;
 

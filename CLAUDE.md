@@ -108,10 +108,10 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 
 ### ADR **proposés** (vision forward — non implémentés)
 
-> Ces décisions cadrent la suite ; statut `Proposé`. La seule **rework de phase 3 avant de figer le `/v1` public** est l'ADR-0011 ; le reste est post-phase 4.
+> Ces décisions cadrent la suite. L'ADR-0011 (contrat de prévision) est **accepté et implémenté** (le `/v1` public a désormais l'incertitude qui devait précéder le figeage) ; le reste est `Proposé`, post-phase 4.
 
 - ADR-0010 — `acv-ademe` **consumption-based** : imports valorisés à l'intensité du pays d'origine (ENTSO-E via `adapter-entsoe`), `MethodologyCalculator` (trait domaine pur), endpoints `/v1/methodologies` & `/v1/factors`. **Fait évoluer** l'ADR-0008 (livré en `@1` production-based).
-- ADR-0011 — **contrat de prévision `ForecastPoint`** : type domaine dédié (intervalles `lower`/`expected`/`upper`, `ModelVersion`, **pas de `vintage`**), remplaçant le `Vec<Measurement>` actuel du port. **Rework de phase 3** : à boucler avant que le SDK/OpenAPI ne figent un `/forecast` sans incertitude (sinon breaking change du `/v1`).
+- ADR-0011 — **contrat de prévision `ForecastPoint`** (**Accepté, implémenté**) : type domaine dédié (intervalles `lower`/`expected`/`upper`, `ModelVersion`, **pas de `vintage`**, invariant garanti), remplaçant le `Vec<Measurement>` du port. `/v1/intensity/forecast` expose l'intervalle ; `greenest-window` a un sélecteur `central`/`prudent`. Intervalle v1 = dispersion empirique par créneau ; quantiles par horizon = raffinement derrière le même contrat.
 - ADR-0012 — modèle de prévision **ML** (`GbdtForecaster`, GBDT tout-Rust + features météo) derrière le même port ; ne livre que s'il bat le `StatForecaster` au backtest. **Post-phase 4.**
 - ADR-0013 — **prévision `acv-ademe`** : prévoir les entrées (mix + imports) puis appliquer le calculateur ; `MixForecaster` + `CrossBorderForecastSource`. **Post-phase 4** (dépend de 0010 + 0012).
 - ADR-0014 — **usage** : primitives carbon-aware (créneau sous échéance, lowest-k, seuil, annotation d'économie) + livraison live **SSE** (`/v1/intensity/stream`, `LISTEN`/`NOTIFY`) ; webhooks reportés (gated sur le tier hébergé). **Post-phase 4.**
@@ -126,14 +126,14 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
   - [x] endpoint de lecture d'historique `/v1/intensity/date?from=&to=` (cas d'usage `GetIntensityHistory`, fenêtre ≤ 366 j).
   - [x] rollups (vues matérialisées horaire/journalier) + `/v1/intensity/stats` (résumé exact sur `measurement` + série depuis les rollups ; rafraîchis par poller & backfill).
   - [x] **méthodologie `acv-ademe`** (cycle de vie, ADR-0008) : définie + dérivée/stockée à l'ingestion + `?methodology=`. **National** (dérivé du mix complet) **et 12 régions** (mix régional `eco2mix-regional-*`, `thermique` agrégé → facteur gaz). `rte-direct` reste national.
-- [~] Phase 3 — prévision (modèle livré & calé ; **rework de contrat `ForecastPoint` en attente**, ADR-0011) :
+- [x] Phase 3 — prévision (modèle livré & calé ; **contrat `ForecastPoint` posé**, ADR-0011) :
   - [x] **ADR-0009** — modèle `climatology@1` (climatologie horaire-de-semaine glissante + correction de persistance décroissante). Pur, explicable, sans dépendance externe, alimenté par le backfill. Prévisions **non persistées** (calculées à la lecture, ADR-0006 intacte). Endpoints `/v1/intensity/forecast` et `/v1/intensity/greenest-window`.
   - [x] fonction pure de domaine (`climatology_forecast`) + adapter `ClimatologyForecaster` (`ForecastModel`, lit l'historique via `IntensityRepository`).
   - [x] handlers `/v1` (`forecast` + `greenest-window`) + DTO (id de modèle `climatology@1`) + OpenAPI + câblage composition root.
   - [x] collection Bruno des deux endpoints de prévision.
   - [x] **backtest** walk-forward (`carbonfr-server backtest`) : MAE/RMSE global + par horizon (h+1/h+6/h+24), modèle vs persistance. Maths d'erreur pures (`ErrorAccumulator`/`ErrorMetrics`), orchestration en cas d'usage `BacktestForecast` (testée avec fakes).
   - [x] **calage N/τ mesuré** (`backtest-sweep`, balayage N × τ) sur la vraie donnée 2024 (national `rte-direct`, 2 mois indépendants). Défauts révisés : **N = 10 sem., τ = 2 sem.** (l'ancien τ=6 h sous-performait la persistance ; un τ long = climatologie corrigée de l'anomalie, bat la persistance). Cf. addendum ADR-0009. ⚠️ Le jeu consolidé est au **pas 30 min** (`CARBONFR_BACKTEST_STEP_MINUTES`).
-  - [ ] **rework de contrat `ForecastPoint`** (ADR-0011, proposé) — **à boucler avant phase 4** : remplacer le `Vec<Measurement>` (qui détourne `vintage=Tr`) par un type dédié avec **intervalles d'incertitude** + `ModelVersion`, avant que le SDK/OpenAPI ne figent le `/v1` public. Intervalles = quantiles empiriques de résidus par horizon (issus du backtest).
+  - [x] **rework de contrat `ForecastPoint`** (ADR-0011) — type domaine `ForecastPoint` (`expected`/`lower`/`upper` + `ModelVersion`, **sans `vintage`**, invariant garanti) remplaçant le `Vec<Measurement>` ; port + `greenest_window` retypés ; `/v1/intensity/forecast` expose l'intervalle, `greenest-window` gagne `?estimator=central|prudent`. Intervalle v1 = **dispersion empirique par créneau** (quantiles 10/90). Reste, **derrière le même contrat** : quantiles de résidus par horizon (backtest) + ajustement conso RTE.
 
 - [ ] Phase 4 — **enrichissement & usage** (ADR proposés 0010, 0012-0014) :
   - [ ] `acv-ademe` **consumption-based** + `adapter-entsoe` + `/v1/factors` (ADR-0010).

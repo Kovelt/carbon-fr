@@ -42,6 +42,12 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `GET /v1/intensity/greenest-window?from=&horizon_hours=&window_minutes=`
   (créneau le plus bas-carbone). Prévisions **non persistées** (calculées à la
   lecture) ; l'identité du modèle est exposée dans chaque réponse.
+- **Contrat de prévision `ForecastPoint`** (ADR-0011) : type domaine dédié avec
+  **intervalle d'incertitude** (`expected`/`lower`/`upper`), `ModelVersion` et
+  **sans `vintage`** — remplace le `Vec<Measurement>` du port `ForecastModel`.
+  `GET /v1/intensity/forecast` expose l'intervalle ; `greenest-window` gagne un
+  sélecteur `?estimator=central|prudent`. Intervalle v1 dérivé de la dispersion
+  empirique par créneau (quantiles 10/90).
 - **Backtest** du modèle de prévision (`carbonfr-server backtest`, ADR-0009) :
   évaluation *walk-forward* sur l'historique, MAE/RMSE global et par horizon
   (h+1/h+6/h+24), comparés à une référence de persistance — pour mesurer la

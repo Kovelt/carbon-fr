@@ -1,8 +1,25 @@
 # ADR-0011 — Contrat de prévision : `ForecastPoint` (intervalles) + `StatForecaster`
 
-- **Statut** : Proposé
+- **Statut** : Accepté (contrat implémenté ; raffinements de modèle/intervalle restants — cf. *État*)
 - **Date** : 2026-06-15
 - **Raffine** : ADR-0009 (modèle climatologie livré — **re-type le contrat** du port `ForecastModel`, aujourd'hui `Vec<Measurement>`) ; roadmap §3 (phase 3 — prévision)
+
+## État d'implémentation (2026-06-15)
+
+**Contrat livré** : type domaine `ForecastPoint` (`expected`/`lower`/`upper`,
+`ModelVersion`, **sans `vintage`**, invariant `lower ≤ expected ≤ upper` garanti
+à la construction) ; port `ForecastModel` et `greenest_window` retypés ;
+`climatology@1` produit des `ForecastPoint` ; `/v1/intensity/forecast` expose
+`expected`/`lower`/`upper`/`model` ; `greenest-window` gagne le sélecteur
+`?estimator=central|prudent`. L'intervalle v1 vient de la **dispersion empirique
+par créneau** (quantiles 10 %/90 % des échantillons historiques, recentrés sur
+la valeur corrigée) — *data-driven*, pas gaussien.
+
+**Restant, derrière le même contrat** (donc sans rupture) : calibration des
+bornes par **quantiles de résidus par horizon** issus du backtest (§5/§6) ;
+ajustement du `StatForecaster` par la **consommation prévue RTE** (§4) ;
+publication de la précision par horizon. Le contrat étant figé, ces raffinements
+n'impacteront plus le `/v1` public.
 
 ## Contexte
 

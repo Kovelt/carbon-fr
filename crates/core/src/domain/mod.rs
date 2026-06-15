@@ -7,6 +7,7 @@
 
 mod factors;
 mod forecast;
+mod forecast_point;
 mod intensity;
 mod measurement;
 mod methodology;
@@ -19,6 +20,7 @@ mod window;
 
 pub use factors::{EmissionFactors, acv_ademe_intensity, derive_acv_ademe};
 pub use forecast::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, climatology_forecast};
+pub use forecast_point::{ForecastPoint, ModelVersion};
 pub use intensity::CarbonIntensity;
 pub use measurement::{GenerationMix, Measurement, MeasurementKey};
 pub use methodology::{Methodology, Vintage};
@@ -27,4 +29,4 @@ pub use region::Region;
 pub use stats::{Granularity, IntensityStats, RollupBucket};
 pub use time_range::TimeRange;
 pub use visit::VisitStats;
-pub use window::{GreenWindow, greenest_window};
+pub use window::{GreenWindow, WindowEstimator, greenest_window};

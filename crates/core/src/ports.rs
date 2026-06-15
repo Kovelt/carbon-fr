@@ -8,7 +8,8 @@ use thiserror::Error;
 use time::{Date, Duration, OffsetDateTime};
 
 use crate::domain::{
-    Granularity, IntensityStats, Measurement, Region, RollupBucket, TimeRange, VisitStats,
+    ForecastPoint, Granularity, IntensityStats, Measurement, Region, RollupBucket, TimeRange,
+    VisitStats,
 };
 
 /// Erreur de récupération depuis une source amont (ODRÉ, ou source de secours).
@@ -138,13 +139,17 @@ pub trait ForecastModel: Send + Sync {
     /// Prévision à pas régulier sur `horizon`, à partir de `from`, pour la série
     /// `(region, methodology_id)`. La méthodologie est explicite : on prévoit une
     /// méthode précise (`rte-direct`, `acv-ademe`…), pas une intensité générique.
+    ///
+    /// Renvoie des [`ForecastPoint`] (estimation + intervalle + modèle), **pas**
+    /// des `Measurement` : une prévision n'est ni une observation ni un millésime
+    /// (ADR-0011).
     async fn forecast(
         &self,
         region: Region,
         methodology_id: &str,
         from: OffsetDateTime,
         horizon: Duration,
-    ) -> Result<Vec<Measurement>, ForecastError>;
+    ) -> Result<Vec<ForecastPoint>, ForecastError>;
 }
 
 /// Port sortant : source de temps (testabilité — l'instant peut être figé).

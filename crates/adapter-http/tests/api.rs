@@ -487,8 +487,15 @@ async fn forecast_returns_predicted_series() {
     // Pas 15 min sur 24 h → 96 points.
     assert_eq!(body["count"], 96);
     assert_eq!(body["data"][0]["timestamp"], "1970-03-02T00:00:00Z");
-    // Historique constant → prévision ≈ 40.
-    assert!((body["data"][0]["intensity"].as_f64().unwrap() - 40.0).abs() < 1.0);
+    // Historique constant → prévision ≈ 40, intervalle cohérent (lower ≤ expected ≤ upper).
+    let pt = &body["data"][0];
+    let (expected, lower, upper) = (
+        pt["expected"].as_f64().unwrap(),
+        pt["lower"].as_f64().unwrap(),
+        pt["upper"].as_f64().unwrap(),
+    );
+    assert!((expected - 40.0).abs() < 1.0);
+    assert!(lower <= expected && expected <= upper);
 }
 
 #[tokio::test]
@@ -551,4 +558,25 @@ async fn greenest_window_invalid_window_is_400() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn greenest_window_estimator_selector() {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 50.0))
+        .collect();
+
+    // `prudent` est accepté (200).
+    let ok = get(
+        app_with_series(series),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&estimator=prudent",
+    )
+    .await;
+    assert_eq!(ok.status(), StatusCode::OK);
+
+    // Estimateur inconnu → 400.
+    let bad = get(app(None), "/v1/intensity/greenest-window?estimator=bogus").await;
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
 }

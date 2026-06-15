@@ -2,7 +2,8 @@
 //! jamais dans `core`). L'unité canonique est exposée explicitement.
 
 use carbonfr_core::domain::{
-    GenerationMix, GreenWindow, IntensityStats, Measurement, RollupBucket, VisitStats,
+    ForecastPoint, GenerationMix, GreenWindow, IntensityStats, Measurement, RollupBucket,
+    VisitStats,
 };
 use serde::Serialize;
 use time::OffsetDateTime;
@@ -50,8 +51,9 @@ impl IntensityResponse {
 ///
 /// Le champ `model` (identité versionnée du modèle, ex. `climatology@1`) marque
 /// explicitement ces points comme des **prévisions** — pas des observations
-/// (ADR-0009). Pas de `vintage` ici : une prévision n'est pas une mesure
-/// révisée, elle n'est jamais persistée.
+/// (ADR-0011). Chaque point porte une **estimation centrale encadrée**
+/// (`expected`/`lower`/`upper`) ; pas de `vintage` : une prévision n'est pas une
+/// mesure révisée et n'est jamais persistée.
 #[derive(Serialize, ToSchema)]
 pub(crate) struct ForecastResponse {
     region: String,
@@ -64,13 +66,18 @@ pub(crate) struct ForecastResponse {
     horizon_hours: u32,
     unit: &'static str,
     count: usize,
-    data: Vec<ForecastPoint>,
+    data: Vec<ForecastPointBody>,
 }
 
 #[derive(Serialize, ToSchema)]
-struct ForecastPoint {
+struct ForecastPointBody {
     timestamp: String,
-    intensity: f64,
+    /// Estimation centrale (gCO₂eq/kWh).
+    expected: f64,
+    /// Borne basse de l'intervalle d'incertitude.
+    lower: f64,
+    /// Borne haute de l'intervalle d'incertitude.
+    upper: f64,
 }
 
 impl ForecastResponse {
@@ -80,14 +87,16 @@ impl ForecastResponse {
         model: &str,
         from: OffsetDateTime,
         horizon_hours: u32,
-        points: &[Measurement],
+        points: &[ForecastPoint],
     ) -> Result<Self, time::error::Format> {
         let data = points
             .iter()
-            .map(|m| {
-                Ok(ForecastPoint {
-                    timestamp: to_rfc3339(m.at)?,
-                    intensity: m.intensity.value(),
+            .map(|p| {
+                Ok(ForecastPointBody {
+                    timestamp: to_rfc3339(p.at)?,
+                    expected: p.expected.value(),
+                    lower: p.lower.value(),
+                    upper: p.upper.value(),
                 })
             })
             .collect::<Result<Vec<_>, time::error::Format>>()?;

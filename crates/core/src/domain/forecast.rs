@@ -21,7 +21,13 @@ use std::collections::HashMap;
 
 use time::{Duration, OffsetDateTime, UtcOffset};
 
-use crate::domain::{CarbonIntensity, Measurement, Vintage};
+use crate::domain::{CarbonIntensity, ForecastPoint, Measurement, ModelVersion};
+
+/// Quantile de bord de l'intervalle d'incertitude (ADR-0011) : 0,1 → bande
+/// centrale ~80 % (quantiles empiriques 10 %/90 % par créneau). La calibration
+/// fine par horizon (résidus de backtest, ADR-0011 §5) la raffinera **derrière
+/// le même contrat**.
+const BAND_QUANTILE: f64 = 0.1;
 
 /// Identité **versionnée** du modèle de prévision (ADR-0009), exposée par l'API.
 /// Comme la méthodologie, elle ne change jamais en silence : une évolution de la
@@ -67,10 +73,15 @@ const MAX_STEPS: i64 = 100_000;
 /// `history` : observations **passées** d'une même cible `(region,
 /// methodology)`, idéalement triées et au pas natif ; seul son contenu compte
 /// (l'ordre n'est pas requis pour la climatologie, mais la dernière par
-/// horodatage sert d'ancre de persistance). Les points prévus reprennent la
-/// `region` et la `methodology` de l'historique ; ils portent `Vintage::Tr` —
-/// rang le moins autoritaire — car une prévision **n'est pas une mesure** et
-/// n'est jamais persistée (ADR-0009 ; ADR-0006 intacte).
+/// horodatage sert d'ancre de persistance). Les [`ForecastPoint`] reprennent la
+/// `region` et la `methodology` de l'historique ; ils n'ont **pas de millésime**
+/// (une prévision n'est pas une mesure, ADR-0011) et portent le `model`
+/// `climatology@1`.
+///
+/// **Intervalle** : pour chaque créneau, la dispersion **empirique** de ses
+/// échantillons historiques (quantiles 10 %/90 %, [`BAND_QUANTILE`]) est
+/// recentrée autour de la valeur corrigée — un encadrement *data-driven*, pas
+/// une hypothèse gaussienne (ADR-0011).
 ///
 /// Retourne `None` si l'historique est vide ou si les paramètres/horizon sont
 /// invalides (pas/τ/horizon ≤ 0, ou horizon démesuré).
@@ -79,7 +90,7 @@ pub fn climatology_forecast(
     from: OffsetDateTime,
     horizon: Duration,
     params: ClimatologyParams,
-) -> Option<Vec<Measurement>> {
+) -> Option<Vec<ForecastPoint>> {
     let step_secs = params.step.whole_seconds();
     let tau_secs = params.tau.whole_seconds() as f64;
     if history.is_empty()
@@ -95,52 +106,93 @@ pub fn climatology_forecast(
     let anchor = history.iter().max_by_key(|m| m.at)?;
     let region = anchor.region;
     let methodology = anchor.methodology.clone();
+    let model = ModelVersion::new(CLIMATOLOGY_ID, CLIMATOLOGY_VERSION);
     let t0 = anchor.at;
     let o = anchor.intensity.value();
 
-    // Climatologie : moyenne par créneau de la semaine, + moyenne globale en
-    // repli (créneau jamais observé, démarrage à froid — ADR-0009).
-    let mut slots: HashMap<i64, (f64, u32)> = HashMap::new();
-    let mut total = 0.0;
+    // Échantillons par créneau de la semaine (pour la moyenne *et* la dispersion
+    // empirique), + tous les échantillons en repli (créneau jamais observé).
+    let mut slots: HashMap<i64, Vec<f64>> = HashMap::new();
+    let mut all: Vec<f64> = Vec::with_capacity(history.len());
     for m in history {
-        let entry = slots.entry(week_slot(m.at, step_secs)).or_insert((0.0, 0));
-        entry.0 += m.intensity.value();
-        entry.1 += 1;
-        total += m.intensity.value();
+        let v = m.intensity.value();
+        slots.entry(week_slot(m.at, step_secs)).or_default().push(v);
+        all.push(v);
     }
-    let overall_mean = total / history.len() as f64;
-    let climatology = |t: OffsetDateTime| -> f64 {
-        match slots.get(&week_slot(t, step_secs)) {
-            Some(&(sum, n)) if n > 0 => sum / n as f64,
-            _ => overall_mean,
-        }
-    };
-
-    let bias = o - climatology(t0);
+    all.sort_by(|a, b| a.total_cmp(b));
 
     let end = from + horizon;
     let mut points = Vec::new();
     let mut t = from;
+
+    // Climatologie au créneau `t`, ou moyenne globale en repli.
+    let climatology = |samples: Option<&Vec<f64>>| -> f64 {
+        match samples {
+            Some(s) if !s.is_empty() => s.iter().sum::<f64>() / s.len() as f64,
+            _ => all.iter().sum::<f64>() / all.len() as f64,
+        }
+    };
+
+    let bias = o - climatology(slots.get(&week_slot(t0, step_secs)));
+
     while t < end {
+        let key = week_slot(t, step_secs);
+        let samples = slots.get(&key);
+        let mean = climatology(samples);
+
         // |t − t₀| : la correction décroît en s'éloignant de l'ancre, dans les
         // deux sens (l'adapter prévoit normalement vers le futur, t ≥ t₀).
         let dt = (t - t0).abs().whole_seconds() as f64;
-        let value = (climatology(t) + bias * (-dt / tau_secs).exp()).max(0.0);
-        // value ≥ 0 par construction → `new` ne peut échouer (sauf NaN, exclu
-        // car toutes les entrées sont finies).
-        if let Some(intensity) = CarbonIntensity::new(value) {
-            points.push(Measurement {
-                at: t,
+        let expected_value = (mean + bias * (-dt / tau_secs).exp()).max(0.0);
+
+        // Dispersion empirique du créneau (repli sur la distribution globale),
+        // recentrée sur `expected`.
+        let (low_off, high_off) = match samples {
+            Some(s) if s.len() >= 2 => band_offsets(s, mean),
+            _ => band_offsets(&all, mean),
+        };
+
+        if let (Some(expected), Some(lower), Some(upper)) = (
+            CarbonIntensity::new(expected_value),
+            CarbonIntensity::new((expected_value - low_off).max(0.0)),
+            CarbonIntensity::new(expected_value + high_off),
+        ) {
+            points.push(ForecastPoint::new(
+                t,
                 region,
-                intensity,
-                methodology: methodology.clone(),
-                vintage: Vintage::Tr,
-                mix: None,
-            });
+                expected,
+                lower,
+                upper,
+                methodology.clone(),
+                model.clone(),
+            ));
         }
         t += params.step;
     }
     Some(points)
+}
+
+/// Décalages bas/haut (≥ 0) de l'intervalle empirique d'un créneau, exprimés
+/// **autour de sa propre moyenne** `mean` (pour être ensuite recentrés sur la
+/// valeur prévue). Quantiles 10 %/90 % ([`BAND_QUANTILE`]).
+fn band_offsets(samples: &[f64], mean: f64) -> (f64, f64) {
+    let mut sorted: Vec<f64> = samples.to_vec();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    let low = quantile(&sorted, BAND_QUANTILE);
+    let high = quantile(&sorted, 1.0 - BAND_QUANTILE);
+    ((mean - low).max(0.0), (high - mean).max(0.0))
+}
+
+/// Quantile (interpolation linéaire) d'une tranche **déjà triée** et non vide.
+fn quantile(sorted: &[f64], q: f64) -> f64 {
+    if sorted.len() == 1 {
+        return sorted[0];
+    }
+    let rank = q.clamp(0.0, 1.0) * (sorted.len() - 1) as f64;
+    let lo = rank.floor() as usize;
+    let hi = rank.ceil() as usize;
+    let frac = rank - lo as f64;
+    sorted[lo] + (sorted[hi] - sorted[lo]) * frac
 }
 
 /// Index du créneau dans la semaine (`jour-de-semaine × pas`), en UTC pour un
@@ -157,7 +209,7 @@ fn week_slot(t: OffsetDateTime, step_secs: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{Methodology, Region};
+    use crate::domain::{Methodology, Region, Vintage};
 
     /// Construit un historique au pas `step`, intensité donnée par `value(t)`,
     /// sur `count` points finissant juste avant `end`.
@@ -258,13 +310,13 @@ mod tests {
             .iter()
             .find(|m| m.at.hour() == 3)
             .unwrap()
-            .intensity
+            .expected
             .value();
         let day = out
             .iter()
             .find(|m| m.at.hour() == 14)
             .unwrap()
-            .intensity
+            .expected
             .value();
         assert!((night - 20.0).abs() < 1.0, "nuit = {night}");
         assert!((day - 80.0).abs() < 1.0, "jour = {day}");
@@ -295,8 +347,8 @@ mod tests {
         // climatologie.
         let near = &out[1]; // ~2 h après l'ancre
         let far = &out[18]; // ~19 h après l'ancre
-        let near_excess = near.intensity.value() - hourly_pattern(near.at);
-        let far_excess = far.intensity.value() - hourly_pattern(far.at);
+        let near_excess = near.expected.value() - hourly_pattern(near.at);
+        let far_excess = far.expected.value() - hourly_pattern(far.at);
         assert!(near_excess > 50.0, "près : excès = {near_excess}");
         assert!(far_excess < 5.0, "loin : excès = {far_excess}");
         assert!(near_excess > far_excess);
@@ -322,12 +374,12 @@ mod tests {
         )
         .unwrap();
         // Un point bien au-delà des créneaux observés vaut la moyenne globale.
-        let late = out.last().unwrap().intensity.value();
+        let late = out.last().unwrap().expected.value();
         assert!((late - 42.0).abs() < 1e-9, "repli moyenne globale = {late}");
     }
 
     #[test]
-    fn forecast_points_carry_region_methodology_and_no_mix() {
+    fn forecast_points_carry_region_methodology_and_model() {
         let from = OffsetDateTime::UNIX_EPOCH + Duration::days(150);
         let step = Duration::minutes(15);
         let h = history(from, step, 96, |_| 30.0);
@@ -342,15 +394,74 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.len(), 4);
-        for m in &out {
-            assert_eq!(m.region, Region::National);
-            assert_eq!(m.methodology, Methodology::rte_direct());
-            assert_eq!(m.vintage, Vintage::Tr);
-            assert!(m.mix.is_none());
+        for p in &out {
+            assert_eq!(p.region, Region::National);
+            assert_eq!(p.methodology, Methodology::rte_direct());
+            assert_eq!(
+                p.model,
+                ModelVersion::new(CLIMATOLOGY_ID, CLIMATOLOGY_VERSION)
+            );
+            // Invariant du contrat : lower ≤ expected ≤ upper.
+            assert!(p.lower.value() <= p.expected.value());
+            assert!(p.expected.value() <= p.upper.value());
         }
         // Premier point aligné sur `from`, pas régulier.
         assert_eq!(out[0].at, from);
         assert_eq!(out[1].at, from + step);
+    }
+
+    #[test]
+    fn band_widens_with_slot_dispersion() {
+        // Deux créneaux : l'un très dispersé (0/100 en alternance), l'autre
+        // constant. La bande du créneau dispersé doit être plus large.
+        let from = OffsetDateTime::UNIX_EPOCH + Duration::days(180);
+        let step = Duration::hours(1);
+        let h: Vec<Measurement> = (0..14 * 24)
+            .map(|i: i32| {
+                let at = from - step * (14 * 24 - i);
+                // Heures paires : dispersé (0 une semaine, 100 l'autre — les
+                // deux échantillons d'un créneau, à 7 j d'écart, ont une parité
+                // de jour opposée) ; heures impaires : constant à 50.
+                let g = if at.hour().is_multiple_of(2) {
+                    if (at.unix_timestamp() / 86_400) % 2 == 0 {
+                        0.0
+                    } else {
+                        100.0
+                    }
+                } else {
+                    50.0
+                };
+                Measurement {
+                    at,
+                    region: Region::National,
+                    intensity: CarbonIntensity::new(g).unwrap(),
+                    methodology: Methodology::rte_direct(),
+                    vintage: Vintage::Tr,
+                    mix: None,
+                }
+            })
+            .collect();
+        let out = climatology_forecast(
+            &h,
+            from,
+            Duration::hours(24),
+            ClimatologyParams {
+                step,
+                tau: Duration::hours(6),
+            },
+        )
+        .unwrap();
+
+        let width = |hour: u8| -> f64 {
+            let p = out.iter().find(|p| p.at.hour() == hour).unwrap();
+            p.upper.value() - p.lower.value()
+        };
+        assert!(
+            width(2) > width(3),
+            "créneau dispersé {} vs constant {}",
+            width(2),
+            width(3)
+        );
     }
 
     #[test]
@@ -371,6 +482,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(out.iter().all(|m| m.intensity.value() >= 0.0));
+        assert!(out.iter().all(|p| p.expected.value() >= 0.0));
+        assert!(out.iter().all(|p| p.lower.value() >= 0.0));
     }
 }

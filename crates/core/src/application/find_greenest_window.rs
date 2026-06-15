@@ -2,7 +2,7 @@
 
 use time::{Duration, OffsetDateTime};
 
-use crate::domain::{GreenWindow, Region, greenest_window};
+use crate::domain::{GreenWindow, Region, WindowEstimator, greenest_window};
 use crate::ports::ForecastModel;
 
 use super::ApplicationError;
@@ -24,7 +24,8 @@ impl<F: ForecastModel> FindGreenestWindow<F> {
     }
 
     /// `from` : début de l'horizon ; `horizon` : profondeur de prévision ;
-    /// `window` : durée du créneau recherché. La prévision porte sur la série
+    /// `window` : durée du créneau recherché ; `estimator` : central (`expected`)
+    /// ou prudent (`upper`). La prévision porte sur la série
     /// `(region, methodology_id)`.
     pub async fn execute(
         &self,
@@ -33,11 +34,12 @@ impl<F: ForecastModel> FindGreenestWindow<F> {
         from: OffsetDateTime,
         horizon: Duration,
         window: Duration,
+        estimator: WindowEstimator,
     ) -> Result<GreenWindow, ApplicationError> {
         let points = self
             .forecast
             .forecast(region, methodology_id, from, horizon)
             .await?;
-        greenest_window(&points, window).ok_or(ApplicationError::InsufficientSeries)
+        greenest_window(&points, window, estimator).ok_or(ApplicationError::InsufficientSeries)
     }
 }

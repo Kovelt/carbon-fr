@@ -137,7 +137,7 @@ impl<F: ForecastModel, R: IntensityRepository> BacktestForecast<F, R> {
                     let Some(&truth) = actual.get(&point.at) else {
                         continue;
                     };
-                    let forecast_value = point.intensity.value();
+                    let forecast_value = point.expected.value();
                     model.observe(forecast_value, truth);
                     if let Some(anchor) = anchor {
                         persistence.observe(anchor, truth);

@@ -85,6 +85,8 @@ DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backfill
 
 # Backtest du modèle de prévision climatology@1 (walk-forward, MAE/RMSE) :
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest
+# Calage des paramètres (balayage N × τ, classé par RMSE) :
+DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-sweep
 
 # Tests d'intégration nécessitant des ressources externes :
 DATABASE_URL=postgres://localhost/carbonfr_test \
@@ -102,7 +104,7 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 - ADR-0006 (cycle de vie & révision) — **Accepté** : millésime `tr`/`consolidated`/`definitive`, upsert conditionnel sur `(region, horodatage, methodology)`.
 - ADR-0007 (déploiement) — **Accepté** : API sur VPS FR/EU (PostgreSQL co-localisé), site statique sur o2switch, sous-domaine Kovelt, API versionnée `/v1`.
 - ADR-0008 (méthodologie `acv-ademe` & régional) — **Accepté** : intensité cycle de vie (facteurs ADEME × mix), `acv-ademe@1` basée production (imports = v2), dérivée à l'ingestion, sélectionnable via `?methodology=`. Base du futur régional.
-- ADR-0009 (modèle de prévision) — **Accepté** : `climatology@1` = climatologie horaire-de-semaine glissante (`N` semaines) + correction de persistance décroissante (`τ`). Modèle pur/explicable, sans dépendance externe, alimenté par le backfill ; prévisions **non persistées** (calculées à la lecture). Versionné comme la méthodologie (jamais de modif silencieuse). Évolution engagée : `forecast@2` dérivé des prévisions RTE J-1, même port.
+- ADR-0009 (modèle de prévision) — **Accepté** (+ addendum calibration) : `climatology@1` = climatologie horaire-de-semaine glissante (`N` sem.) + correction d'anomalie décroissante (`τ`). Pur/explicable, sans dépendance externe, alimenté par le backfill ; prévisions **non persistées** (calculées à la lecture). **Défauts calés par backtest : N=10 sem., τ=2 sem.** (bat la persistance ; τ court la dégradait). Versionné comme la méthodologie. Évolution engagée : `forecast@2` dérivé des prévisions RTE J-1, même port.
 
 ## État d'avancement
 
@@ -118,7 +120,8 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
   - [x] fonction pure de domaine (`climatology_forecast`) + adapter `ClimatologyForecaster` (`ForecastModel`, lit l'historique via `IntensityRepository`).
   - [x] handlers `/v1` (`forecast` + `greenest-window`) + DTO (id de modèle `climatology@1`) + OpenAPI + câblage composition root.
   - [x] collection Bruno des deux endpoints de prévision.
-  - [x] **backtest** walk-forward (`carbonfr-server backtest`) : MAE/RMSE global + par horizon (h+1/h+6/h+24), modèle vs persistance. Maths d'erreur pures (`ErrorAccumulator`/`ErrorMetrics`), orchestration en cas d'usage `BacktestForecast` (testée avec fakes). **Phase 3 terminée.**
+  - [x] **backtest** walk-forward (`carbonfr-server backtest`) : MAE/RMSE global + par horizon (h+1/h+6/h+24), modèle vs persistance. Maths d'erreur pures (`ErrorAccumulator`/`ErrorMetrics`), orchestration en cas d'usage `BacktestForecast` (testée avec fakes).
+  - [x] **calage N/τ mesuré** (`backtest-sweep`, balayage N × τ) sur la vraie donnée 2024 (national `rte-direct`, 2 mois indépendants). Défauts révisés : **N = 10 sem., τ = 2 sem.** (l'ancien τ=6 h sous-performait la persistance ; un τ long = climatologie corrigée de l'anomalie, bat la persistance). Cf. addendum ADR-0009. ⚠️ Le jeu consolidé est au **pas 30 min** (`CARBONFR_BACKTEST_STEP_MINUTES`). **Phase 3 terminée.**
 
 ### Repères d'implémentation (phases 1-2)
 

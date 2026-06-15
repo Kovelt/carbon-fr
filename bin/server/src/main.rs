@@ -24,6 +24,8 @@
 //! | `CARBONFR_BACKTEST_REGION`   | `national`     | région évaluée (slug)             |
 //! | `CARBONFR_BACKTEST_METHODOLOGY` | `rte-direct` | méthodologie évaluée             |
 //! | `CARBONFR_BACKTEST_ORIGIN_STEP_HOURS` | `24`  | espacement des origines           |
+//! | `CARBONFR_BACKTEST_STEP_MINUTES` | `15`       | pas natif (30 pour le jeu consolidé) |
+//! | `CARBONFR_BACKTEST_WEEKS`/`_TAU_HOURS` | grilles | `backtest-sweep` : N et τ balayés |
 //! | `RUST_LOG`                   | `info`         | filtre de logs (`tracing`)        |
 
 use std::net::SocketAddr;
@@ -34,7 +36,9 @@ use carbonfr_adapter_http::{AppState, ForecastState, router};
 use carbonfr_adapter_odre::OdreClient;
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_core::application::{BackfillHistory, BacktestForecast, BacktestReport, IngestLatest};
-use carbonfr_core::domain::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ErrorMetrics, Region, TimeRange};
+use carbonfr_core::domain::{
+    CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, ErrorMetrics, Region, TimeRange,
+};
 use carbonfr_core::ports::{Eco2mixSource, IntensityRepository};
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, Month, OffsetDateTime};
@@ -51,9 +55,10 @@ async fn main() -> anyhow::Result<()> {
         None => run_server().await,
         Some("backfill") => run_backfill().await,
         Some("backtest") => run_backtest().await,
+        Some("backtest-sweep") => run_backtest_sweep().await,
         Some(other) => {
             anyhow::bail!(
-                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, ou aucune pour servir l'API)"
+                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-sweep`, ou aucune pour servir l'API)"
             )
         }
     }
@@ -124,8 +129,71 @@ async fn run_backfill() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Mode backtest : évalue `climatology@1` sur l'historique (walk-forward),
-/// imprime MAE/RMSE (modèle vs persistance, global et par horizon), puis arrête.
+/// Horizons rapportés (ADR-0009).
+const BACKTEST_CHECKPOINTS: [Duration; 3] =
+    [Duration::hours(1), Duration::hours(6), Duration::hours(24)];
+
+/// Configuration commune aux modes backtest, lue de l'environnement.
+struct BacktestParams {
+    region: Region,
+    methodology: String,
+    test: TimeRange,
+    origin_step: Duration,
+    /// Pas natif de la série évaluée : 15 min en temps réel, **30 min** pour le
+    /// jeu consolidé/définitif éCO2mix (`CARBONFR_BACKTEST_STEP_MINUTES`).
+    step: Duration,
+}
+
+impl BacktestParams {
+    fn from_env() -> anyhow::Result<Self> {
+        let region_slug =
+            std::env::var("CARBONFR_BACKTEST_REGION").unwrap_or_else(|_| "national".to_string());
+        let region = Region::from_slug(&region_slug).with_context(|| {
+            format!("CARBONFR_BACKTEST_REGION : région inconnue « {region_slug} »")
+        })?;
+        let methodology = std::env::var("CARBONFR_BACKTEST_METHODOLOGY")
+            .unwrap_or_else(|_| "rte-direct".to_string());
+
+        let to = parse_rfc3339_env("CARBONFR_BACKTEST_TO")?.unwrap_or_else(OffsetDateTime::now_utc);
+        let from = parse_rfc3339_env("CARBONFR_BACKTEST_FROM")?.unwrap_or(to - Duration::days(30));
+        let test =
+            TimeRange::new(from, to).context("fenêtre de backtest invalide (fin <= début)")?;
+
+        let origin_step_hours = std::env::var("CARBONFR_BACKTEST_ORIGIN_STEP_HOURS")
+            .ok()
+            .map(|raw| raw.parse::<i64>())
+            .transpose()
+            .context("CARBONFR_BACKTEST_ORIGIN_STEP_HOURS : entier invalide")?
+            .unwrap_or(24);
+        anyhow::ensure!(
+            origin_step_hours > 0,
+            "CARBONFR_BACKTEST_ORIGIN_STEP_HOURS doit être > 0"
+        );
+
+        let step_minutes = std::env::var("CARBONFR_BACKTEST_STEP_MINUTES")
+            .ok()
+            .map(|raw| raw.parse::<i64>())
+            .transpose()
+            .context("CARBONFR_BACKTEST_STEP_MINUTES : entier invalide")?
+            .unwrap_or(15);
+        anyhow::ensure!(
+            step_minutes > 0,
+            "CARBONFR_BACKTEST_STEP_MINUTES doit être > 0"
+        );
+
+        Ok(Self {
+            region,
+            methodology,
+            test,
+            origin_step: Duration::hours(origin_step_hours),
+            step: Duration::minutes(step_minutes),
+        })
+    }
+}
+
+/// Mode backtest : évalue `climatology@1` (paramètres par défaut) sur
+/// l'historique (walk-forward), imprime MAE/RMSE (modèle vs persistance, global
+/// et par horizon), puis arrête.
 ///
 /// Configuration : `CARBONFR_BACKTEST_FROM`/`_TO` (RFC 3339 ; défaut 30 derniers
 /// jours), `_REGION` (slug ; défaut `national`), `_METHODOLOGY` (défaut
@@ -134,51 +202,153 @@ async fn run_backtest() -> anyhow::Result<()> {
     let database_url =
         std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
     let repo = connect_repo(&database_url).await?;
-    let forecaster = ClimatologyForecaster::new(repo.clone());
-
-    let region_slug =
-        std::env::var("CARBONFR_BACKTEST_REGION").unwrap_or_else(|_| "national".to_string());
-    let region = Region::from_slug(&region_slug)
-        .with_context(|| format!("CARBONFR_BACKTEST_REGION : région inconnue « {region_slug} »"))?;
-    let methodology =
-        std::env::var("CARBONFR_BACKTEST_METHODOLOGY").unwrap_or_else(|_| "rte-direct".to_string());
-
-    let to = parse_rfc3339_env("CARBONFR_BACKTEST_TO")?.unwrap_or_else(OffsetDateTime::now_utc);
-    let from = parse_rfc3339_env("CARBONFR_BACKTEST_FROM")?.unwrap_or(to - Duration::days(30));
-    let test = TimeRange::new(from, to).context("fenêtre de backtest invalide (fin <= début)")?;
-
-    let origin_step_hours = std::env::var("CARBONFR_BACKTEST_ORIGIN_STEP_HOURS")
-        .ok()
-        .map(|raw| raw.parse::<i64>())
-        .transpose()
-        .context("CARBONFR_BACKTEST_ORIGIN_STEP_HOURS : entier invalide")?
-        .unwrap_or(24);
-    anyhow::ensure!(
-        origin_step_hours > 0,
-        "CARBONFR_BACKTEST_ORIGIN_STEP_HOURS doit être > 0"
-    );
-
-    // Pas natif éCO2mix ; horizons rapportés (ADR-0009).
-    let step = Duration::minutes(15);
-    let checkpoints = [Duration::hours(1), Duration::hours(6), Duration::hours(24)];
+    let params = BacktestParams::from_env()?;
     let model = format!("{CLIMATOLOGY_ID}@{CLIMATOLOGY_VERSION}");
 
-    info!(region = region.slug(), %methodology, model = %model, from = %from, to = %to, "backtest démarré");
+    info!(region = params.region.slug(), methodology = %params.methodology, model = %model, from = %params.test.start(), to = %params.test.end(), "backtest démarré");
 
-    let backtest = BacktestForecast::new(forecaster, repo, methodology.clone());
+    // Paramètres par défaut, sauf surcharge explicite (premier élément des
+    // grilles) — utile pour inspecter le détail par horizon à un couple calé.
+    let weeks = parse_u32_list("CARBONFR_BACKTEST_WEEKS", "")?;
+    let taus = parse_u32_list("CARBONFR_BACKTEST_TAU_HOURS", "")?;
+    let forecaster = match (weeks.first(), taus.first()) {
+        (Some(&w), Some(&t)) => ClimatologyForecaster::with_config(
+            repo.clone(),
+            w,
+            ClimatologyParams {
+                step: params.step,
+                tau: Duration::hours(t as i64),
+            },
+        ),
+        _ => ClimatologyForecaster::new(repo.clone()),
+    };
+    let backtest = BacktestForecast::new(forecaster, repo, params.methodology.clone());
     let report = backtest
         .execute(
-            region,
-            test,
-            Duration::hours(origin_step_hours),
-            step,
-            &checkpoints,
+            params.region,
+            params.test,
+            params.origin_step,
+            params.step,
+            &BACKTEST_CHECKPOINTS,
         )
         .await
         .context("backtest")?;
 
-    print_backtest_report(&model, region.slug(), &methodology, &report);
+    print_backtest_report(&model, params.region.slug(), &params.methodology, &report);
     Ok(())
+}
+
+/// Mode *sweep* : balaie une grille de paramètres (N semaines × τ heures),
+/// classe par RMSE global, et recommande le meilleur couple. Sert au **calage
+/// mesuré** de `climatology@1` (ADR-0009).
+///
+/// Grilles : `CARBONFR_BACKTEST_WEEKS` (défaut `4,6,8,10,12`),
+/// `CARBONFR_BACKTEST_TAU_HOURS` (défaut `3,6,12,24`). Même fenêtre/région que
+/// `backtest`.
+async fn run_backtest_sweep() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let params = BacktestParams::from_env()?;
+
+    let weeks_grid = parse_u32_list("CARBONFR_BACKTEST_WEEKS", "4,6,8,10,12")?;
+    let tau_grid = parse_u32_list("CARBONFR_BACKTEST_TAU_HOURS", "3,6,12,24")?;
+    anyhow::ensure!(
+        !weeks_grid.is_empty() && !tau_grid.is_empty(),
+        "les grilles N et τ ne doivent pas être vides"
+    );
+
+    info!(
+        region = params.region.slug(),
+        methodology = %params.methodology,
+        from = %params.test.start(),
+        to = %params.test.end(),
+        combos = weeks_grid.len() * tau_grid.len(),
+        "sweep de backtest démarré"
+    );
+
+    println!();
+    println!(
+        "Sweep climatology — région {}, méthodologie {}",
+        params.region.slug(),
+        params.methodology
+    );
+    println!("Fenêtre {} → {}", params.test.start(), params.test.end());
+    println!();
+    println!(
+        "{:>7} {:>7} {:>10} {:>10} {:>9}",
+        "N(sem)", "τ(h)", "MAE", "RMSE", "n"
+    );
+
+    let mut best: Option<(u32, u32, f64)> = None; // (semaines, τ heures, RMSE)
+    let mut persistence: Option<ErrorMetrics> = None;
+
+    for &weeks in &weeks_grid {
+        for &tau_hours in &tau_grid {
+            let forecaster = ClimatologyForecaster::with_config(
+                repo.clone(),
+                weeks,
+                ClimatologyParams {
+                    step: params.step,
+                    tau: Duration::hours(tau_hours as i64),
+                },
+            );
+            let backtest =
+                BacktestForecast::new(forecaster, repo.clone(), params.methodology.clone());
+            let report = backtest
+                .execute(
+                    params.region,
+                    params.test,
+                    params.origin_step,
+                    params.step,
+                    &BACKTEST_CHECKPOINTS,
+                )
+                .await
+                .context("backtest (combinaison)")?;
+
+            persistence = persistence.or(report.persistence);
+            match report.model {
+                Some(m) => {
+                    println!(
+                        "{weeks:>7} {tau_hours:>7} {:>10.2} {:>10.2} {:>9}",
+                        m.mae, m.rmse, m.n
+                    );
+                    if best.is_none_or(|(_, _, rmse)| m.rmse < rmse) {
+                        best = Some((weeks, tau_hours, m.rmse));
+                    }
+                }
+                None => println!("{weeks:>7} {tau_hours:>7} {:>10} {:>10} {:>9}", "—", "—", 0),
+            }
+        }
+    }
+
+    println!();
+    if let Some(p) = persistence {
+        println!(
+            "Référence persistance : MAE {:.2}, RMSE {:.2} (n = {})",
+            p.mae, p.rmse, p.n
+        );
+    }
+    match best {
+        Some((weeks, tau, rmse)) => println!(
+            "Meilleur (RMSE) : N = {weeks} semaines, τ = {tau} h  →  RMSE {rmse:.2} gCO₂eq/kWh"
+        ),
+        None => println!("Aucune combinaison n'a produit de métriques (historique insuffisant ?)."),
+    }
+    Ok(())
+}
+
+/// Parse une liste d'entiers séparés par des virgules depuis l'environnement.
+/// Une valeur vide (absente et `default` vide) donne une liste vide.
+fn parse_u32_list(name: &str, default: &str) -> anyhow::Result<Vec<u32>> {
+    let raw = std::env::var(name).unwrap_or_else(|_| default.to_string());
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    raw.split(',')
+        .map(|item| item.trim().parse::<u32>())
+        .collect::<Result<Vec<_>, _>>()
+        .with_context(|| format!("{name} : liste d'entiers invalide (ex. « 4,6,8 »)"))
 }
 
 /// Imprime le rapport de backtest sous forme de tableau lisible (stdout).

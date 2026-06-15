@@ -45,7 +45,11 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 - **Backtest** du modèle de prévision (`carbonfr-server backtest`, ADR-0009) :
   évaluation *walk-forward* sur l'historique, MAE/RMSE global et par horizon
   (h+1/h+6/h+24), comparés à une référence de persistance — pour mesurer la
-  précision plutôt que la supposer.
+  précision plutôt que la supposer. Mode `backtest-sweep` (balayage N × τ).
+- **Calibration de `climatology@1`** (addendum ADR-0009) : défauts révisés
+  `N = 10 semaines`, `τ = 2 semaines`, calés par backtest sur la donnée réelle
+  2024 — le modèle bat désormais la persistance à tous les horizons (l'ancien
+  `τ = 6 h` la sous-performait). Formule et contrat d'API inchangés.
 - **Compteur de consultation** : `GET /v1/stats` + `POST /v1/stats/visit`
   (port `VisitCounter`). IP **jamais stockée** — empreinte SHA-256 salée
   (`CARBONFR_VISIT_SALT`), déduplication unique par IP/jour ; IP lue via

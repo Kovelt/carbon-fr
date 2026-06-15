@@ -73,19 +73,20 @@ Pour une cible `(region, methodology)` à l'horodatage `t`, au pas natif **15 mi
 3. **Créneaux UTC** (cohérence avec les rollups, ADR-0004) ; chaque point porte
    `methodology` = la méthodologie prévue.
 
-#### Paramètres (défauts d'ingénierie, à caler par backtest)
+#### Paramètres (défauts **calés par backtest** — cf. addendum)
 
-| Paramètre | Défaut proposé | Rôle |
+| Paramètre | Défaut | Rôle |
 |---|---|---|
-| `N` (fenêtre climatologique) | 8 semaines | compromis réactivité / nombre d'échantillons |
-| `τ` (constante de décroissance) | 6 h | vitesse de retour persistance → climatologie |
-| pas | 15 min | natif éCO2mix |
+| `N` (fenêtre climatologique) | **10 semaines** | compromis réactivité / nombre d'échantillons |
+| `τ` (constante de décroissance) | **2 semaines** | vitesse de retour persistance → climatologie |
+| pas | 15 min | natif éCO2mix (30 min sur le jeu consolidé) |
 | horizon par défaut | 24 h | usage « dans la journée » |
 | horizon max | 72 h | au-delà, la correction de persistance n'apporte plus rien |
 
-> Ces valeurs sont des **points de départ**, pas des constantes gravées : elles
-> seront **calées par un backtest** sur historique tenu à l'écart (held-out).
-> Aucune valeur de précision n'est annoncée ici tant qu'elle n'est pas mesurée.
+> Ces valeurs ont été **calées par backtest** (addendum ci-dessous). La valeur
+> initiale de τ (6 h) sous-performait la persistance ; la calibration a montré
+> qu'un τ long (correction d'anomalie quasi constante sur l'horizon) est ce qui
+> fait gagner le modèle.
 
 ### Dégradation gracieuse (démarrage à froid)
 
@@ -156,6 +157,44 @@ les endpoints existants.
 - **Persister les prévisions** (avec un millésime « forecast ») : polluerait la
   série observée et la logique d'upsert/millésime (ADR-0006) sans bénéfice —
   écarté au profit du calcul à la lecture.
+
+## Addendum — calibration mesurée (2026-06-15)
+
+- **Statut** : Accepté
+- **Méthode** : backtest *walk-forward* (`carbonfr-server backtest-sweep`) sur la
+  donnée **réelle** ODRÉ consolidée/définitive (`eco2mix-national-cons-def`,
+  national, `rte-direct`). ⚠️ Ce jeu est au **pas de 30 min** (le temps réel est
+  à 15 min) ; le backtest a été lancé à 30 min pour aligner prévision et
+  observé. Deux fenêtres mensuelles **indépendantes** (origines : 1/jour) :
+  novembre 2024 et septembre 2024 (validation hors échantillon). Grille
+  `N ∈ {8,10,12,14}` × `τ ∈ {3 h … 504 h}`. Métrique : RMSE global (gCO₂eq/kWh),
+  comparé à une **référence de persistance**.
+
+- **Résultat** :
+
+  | Configuration | RMSE nov. | RMSE sept. |
+  |---|---|---|
+  | `τ = 6 h` (valeur initiale, N=8) | 15,3 | 6,0 |
+  | **persistance nue** (référence) | 8,3 | 5,2 |
+  | `N = 10`, `τ = 2 sem.` (calé) | **7,6** | **5,0** |
+
+  La valeur initiale `τ = 6 h` **sous-performait la persistance** sur les deux
+  mois. La calibration montre que l'erreur **décroît de façon monotone quand τ
+  augmente** et se stabilise vers `τ ≈ 2 semaines` : sur un horizon de 24 h, la
+  correction d'anomalie ne doit **quasiment pas se décroître**. Le modèle
+  devient alors une **climatologie corrigée de l'anomalie courante**, qui bat la
+  persistance à **tous** les horizons (h+1 : −33 % ; h+6 : −14 % ; h+24 : −10 %
+  de RMSE en novembre). `N` est plat sur 8–12 semaines (< 2 % d'écart).
+
+- **Décision** : défauts `N = 10 semaines`, `τ = 2 semaines` (valeurs rondes, au
+  centre de l'optimum, non surajustées à un mois). Le pas reste 15 min en temps
+  réel ; il est configurable pour le backtest (`CARBONFR_BACKTEST_STEP_MINUTES`).
+
+- **Portée & limites** : calé sur **national `rte-direct`, 2024**. Le régional,
+  `acv-ademe`, et d'autres saisons peuvent différer ; l'outil `backtest-sweep`
+  permet de recaler sans changer le modèle. Reste **`climatology@1`** (mêmes
+  formule et garanties) : un changement de **paramètres par défaut** n'est pas un
+  changement de méthode publiée — la formule et le contrat d'API sont inchangés.
 
 ## Sources
 

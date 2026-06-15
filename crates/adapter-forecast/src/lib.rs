@@ -16,9 +16,9 @@ use carbonfr_core::domain::{
 use carbonfr_core::ports::{ForecastError, ForecastModel, IntensityRepository};
 use time::{Duration, OffsetDateTime};
 
-/// Profondeur d'historique par défaut alimentant la climatologie
-/// (ADR-0009 : 8 semaines glissantes).
-const DEFAULT_WEEKS: i64 = 8;
+/// Profondeur d'historique par défaut alimentant la climatologie.
+/// **10 semaines glissantes** — valeur calée par backtest (addendum ADR-0009).
+const DEFAULT_WEEKS: i64 = 10;
 
 /// Modèle de prévision `climatology@1` (ADR-0009) branché sur un repository.
 ///
@@ -34,8 +34,8 @@ pub struct ClimatologyForecaster<R> {
 }
 
 impl<R> ClimatologyForecaster<R> {
-    /// Construit avec les défauts d'ADR-0009 (8 semaines d'historique ; pas
-    /// 15 min ; τ = 6 h).
+    /// Construit avec les défauts calés (addendum ADR-0009) : 10 semaines
+    /// d'historique ; pas 15 min ; τ = 2 semaines.
     pub fn new(repo: R) -> Self {
         Self {
             repo,

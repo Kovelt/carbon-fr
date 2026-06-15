@@ -46,7 +46,12 @@ impl Default for ClimatologyParams {
     fn default() -> Self {
         Self {
             step: Duration::minutes(15),
-            tau: Duration::hours(6),
+            // τ = 2 semaines : calé par backtest (addendum ADR-0009). La
+            // correction d'anomalie ne se décroît quasiment pas sur l'horizon
+            // (~24 h) — c'est ce « biais persistant » qui fait gagner le modèle
+            // sur la persistance nue. Un τ court (l'ancienne valeur 6 h) la
+            // dissipait trop vite et dégradait la prévision.
+            tau: Duration::days(14),
         }
     }
 }

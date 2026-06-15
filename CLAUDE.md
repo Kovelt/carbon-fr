@@ -75,6 +75,7 @@ cargo check --workspace
 cargo test --workspace                       # hermétique (sans réseau ni base)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
+cargo deny check                             # licences + advisories RustSec + sources (deny.toml)
 
 # Lancer l'API (migrations appliquées au démarrage du serveur) :
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server

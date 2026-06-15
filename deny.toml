@@ -1,0 +1,56 @@
+# Politique de chaîne d'approvisionnement (cargo-deny).
+#
+# Projet souverain et open source (double licence MIT / Apache-2.0) : on veille
+# à ne tirer que des dépendances à licence permissive compatible, sans CVE
+# connue, et issues de sources de confiance. Vérifié en CI à chaque PR.
+#
+# Lancer localement : `cargo deny check`
+
+# ─── Avis de sécurité (RustSec) ────────────────────────────────────────────
+[advisories]
+# Base d'avis par défaut (https://github.com/RustSec/advisory-db).
+# Les vulnérabilités et codes « unsound » échouent ; les caisses non
+# maintenues du graphe de l'espace de travail aussi. Un crate « yanké »
+# (retiré de crates.io) fait échouer le contrôle.
+yanked = "deny"
+# Avis à ignorer ponctuellement (id RustSec + justification). Vide par défaut.
+ignore = []
+
+# ─── Licences ──────────────────────────────────────────────────────────────
+[licenses]
+# Liste blanche fermée : toute licence absente d'ici fait échouer le contrôle.
+# Calée sur l'arbre réel (`cargo deny list`) — toutes permissives, aucune
+# copyleft. Toute nouvelle dépendance à licence inédite force une décision
+# explicite (ajout ici, avec le recul que ça mérite).
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+# Seuil de confiance de la détection de licence (0.8 = défaut prudent).
+confidence-threshold = 0.8
+
+# ─── Bans / doublons ───────────────────────────────────────────────────────
+[bans]
+# Plusieurs versions d'une même caisse = avertissement, pas erreur : c'est
+# courant et hors de notre contrôle dans l'arbre transitif (hashbrown,
+# windows-sys, etc.). On le voit sans bloquer la CI.
+multiple-versions = "warn"
+# Caisses dont l'usage est explicitement interdit (vide par défaut).
+deny = []
+
+# ─── Sources ───────────────────────────────────────────────────────────────
+[sources]
+# Seules crates.io et les registres/sources git explicitement listés sont
+# admis : empêche l'introduction silencieuse d'une dépendance hors registre.
+unknown-registry = "deny"
+unknown-git = "deny"

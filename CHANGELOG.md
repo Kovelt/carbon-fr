@@ -41,6 +41,9 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 - **Documentation & gouvernance** : ADR 0001–0007 (+ addendum ADR-0003),
   `ARCHITECTURE.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `GOUVERNANCE.md`,
   et intégration continue GitHub Actions (fmt, clippy, tests + PostgreSQL).
+- **Chaîne d'approvisionnement** : politique `cargo-deny` (`deny.toml`) vérifiée
+  en CI — licences permissives en liste blanche (compatibles MIT/Apache-2.0),
+  avis de sécurité RustSec, et sources de confiance.
 
 ### Notes
 

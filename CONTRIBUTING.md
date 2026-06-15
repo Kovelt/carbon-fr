@@ -27,6 +27,7 @@ Si une contribution fait fuiter de l'infrastructure dans le domaine, elle sera r
 
 - `cargo fmt --all` et `cargo clippy --all-targets -- -D warnings` doivent passer.
 - `cargo test --workspace` doit passer. Le `core` se teste **sans IO**, avec des *fakes* en mémoire implémentant les ports.
+- `cargo deny check` doit passer (licences permissives, avis RustSec, sources de confiance — voir [`deny.toml`](deny.toml)). Toute dépendance à licence inédite force une décision explicite dans `deny.toml`.
 - Pas d'`unwrap()` / `expect()` hors tests et hors bootstrap du binaire.
 - Erreurs : `thiserror` dans les bibliothèques ; `anyhow` toléré uniquement dans le binaire.
 - Unité canonique : **gCO₂eq/kWh**. L'horodatage est porté explicitement par chaque mesure.

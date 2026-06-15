@@ -33,6 +33,19 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  deny:
+    name: cargo-deny (licences + advisories)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # L'action installe cargo-deny et lance les quatre contrôles
+      # (advisories, bans, licenses, sources) selon ./deny.toml.
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
   test:
     name: tests (avec PostgreSQL)
     runs-on: ubuntu-latest

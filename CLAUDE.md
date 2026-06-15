@@ -114,7 +114,7 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 
 - ADR-0010 — `acv-ademe` **consumption-based** : imports valorisés à l'intensité du pays d'origine (ENTSO-E via `adapter-entsoe`), `MethodologyCalculator` (trait domaine pur), endpoints `/v1/methodologies` & `/v1/factors`. **Fait évoluer** l'ADR-0008 (livré en `@1` production-based).
 - ADR-0011 — **contrat de prévision `ForecastPoint`** (**Accepté, implémenté**) : type domaine dédié (intervalles `lower`/`expected`/`upper`, `ModelVersion`, **pas de `vintage`**, invariant garanti), remplaçant le `Vec<Measurement>` du port. `/v1/intensity/forecast` expose l'intervalle ; `greenest-window` a un sélecteur `central`/`prudent`. Intervalle v1 = dispersion empirique par créneau ; quantiles par horizon = raffinement derrière le même contrat.
-- ADR-0012 — modèle de prévision **ML** (`GbdtForecaster`, GBDT tout-Rust + features météo) derrière le même port ; ne livre que s'il bat le `StatForecaster` au backtest. **Post-phase 4.**
+- ADR-0012 — modèle de prévision **ML** (`GbdtForecaster`, GBDT tout-Rust + features météo) derrière le même port ; ne livre que s'il bat le `StatForecaster` au backtest. **Accepté, engagé** : store météo livré (port `WeatherForecastSource` + `adapter-meteo` Open-Meteo + table `weather_forecast` anti-fuite `(run_at, valid_at)`) ; `bin/train` + `GbdtForecaster` à venir.
 - ADR-0013 — **prévision `acv-ademe`** : prévoir les entrées (mix + imports) puis appliquer le calculateur ; `MixForecaster` + `CrossBorderForecastSource`. **Post-phase 4** (dépend de 0010 + 0012).
 - ADR-0014 — **usage** : primitives carbon-aware (créneau sous échéance, lowest-k, seuil, annotation d'économie) + livraison live **SSE** (`/v1/intensity/stream`, `LISTEN`/`NOTIFY`) ; webhooks reportés (gated sur le tier hébergé). **Post-phase 4.**
 - ADR-0015 — **tier hébergé** : clés API (`Bearer`) en **middleware de bord** (`core` intact, ports `ApiKeyRepository`/`UsageMeter` sur Postgres), **anonyme conservé par défaut** (auth opt-in, self-hosting préservé), payant = extension future non-bloquante. Débloque les webhooks (fournit l'*ownership*). **Post-phase 4.**
@@ -141,7 +141,9 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 
 - [ ] Phase 4 — **enrichissement & usage** (ADR proposés 0010, 0012-0014) :
   - [ ] `acv-ademe` **consumption-based** + `adapter-entsoe` + `/v1/factors` (ADR-0010).
-  - [ ] modèle **ML GBDT** (tout-Rust) + features météo, derrière le port, gardé par le backtest (ADR-0012).
+  - [~] modèle **ML GBDT** (tout-Rust) + features météo, derrière le port, gardé par le backtest (ADR-0012) :
+    - [x] **store météo prévisionnel** : port `WeatherForecastSource` + adapter `carbonfr-adapter-meteo` (Open-Meteo, vent 100 m + irradiance, 7 points FR moyennés), store `WeatherRepository` (table `weather_forecast`) daté `(run_at, valid_at)` **anti-fuite**, ingestion poller. Crate `gbdt` (Apache-2.0) confirmé.
+    - [ ] `bin/train` (artefact versionné) + `GbdtForecaster` (inférence) + features (calendrier, lags, charge prévue, météo) + garde de promotion par backtest.
   - [ ] **prévision `acv-ademe`** (prévoir les entrées → calculateur ; `MixForecaster`, ENTSO-E day-ahead) (ADR-0013).
   - [ ] **usage** : primitives de scheduling carbon-aware + streaming **SSE** (ADR-0014) ; webhooks reportés (tier hébergé).
   - [ ] **tier hébergé** : clés API en middleware de bord, anonyme par défaut, `core` intact (ADR-0015) ; débloque les webhooks. Direction posée, calendrier libre.

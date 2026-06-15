@@ -19,6 +19,7 @@ carbonfr-adapter-odre = { workspace = true }
 carbonfr-adapter-postgres = { workspace = true }
 carbonfr-adapter-http = { workspace = true }
 carbonfr-adapter-forecast = { workspace = true }
+carbonfr-adapter-meteo = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true, features = [
     "rt-multi-thread",

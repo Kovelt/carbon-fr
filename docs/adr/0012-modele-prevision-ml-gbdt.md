@@ -1,8 +1,27 @@
 # ADR-0012 — Modèle de prévision ML : `GbdtForecaster` (tout-Rust) + features météo
 
-- **Statut** : Proposé
+- **Statut** : Accepté (mise en œuvre **engagée** — store météo livré ; modèle à venir)
 - **Date** : 2026-06-15
 - **Raffine** : ADR-0011 (tranche la fourche *runtime* qu'il avait laissée ouverte)
+
+## État d'implémentation (2026-06-15)
+
+**Tranche 1 — store de prévision météo (§5/§6) : livré.** Port
+`WeatherForecastSource` + adapter `carbonfr-adapter-meteo` (Open-Meteo, sans
+clé, FR/EU — vent à 100 m + irradiance, agrégés sur 7 points de métropole).
+Store `WeatherRepository` (table `weather_forecast`) **daté `(run_at, valid_at)`**
+pour l'**anti-fuite** : on conserve l'historique des `run_at` afin de
+n'entraîner/inférer que sur la prévision *telle qu'elle était disponible*. Le
+poller l'ingère à chaque cycle. Le crate `gbdt` (GBDT pur Rust, **Apache-2.0**,
+compatible cargo-deny) est confirmé pour la suite. ENTSO-E (prévisions de
+génération vent/solaire, souveraines mais sous token) reste l'**upgrade**
+prévu, derrière le même port.
+
+**Tranche 2 — modèle (à venir)** : `bin/train` (entraînement offline →
+artefact versionné), `GbdtForecaster` (inférence), *feature engineering*
+(calendrier + lags d'intensité + charge prévue + météo), garde de promotion par
+backtest (ne remplace `@1` que s'il le bat). La météo ne touche pas le `core`
+(détail d'adapter, frontière hexagonale).
 
 ## Contexte
 

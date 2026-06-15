@@ -6,6 +6,7 @@ members = [
     "crates/adapter-postgres",
     "crates/adapter-http",
     "crates/adapter-forecast",
+    "crates/adapter-meteo",
     "bin/server",
 ]
 
@@ -20,6 +21,7 @@ carbonfr-core = { path = "crates/core" }
 carbonfr-adapter-odre = { path = "crates/adapter-odre" }
 carbonfr-adapter-postgres = { path = "crates/adapter-postgres" }
 carbonfr-adapter-http = { path = "crates/adapter-http" }
+carbonfr-adapter-meteo = { path = "crates/adapter-meteo" }
 carbonfr-adapter-forecast = { path = "crates/adapter-forecast" }
 
 # Dépendances tierces (versions centralisées)

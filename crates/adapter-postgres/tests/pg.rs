@@ -16,9 +16,11 @@
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_core::domain::{
     CarbonIntensity, GenerationMix, Granularity, LoadRecord, Measurement, Methodology, Region,
-    TimeRange, Vintage,
+    TimeRange, Vintage, WeatherForecast,
 };
-use carbonfr_core::ports::{ConsumptionRepository, IntensityRepository, VisitCounter};
+use carbonfr_core::ports::{
+    ConsumptionRepository, IntensityRepository, VisitCounter, WeatherRepository,
+};
 use time::{Date, Duration, Month, OffsetDateTime};
 
 /// Repository prêt (migré, lignes de `methodology` purgées), ou `None` si
@@ -315,6 +317,47 @@ async fn consumption_merges_realized_and_forecast() {
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].realized, Some(44_500.0));
     assert_eq!(got[0].forecast, Some(45_000.0));
+}
+
+#[tokio::test]
+async fn weather_keeps_run_history_per_valid_time() {
+    let Some(repo) = setup("test-pg-weather").await else {
+        return;
+    };
+    let valid = OffsetDateTime::UNIX_EPOCH + Duration::days(6100);
+    sqlx::query("DELETE FROM weather_forecast WHERE valid_at = $1")
+        .bind(valid)
+        .execute(repo.pool())
+        .await
+        .expect("nettoyage weather");
+
+    let run1 = OffsetDateTime::UNIX_EPOCH + Duration::days(6099);
+    let run2 = run1 + Duration::hours(6);
+    // Deux runs (run_at distincts) pour la même échéance → deux lignes (anti-fuite).
+    repo.upsert_weather(&[
+        WeatherForecast {
+            valid_at: valid,
+            run_at: run1,
+            wind: 20.0,
+            irradiance: 100.0,
+        },
+        WeatherForecast {
+            valid_at: valid,
+            run_at: run2,
+            wind: 25.0,
+            irradiance: 120.0,
+        },
+    ])
+    .await
+    .unwrap();
+
+    let window = TimeRange::new(valid, valid + Duration::minutes(15)).unwrap();
+    let got = repo.weather_range(window).await.unwrap();
+    assert_eq!(got.len(), 2, "deux runs conservés pour la même échéance");
+    // Tri (valid_at, run_at) croissants : run1 avant run2.
+    assert_eq!(got[0].run_at, run1);
+    assert_eq!(got[1].run_at, run2);
+    assert_eq!(got[1].wind, 25.0);
 }
 
 /// Deux lignes de **même clé** dans un **seul** `upsert_many` : sans la dédup

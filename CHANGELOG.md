@@ -51,6 +51,11 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `HorizonBands` calibré par backtest *walk-forward* (`backtest-bands`) ; les
   bornes **s'élargissent avec l'horizon**. Le serveur auto-calibre au démarrage
   (`CARBONFR_FORECAST_CALIBRATE_WEEKS`), avec repli sur la dispersion par créneau.
+- **Store de prévision météo** (ADR-0012, tranche 1 du modèle ML) : port
+  `WeatherForecastSource` + adapter `carbonfr-adapter-meteo` (Open-Meteo, vent à
+  100 m + irradiance, agrégés sur 7 points de métropole), store
+  `WeatherRepository` (table `weather_forecast`) **daté `(run_at, valid_at)`**
+  pour l'anti-fuite, ingéré par le poller. Entrée du futur `GbdtForecaster`.
 - **Store de charge** (consommation réalisée + prévue RTE) : table `consumption`,
   ports `ConsumptionRepository`/`ConsumptionSource`, ingestion par le poller
   (conso récente + prévisions J-1/J) et backfill de la réalisée. Entrée

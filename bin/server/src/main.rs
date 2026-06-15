@@ -39,6 +39,7 @@ use std::net::SocketAddr;
 use anyhow::Context;
 use carbonfr_adapter_forecast::ClimatologyForecaster;
 use carbonfr_adapter_http::{AppState, ForecastState, router};
+use carbonfr_adapter_meteo::OpenMeteoClient;
 use carbonfr_adapter_odre::OdreClient;
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_core::application::{BackfillHistory, BacktestForecast, BacktestReport, IngestLatest};
@@ -47,6 +48,7 @@ use carbonfr_core::domain::{
 };
 use carbonfr_core::ports::{
     ConsumptionRepository, ConsumptionSource, Eco2mixArchive, Eco2mixSource, IntensityRepository,
+    WeatherForecastSource, WeatherRepository,
 };
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, Month, OffsetDateTime};
@@ -79,9 +81,11 @@ async fn run_server() -> anyhow::Result<()> {
 
     let repo = connect_repo(&config.database_url).await?;
 
-    // Poller unique : un seul composant tape ODRÉ, l'API sert depuis la base.
+    // Poller unique : un seul composant tape les sources amont, l'API sert
+    // depuis la base. ODRÉ (intensité + charge) et Open-Meteo (prévision météo).
     let source = OdreClient::new().context("initialisation du client ODRÉ")?;
-    let poller = spawn_poller(source, repo.clone(), config.poll_interval);
+    let weather = OpenMeteoClient::new().context("initialisation du client Open-Meteo")?;
+    let poller = spawn_poller(source, weather, repo.clone(), config.poll_interval);
 
     // Prévision (ADR-0009) : modèle climatology@1 alimenté par le même
     // repository. Intervalles **calibrés** au démarrage par quantiles de résidus
@@ -622,10 +626,16 @@ fn parse_rfc3339_env(name: &str) -> anyhow::Result<Option<OffsetDateTime>> {
 /// Démarre la tâche d'ingestion périodique. La première itération s'exécute
 /// immédiatement. Une erreur d'ingestion est journalisée sans interrompre la
 /// boucle (la donnée sera rattrapée à la prochaine itération ou au backfill).
-fn spawn_poller<S, R>(source: S, repo: R, interval: std::time::Duration) -> JoinHandle<()>
+fn spawn_poller<S, W, R>(
+    source: S,
+    weather: W,
+    repo: R,
+    interval: std::time::Duration,
+) -> JoinHandle<()>
 where
     S: Eco2mixSource + ConsumptionSource + Clone + 'static,
-    R: IntensityRepository + ConsumptionRepository + Clone + 'static,
+    W: WeatherForecastSource + 'static,
+    R: IntensityRepository + ConsumptionRepository + WeatherRepository + Clone + 'static,
 {
     let ingest = IngestLatest::new(source.clone(), repo.clone());
     tokio::spawn(async move {
@@ -646,8 +656,8 @@ where
             }
             info!(written, "ingestion ODRÉ (national + régions)");
 
-            // Charge nationale : consommation récente + prévisions RTE (ADR-0011
-            // §4), pour le modèle ajusté `climatology@2`.
+            // Charge nationale : consommation récente + prévisions RTE — entrée
+            // du futur modèle ML (ADR-0012).
             match source.recent_loads(Region::National).await {
                 Ok(loads) if !loads.is_empty() => match repo.upsert_loads(&loads).await {
                     Ok(n) => info!(loads = n, "ingestion charge (conso + prévisions)"),
@@ -655,6 +665,19 @@ where
                 },
                 Ok(_) => {}
                 Err(err) => warn!(error = %err, "échec de récupération de la charge ODRÉ"),
+            }
+
+            // Prévision météo nationale (vent + irradiance, ADR-0012) : chaque
+            // cycle enregistre un nouveau `run_at` (historique anti-fuite).
+            match weather.current_forecast().await {
+                Ok(forecasts) if !forecasts.is_empty() => {
+                    match repo.upsert_weather(&forecasts).await {
+                        Ok(n) => info!(weather = n, "ingestion météo (prévisions)"),
+                        Err(err) => warn!(error = %err, "échec d'écriture de la météo"),
+                    }
+                }
+                Ok(_) => {}
+                Err(err) => warn!(error = %err, "échec de récupération de la météo"),
             }
 
             // Rollups rafraîchis une fois par cycle si la donnée a changé.

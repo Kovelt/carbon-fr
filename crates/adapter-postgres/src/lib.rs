@@ -17,10 +17,10 @@ mod mapping;
 use async_trait::async_trait;
 use carbonfr_core::domain::{
     Granularity, IntensityStats, LoadRecord, Measurement, Region, RollupBucket, TimeRange,
-    VisitStats,
+    VisitStats, WeatherForecast,
 };
 use carbonfr_core::ports::{
-    ConsumptionRepository, IntensityRepository, RepositoryError, VisitCounter,
+    ConsumptionRepository, IntensityRepository, RepositoryError, VisitCounter, WeatherRepository,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, QueryBuilder, Row};
@@ -368,6 +368,73 @@ impl ConsumptionRepository for PgIntensityRepository {
                         .map_err(|e| backend(e.to_string()))?,
                     forecast: row
                         .try_get("forecast")
+                        .map_err(|e| backend(e.to_string()))?,
+                })
+            })
+            .collect()
+    }
+}
+
+#[async_trait]
+impl WeatherRepository for PgIntensityRepository {
+    async fn upsert_weather(
+        &self,
+        forecasts: &[WeatherForecast],
+    ) -> Result<usize, RepositoryError> {
+        if forecasts.is_empty() {
+            return Ok(0);
+        }
+        let mut written = 0usize;
+        // 4 colonnes × 10 000 = 40 000 paramètres < 65 535.
+        for chunk in forecasts.chunks(10_000) {
+            let mut builder = QueryBuilder::new(
+                "INSERT INTO weather_forecast (valid_at, run_at, wind, irradiance) ",
+            );
+            builder.push_values(chunk.iter(), |mut row, f| {
+                row.push_bind(f.valid_at)
+                    .push_bind(f.run_at)
+                    .push_bind(f.wind)
+                    .push_bind(f.irradiance);
+            });
+            // Même (valid_at, run_at) ré-ingéré : on rafraîchit les valeurs.
+            builder.push(
+                " ON CONFLICT (valid_at, run_at) DO UPDATE SET \
+                 wind = EXCLUDED.wind, irradiance = EXCLUDED.irradiance",
+            );
+            let result = builder
+                .build()
+                .execute(&self.pool)
+                .await
+                .map_err(|e| backend(format!("upsert_weather : {e}")))?;
+            written += result.rows_affected() as usize;
+        }
+        Ok(written)
+    }
+
+    async fn weather_range(
+        &self,
+        valid: TimeRange,
+    ) -> Result<Vec<WeatherForecast>, RepositoryError> {
+        let rows = sqlx::query(
+            "SELECT valid_at, run_at, wind, irradiance FROM weather_forecast \
+             WHERE valid_at >= $1 AND valid_at < $2 ORDER BY valid_at ASC, run_at ASC",
+        )
+        .bind(valid.start())
+        .bind(valid.end())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| backend(format!("weather_range : {e}")))?;
+
+        rows.iter()
+            .map(|row| {
+                Ok(WeatherForecast {
+                    valid_at: row
+                        .try_get("valid_at")
+                        .map_err(|e| backend(e.to_string()))?,
+                    run_at: row.try_get("run_at").map_err(|e| backend(e.to_string()))?,
+                    wind: row.try_get("wind").map_err(|e| backend(e.to_string()))?,
+                    irradiance: row
+                        .try_get("irradiance")
                         .map_err(|e| backend(e.to_string()))?,
                 })
             })

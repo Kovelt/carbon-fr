@@ -18,6 +18,7 @@ mod region;
 mod stats;
 mod time_range;
 mod visit;
+mod weather;
 mod window;
 
 pub use factors::{EmissionFactors, acv_ademe_intensity, derive_acv_ademe};
@@ -33,4 +34,5 @@ pub use region::Region;
 pub use stats::{Granularity, IntensityStats, RollupBucket};
 pub use time_range::TimeRange;
 pub use visit::VisitStats;
+pub use weather::WeatherForecast;
 pub use window::{GreenWindow, WindowEstimator, greenest_window};

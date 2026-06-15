@@ -1,0 +1,19 @@
+[package]
+name = "carbonfr-adapter-meteo"
+version = "0.0.0"
+description = "Adapter sortant carbon-fr : prévision météo nationale (Open-Meteo) — entrée du futur modèle ML (ADR-0012)."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+carbonfr-core = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+time = { workspace = true, features = ["parsing", "macros"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+serde_json = { workspace = true }

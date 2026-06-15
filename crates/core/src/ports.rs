@@ -9,7 +9,7 @@ use time::{Date, Duration, OffsetDateTime};
 
 use crate::domain::{
     ForecastPoint, Granularity, IntensityStats, LoadRecord, Measurement, Region, RollupBucket,
-    TimeRange, VisitStats,
+    TimeRange, VisitStats, WeatherForecast,
 };
 
 /// Erreur de récupération depuis une source amont (ODRÉ, ou source de secours).
@@ -148,6 +148,31 @@ pub trait ConsumptionRepository: Send + Sync {
 pub trait ConsumptionSource: Send + Sync {
     /// Charges récentes et **à venir** (réalisées + prévues) pour une région.
     async fn recent_loads(&self, region: Region) -> Result<Vec<LoadRecord>, SourceError>;
+}
+
+/// Port sortant : store de **prévision météo** nationale (ADR-0012). Daté par
+/// `(run_at, valid_at)` pour l'anti-fuite : on retrouve la prévision **telle
+/// qu'elle était disponible** à un instant donné.
+#[async_trait]
+pub trait WeatherRepository: Send + Sync {
+    /// Insère/met à jour des prévisions météo (clé `(valid_at, run_at)`).
+    async fn upsert_weather(&self, forecasts: &[WeatherForecast])
+    -> Result<usize, RepositoryError>;
+
+    /// Prévisions dont le `valid_at` tombe dans `valid`, triées par
+    /// `(valid_at, run_at)` croissants.
+    async fn weather_range(
+        &self,
+        valid: TimeRange,
+    ) -> Result<Vec<WeatherForecast>, RepositoryError>;
+}
+
+/// Port sortant : source amont de **prévision météo** (ADR-0012). Jamais appelée
+/// par requête utilisateur — le poller l'ingère, comme ODRÉ.
+#[async_trait]
+pub trait WeatherForecastSource: Send + Sync {
+    /// Prévision météo nationale **courante** (produite à l'instant de l'appel).
+    async fn current_forecast(&self) -> Result<Vec<WeatherForecast>, SourceError>;
 }
 
 /// Port sortant : compteur de consultations (visiteurs).

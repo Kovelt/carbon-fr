@@ -40,6 +40,15 @@ impl ApiError {
         }
     }
 
+    /// Dépendance indisponible (503) — ex. base de données injoignable.
+    pub(crate) fn unavailable(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: "unavailable",
+            message: message.into(),
+        }
+    }
+
     /// Erreur serveur générique : ne divulgue aucun détail interne au client.
     pub(crate) fn internal() -> Self {
         Self {

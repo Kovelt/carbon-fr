@@ -28,6 +28,10 @@ pub struct AuthConfig {
     pub anonymous_per_min: u32,
     /// Limite des appelants à **clé gratuite**.
     pub free_per_min: u32,
+    /// Faire confiance à `X-Forwarded-For` pour identifier l'IP anonyme. Faux par
+    /// défaut (l'en-tête est spoofable hors d'un proxy de confiance) → sans proxy,
+    /// l'anonyme tombe dans un seau unique plutôt qu'un quota par IP contournable.
+    pub trust_proxy: bool,
 }
 
 impl Default for AuthConfig {
@@ -35,6 +39,7 @@ impl Default for AuthConfig {
         Self {
             anonymous_per_min: 60,
             free_per_min: 600,
+            trust_proxy: false,
         }
     }
 }
@@ -107,8 +112,13 @@ pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<String> {
     (!token.is_empty()).then(|| token.to_string())
 }
 
-/// IP client (en-têtes du reverse proxy), `unknown` à défaut.
-fn client_ip(headers: &HeaderMap) -> String {
+/// IP client. Sans `trust_proxy`, `X-Forwarded-For` est ignoré (spoofable) →
+/// `unknown` (seau anonyme unique). Derrière un proxy de confiance, l'en-tête
+/// donne l'IP réelle.
+fn client_ip(headers: &HeaderMap, trust_proxy: bool) -> String {
+    if !trust_proxy {
+        return "unknown".to_string();
+    }
     for name in ["x-forwarded-for", "x-real-ip"] {
         if let Some(value) = headers.get(name).and_then(|v| v.to_str().ok()) {
             let first = value.split(',').next().unwrap_or("").trim();
@@ -165,7 +175,7 @@ pub async fn enforce(State(state): State<AuthState>, request: Request, next: Nex
             }
         }
         None => Principal::Anonymous {
-            ip: client_ip(headers),
+            ip: client_ip(headers, state.config.trust_proxy),
         },
     };
 

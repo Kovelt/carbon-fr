@@ -998,6 +998,7 @@ fn guarded_app() -> axum::Router {
         AuthConfig {
             anonymous_per_min: 2,
             free_per_min: 100,
+            trust_proxy: false,
         },
     );
     axum::Router::new()
@@ -1136,4 +1137,35 @@ async fn webhook_create_list_delete_roundtrip() {
     assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
     let after = send(app, "GET", "/v1/webhooks", Some("wh-key"), None).await;
     assert_eq!(json_body(after).await["count"], 0);
+}
+
+#[tokio::test]
+async fn health_ready_checks_db() {
+    // Repo qui répond (Ok) → 200 « ready ».
+    let response = get(app(Some(national_measurement())), "/health/ready").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    // Même sans donnée (Ok(None)), la base est joignable → 200.
+    let empty = get(app(None), "/health/ready").await;
+    assert_eq!(empty.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn rate_limit_not_bypassed_by_spoofed_xff() {
+    // trust_proxy = false (défaut) : des X-Forwarded-For différents tombent tous
+    // dans le seau « unknown » → le spoofing ne contourne pas le quota.
+    let app = guarded_app(); // anonymous_per_min = 2
+    let send_xff = |xff: &str| {
+        let req = Request::get("/health")
+            .header("x-forwarded-for", xff)
+            .body(Body::empty())
+            .unwrap();
+        app.clone().oneshot(req)
+    };
+    assert_eq!(send_xff("1.2.3.4").await.unwrap().status(), StatusCode::OK);
+    assert_eq!(send_xff("5.6.7.8").await.unwrap().status(), StatusCode::OK);
+    // 3e requête, IP encore différente → quota épuisé malgré l'IP forgée.
+    assert_eq!(
+        send_xff("9.9.9.9").await.unwrap().status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
 }

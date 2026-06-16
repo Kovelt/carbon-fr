@@ -43,6 +43,9 @@
 //! | `CARBONFR_RATELIMIT_ANON_PER_MIN` | `60`      | quota anonyme (req/min)            |
 //! | `CARBONFR_RATELIMIT_FREE_PER_MIN` | `600`     | quota clé gratuite (req/min)        |
 //! | `CARBONFR_KEY_LABEL`         | `` (vide)      | `mint-key` : libellé de la clé      |
+//! | `CARBONFR_TRUST_PROXY`       | `0` (off)      | faire confiance à `X-Forwarded-For` (derrière un reverse proxy) |
+//! | `CARBONFR_DB_MAX_CONNECTIONS` | `10`         | taille du pool PostgreSQL           |
+//! | `CARBONFR_VISIT_SALT`        | `carbon-fr` (⚠ à surcharger) | sel du hachage des IP visiteurs |
 //! | `RUST_LOG`                   | `info`         | filtre de logs (`tracing`)        |
 
 use std::net::SocketAddr;
@@ -153,7 +156,7 @@ async fn run_server() -> anyhow::Result<()> {
     let forecast_state = ForecastState::new(forecaster, model)
         .with_consumption(std::sync::Arc::new(acv_forecaster), acv_model);
 
-    let mut state = AppState::new(repo.clone());
+    let mut state = AppState::new(repo.clone()).with_trust_proxy(config.trust_proxy);
     if let Some(salt) = config.visit_salt {
         state = state.with_visit_salt(salt);
     }
@@ -171,10 +174,28 @@ async fn run_server() -> anyhow::Result<()> {
         .with_context(|| format!("écoute sur {}", config.bind))?;
     info!(addr = %config.bind, "API à l'écoute");
 
-    let serve_result = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("serveur HTTP");
+    // Supervision **fail-fast** : le serveur s'arrête sur signal (arrêt gracieux) ;
+    // mais si le poller ou le watcher meurt (panique → boucle infinie terminée),
+    // on sort en erreur plutôt que de continuer en silence (donnée gelée /
+    // webhooks muets). Le superviseur (systemd `Restart=on-failure`) relance.
+    let mut poller = poller;
+    let mut webhook_watcher = webhook_watcher;
+    let serve = async {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+    };
+    tokio::pin!(serve);
+
+    let serve_result = tokio::select! {
+        result = &mut serve => result.context("serveur HTTP"),
+        joined = &mut poller => Err(anyhow::anyhow!(
+            "le poller s'est arrêté ({joined:?}) — l'ingestion est interrompue"
+        )),
+        joined = &mut webhook_watcher => Err(anyhow::anyhow!(
+            "le watcher de webhooks s'est arrêté ({joined:?})"
+        )),
+    };
 
     poller.abort();
     webhook_watcher.abort();
@@ -205,6 +226,10 @@ fn build_auth_state(repo: PgIntensityRepository) -> Option<AuthState> {
             defaults.anonymous_per_min,
         ),
         free_per_min: env_u32("CARBONFR_RATELIMIT_FREE_PER_MIN", defaults.free_per_min),
+        trust_proxy: matches!(
+            std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
+            Ok("1") | Ok("true")
+        ),
     };
     let keys: std::sync::Arc<dyn ApiKeyRepository> = std::sync::Arc::new(repo);
     Some(AuthState::new(keys, config))
@@ -924,9 +949,20 @@ async fn run_train() -> anyhow::Result<()> {
 
 /// Ouvre le pool PostgreSQL et applique les migrations.
 async fn connect_repo(database_url: &str) -> anyhow::Result<PgIntensityRepository> {
-    let repo = PgIntensityRepository::connect(database_url)
-        .await
-        .context("connexion à PostgreSQL")?;
+    // Retry borné : la base peut démarrer quelques secondes après l'API
+    // (compose/systemd sans ordering strict) — on évite un crash-loop au boot.
+    let mut attempt = 0u32;
+    let repo = loop {
+        attempt += 1;
+        match PgIntensityRepository::connect(database_url).await {
+            Ok(repo) => break repo,
+            Err(err) if attempt < 10 => {
+                warn!(attempt, error = %err, "connexion PostgreSQL échouée — nouvelle tentative dans 2 s");
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            }
+            Err(err) => return Err(anyhow::Error::new(err).context("connexion à PostgreSQL")),
+        }
+    };
     repo.migrate().await.context("application des migrations")?;
     info!("base prête (migrations appliquées)");
     Ok(repo)
@@ -938,6 +974,7 @@ struct ServerConfig {
     bind: SocketAddr,
     poll_interval: std::time::Duration,
     visit_salt: Option<String>,
+    trust_proxy: bool,
 }
 
 impl ServerConfig {
@@ -957,11 +994,24 @@ impl ServerConfig {
             .context("CARBONFR_POLL_SECS : durée invalide")?
             .unwrap_or(900);
 
+        let visit_salt = std::env::var("CARBONFR_VISIT_SALT").ok();
+        if visit_salt.is_none() {
+            warn!(
+                "CARBONFR_VISIT_SALT non défini : sel de hachage des visiteurs PAR DÉFAUT \
+                 (public) — les empreintes d'IP seraient réversibles. À définir en production."
+            );
+        }
+        let trust_proxy = matches!(
+            std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
+            Ok("1") | Ok("true")
+        );
+
         Ok(Self {
             database_url,
             bind,
             poll_interval: std::time::Duration::from_secs(poll_secs),
-            visit_salt: std::env::var("CARBONFR_VISIT_SALT").ok(),
+            visit_salt,
+            trust_proxy,
         })
     }
 }
@@ -1180,11 +1230,31 @@ where
     })
 }
 
-/// Attend Ctrl-C (SIGINT) pour un arrêt propre.
+/// Attend **SIGINT (Ctrl-C) ou SIGTERM** pour un arrêt propre. SIGTERM est le
+/// signal envoyé par systemd/Docker à l'arrêt orchestré — sans lui, l'arrêt
+/// gracieux ne s'enclencherait pas en production.
 async fn shutdown_signal() {
-    if let Err(err) = tokio::signal::ctrl_c().await {
-        error!(error = %err, "écoute du signal d'arrêt impossible");
-        return;
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(err) => {
+                error!(error = %err, "écoute de SIGTERM impossible");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
     }
     info!("arrêt demandé, fermeture en cours");
 }

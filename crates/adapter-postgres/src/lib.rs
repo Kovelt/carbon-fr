@@ -61,9 +61,22 @@ pub struct PgIntensityRepository {
 
 impl PgIntensityRepository {
     /// Ouvre un pool de connexions vers `database_url`.
+    ///
+    /// Taille via `CARBONFR_DB_MAX_CONNECTIONS` (défaut **10** — le pool est
+    /// partagé par l'API, le poller et le watcher). `acquire_timeout` borné :
+    /// sous saturation, une requête **échoue vite** (→ 500) plutôt que de pendre
+    /// jusqu'au défaut de 30 s. Recyclage (`idle`/`max_lifetime`) pour éviter les
+    /// connexions mortes côté serveur après de longues durées.
     pub async fn connect(database_url: &str) -> Result<Self, RepositoryError> {
+        let max_connections = std::env::var("CARBONFR_DB_MAX_CONNECTIONS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
         let pool = PgPoolOptions::new()
-            .max_connections(5)
+            .max_connections(max_connections)
+            .acquire_timeout(std::time::Duration::from_secs(5))
+            .idle_timeout(std::time::Duration::from_secs(600))
+            .max_lifetime(std::time::Duration::from_secs(1800))
             .connect(database_url)
             .await
             .map_err(|e| backend(format!("connexion à PostgreSQL : {e}")))?;

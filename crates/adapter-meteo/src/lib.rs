@@ -50,6 +50,9 @@ impl OpenMeteoClient {
     pub fn new() -> Result<Self, SourceError> {
         let http = reqwest::Client::builder()
             .user_agent(concat!("carbon-fr/", env!("CARGO_PKG_VERSION")))
+            // Bornes de temps (cf. ODRÉ) : éviter un blocage indéfini du poller.
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(30))
             .build()
             .map_err(|e| SourceError::Unavailable(format!("construction du client HTTP : {e}")))?;
         Ok(Self::with_http(http, DEFAULT_BASE_URL))

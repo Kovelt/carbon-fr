@@ -62,6 +62,10 @@ pub struct AppState<R> {
     pub(crate) repo: R,
     pub(crate) methodology: String,
     pub(crate) visit_salt: String,
+    /// Faire confiance à `X-Forwarded-For` pour l'IP client (uniquement derrière
+    /// un reverse proxy de confiance, ADR-0007). Faux par défaut : sans proxy,
+    /// l'en-tête est spoofable.
+    pub(crate) trust_proxy: bool,
 }
 
 impl<R> AppState<R> {
@@ -71,7 +75,14 @@ impl<R> AppState<R> {
             repo,
             methodology: "rte-direct".to_string(),
             visit_salt: DEFAULT_VISIT_SALT.to_string(),
+            trust_proxy: false,
         }
+    }
+
+    /// Active la confiance dans `X-Forwarded-For`/`X-Real-IP` (derrière un proxy).
+    pub fn with_trust_proxy(mut self, trust: bool) -> Self {
+        self.trust_proxy = trust;
+        self
     }
 
     /// Sélectionne une autre méthodologie servie (ex. `acv-ademe` plus tard).
@@ -198,6 +209,7 @@ where
         .route("/v1/openapi.json", get(carbonfr_openapi::openapi))
         .route("/docs", get(carbonfr_openapi::swagger_ui))
         .route("/health", get(handlers::health))
+        .route("/health/ready", get(handlers::health_ready::<R>))
         .with_state(state);
 
     let forecasting = Router::new()

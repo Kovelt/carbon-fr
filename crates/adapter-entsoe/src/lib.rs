@@ -67,6 +67,17 @@ impl From<EntsoeError> for SourceError {
     }
 }
 
+/// Client HTTP **borné en temps** : sans timeouts, une réponse qui pend
+/// bloquerait l'ingestion ENTSO-E du poller indéfiniment. Repli sur le défaut si
+/// la construction échoue (improbable).
+fn build_http() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_default()
+}
+
 /// Client ENTSO-E (Transparency Platform RESTful API).
 #[derive(Clone)]
 pub struct EntsoeClient {
@@ -89,7 +100,7 @@ impl EntsoeClient {
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_WINDOW_HOURS);
         Ok(Self {
-            http: reqwest::Client::new(),
+            http: build_http(),
             base_url,
             token,
             window_hours,
@@ -99,7 +110,7 @@ impl EntsoeClient {
     /// Client explicite (tests / composition root alternative).
     pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: build_http(),
             base_url: base_url.into(),
             token: token.into(),
             window_hours: DEFAULT_WINDOW_HOURS,

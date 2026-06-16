@@ -1,25 +1,58 @@
 //! Adapter sortant : **livraison de webhooks signés** (`Notifier`, ADR-0016).
 //!
 //! La **seule** frontière par laquelle `carbon-fr` émet une requête sortante. La
-//! sécurité y est doublée :
-//! - validation **anti-SSRF** de l'URL (schéma + deny-list, [`validate_webhook_url`]),
-//! - **re-résolution DNS** de l'hôte à la livraison et refus si une IP résolue
-//!   n'est pas publique (parade TOCTOU / DNS rebinding, ADR-0016 §3).
+//! sécurité y est triple :
+//! - validation **anti-SSRF** de l'URL (schéma + deny-list, [`validate_webhook_url`])
+//!   à l'inscription **et** avant chaque livraison (littéraux IP, userinfo, port) ;
+//! - **resolver DNS custom** ([`PublicOnlyResolver`]) **interne à reqwest** : la
+//!   résolution qui décide l'IP contactée est **la même** qui la valide → pas de
+//!   fenêtre TOCTOU / DNS rebinding (contrairement à un check séparé suivi d'une
+//!   re-résolution par le client) ;
+//! - **aucune redirection** suivie (une redirection rouvrirait la faille SSRF).
 //!
-//! Livraison **best-effort fiable** : timeout court + retries à *backoff*
-//! exponentiel borné. La signature HMAC est calculée en amont (domaine) et
-//! transmise dans l'en-tête `X-Carbonfr-Signature`.
+//! Livraison **best-effort fiable** : timeouts courts + retries à *backoff*
+//! exponentiel borné. La signature HMAC est calculée en amont (domaine).
 
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use carbonfr_core::domain::{is_public_ip, validate_webhook_url, webhook_host};
+use carbonfr_core::domain::{is_public_ip, validate_webhook_url};
 use carbonfr_core::ports::{Notifier, SourceError, WebhookDelivery};
 
 /// Nombre maximal de tentatives de livraison.
 const MAX_ATTEMPTS: u32 = 3;
 /// Délai d'une requête (connexion + réponse).
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Délai d'établissement de connexion.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Resolver DNS qui **n'autorise que des IP publiquement routables**.
+///
+/// Branché dans reqwest via `dns_resolver`, il filtre **au moment où reqwest
+/// résout réellement l'hôte** : l'IP que le client va contacter est exactement
+/// celle qui a passé le filtre — il n'y a donc pas de fenêtre TOCTOU. Si toutes
+/// les IP résolues sont privées/loopback/link-local/réservées, la résolution
+/// échoue et aucune connexion n'est ouverte.
+struct PublicOnlyResolver;
+
+impl reqwest::dns::Resolve for PublicOnlyResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(async move {
+            let host = name.as_str().to_string();
+            // Résolution système (port factice 0 : seule l'IP nous intéresse).
+            let addrs = tokio::net::lookup_host((host.as_str(), 0)).await?;
+            let public: Vec<SocketAddr> = addrs.filter(|a| is_public_ip(a.ip())).collect();
+            if public.is_empty() {
+                let err: Box<dyn std::error::Error + Send + Sync> =
+                    "l'hôte ne résout vers aucune IP publique (anti-SSRF)".into();
+                return Err(err);
+            }
+            let iter: Box<dyn Iterator<Item = SocketAddr> + Send> = Box::new(public.into_iter());
+            Ok(iter)
+        })
+    }
+}
 
 /// `Notifier` HTTP : POST signé vers l'URL de rappel, avec garde SSRF.
 #[derive(Clone)]
@@ -31,42 +64,26 @@ impl HttpNotifier {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
-            // On gère la redirection nous-mêmes : la suivre rouvrirait une faille
-            // SSRF (redirection vers une IP interne). On refuse donc les redirects.
+            .connect_timeout(CONNECT_TIMEOUT)
+            // Redirections refusées : les suivre rouvrirait une faille SSRF
+            // (redirection vers une IP interne).
             .redirect(reqwest::redirect::Policy::none())
+            // Ignore HTTPS_PROXY/ALL_PROXY de l'environnement : un proxy interne
+            // contournerait le filtre d'IP du resolver.
+            .no_proxy()
+            // Filtre d'IP publiques appliqué **dans** la pile de résolution reqwest.
+            .dns_resolver(std::sync::Arc::new(PublicOnlyResolver))
             .build()
             .unwrap_or_default();
         Self { client }
     }
 
-    /// Re-valide l'URL **et** résout l'hôte, en refusant toute IP non publique
-    /// (parade TOCTOU). `Err` si l'URL est interdite ou la résolution suspecte.
-    async fn guard_ssrf(&self, url: &str) -> Result<(), SourceError> {
-        validate_webhook_url(url).map_err(|e| SourceError::Invalid(e.to_string()))?;
-        let host =
-            webhook_host(url).ok_or_else(|| SourceError::Invalid("hôte illisible".into()))?;
-
-        // Hôte littéral IP : déjà couvert par `validate_webhook_url`. Hôte nom :
-        // on résout et on vérifie chaque IP.
-        if host.parse::<std::net::IpAddr>().is_ok() {
-            return Ok(());
-        }
-        let addrs = tokio::net::lookup_host((host.as_str(), 443u16))
-            .await
-            .map_err(|e| SourceError::Unavailable(format!("résolution DNS : {e}")))?;
-        let mut any = false;
-        for addr in addrs {
-            any = true;
-            if !is_public_ip(addr.ip()) {
-                return Err(SourceError::Invalid(
-                    "l'hôte résout vers une IP non publique (SSRF)".into(),
-                ));
-            }
-        }
-        if !any {
-            return Err(SourceError::Unavailable("hôte non résolu".into()));
-        }
-        Ok(())
+    /// Garde structurelle avant émission : schéma HTTPS, pas d'userinfo, et —
+    /// pour un hôte **littéral IP** — refus des plages non publiques (le resolver
+    /// ne s'applique qu'aux **noms** d'hôte ; reqwest connecte un littéral IP sans
+    /// résoudre). La défense DNS (noms) est portée par [`PublicOnlyResolver`].
+    fn guard_ssrf(&self, url: &str) -> Result<(), SourceError> {
+        validate_webhook_url(url).map_err(|e| SourceError::Invalid(e.to_string()))
     }
 }
 
@@ -79,7 +96,7 @@ impl Default for HttpNotifier {
 #[async_trait]
 impl Notifier for HttpNotifier {
     async fn deliver(&self, delivery: &WebhookDelivery) -> Result<(), SourceError> {
-        self.guard_ssrf(&delivery.url).await?;
+        self.guard_ssrf(&delivery.url)?;
 
         let mut last_err = SourceError::Unavailable("aucune tentative".into());
         for attempt in 0..MAX_ATTEMPTS {

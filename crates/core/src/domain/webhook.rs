@@ -148,6 +148,7 @@ pub fn webhook_host(url: &str) -> Option<String> {
 pub fn is_public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
+            let o = v4.octets();
             !(v4.is_private()
                 || v4.is_loopback()
                 || v4.is_link_local()
@@ -155,22 +156,33 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
                 || v4.is_documentation()
                 || v4.is_unspecified()
                 || v4.is_multicast()
-                // 100.64.0.0/10 (CGNAT) et 169.254 déjà couvert par link_local.
-                || (v4.octets()[0] == 100 && (64..=127).contains(&v4.octets()[1]))
+                // 0.0.0.0/8 (« ce réseau » ; 0.x souvent routé vers localhost).
+                || o[0] == 0
+                // 100.64.0.0/10 (CGNAT) ; 169.254 déjà couvert par link_local.
+                || (o[0] == 100 && (64..=127).contains(&o[1]))
                 // 192.0.0.0/24 IETF, 198.18.0.0/15 benchmarking.
-                || v4.octets() == [192, 0, 0, 0]
-                || (v4.octets()[0] == 198 && (18..=19).contains(&v4.octets()[1])))
+                || o == [192, 0, 0, 0]
+                || (o[0] == 198 && (18..=19).contains(&o[1]))
+                // 240.0.0.0/4 réservé (classe E ; 255.255.255.255 déjà broadcast).
+                || o[0] >= 240)
         }
         IpAddr::V6(v6) => {
+            let s = v6.segments();
             !(v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_multicast()
                 // fc00::/7 unique-local.
-                || (v6.segments()[0] & 0xfe00) == 0xfc00
+                || (s[0] & 0xfe00) == 0xfc00
                 // fe80::/10 link-local.
-                || (v6.segments()[0] & 0xffc0) == 0xfe80
-                // ::ffff:0:0/96 IPv4-mapped : on refuse (pourrait masquer une IP privée).
-                || v6.to_ipv4_mapped().is_some())
+                || (s[0] & 0xffc0) == 0xfe80
+                // ::ffff:0:0/96 IPv4-mapped : refusé (peut masquer une IP privée).
+                || v6.to_ipv4_mapped().is_some()
+                // 2002::/16 (6to4) et 2001::/32 (Teredo) : encapsulent une IPv4,
+                // potentiellement privée → refusés.
+                || s[0] == 0x2002
+                || (s[0] == 0x2001 && s[1] == 0x0000)
+                // 64:ff9b::/96 (NAT64 well-known) : traduit vers une IPv4 arbitraire.
+                || (s[0] == 0x0064 && s[1] == 0xff9b && s[2] == 0 && s[3] == 0))
         }
     }
 }
@@ -264,6 +276,14 @@ mod tests {
             "https://[fe80::1]/hook",
             "https://user:pass@example.com/hook",
             "https://100.64.0.1/hook",
+            // Plages complétées (P1 audit) :
+            "https://0.0.0.0/hook",
+            "https://0.1.2.3/hook",   // 0.0.0.0/8
+            "https://240.0.0.1/hook", // 240/4 réservé
+            "https://255.255.255.255/hook",
+            "https://[2002:a00:1::1]/hook", // 6to4 encapsulant 10.0.0.1
+            "https://[64:ff9b::a00:1]/hook", // NAT64 vers 10.0.0.1
+            "https://[::ffff:127.0.0.1]/hook", // IPv4-mapped loopback
         ] {
             assert_eq!(
                 validate_webhook_url(bad),

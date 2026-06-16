@@ -931,7 +931,14 @@ where
 /// Adresse IP du client, lue des en-têtes posés par le reverse proxy
 /// (`X-Forwarded-For` puis `X-Real-IP`, ADR-0007). `unknown` à défaut (accès
 /// direct sans proxy) — toutes ces visites tombent alors dans un même seau.
-fn client_ip(headers: &HeaderMap) -> String {
+/// `unknown` si `trust_proxy` est faux : sans proxy de confiance, `X-Forwarded-For`
+/// est **fourni par le client** donc spoofable — on ne s'y fie pas (sinon
+/// contournement du quota anonyme et pollution du compteur). Derrière le reverse
+/// proxy de prod (ADR-0007), activer `trust_proxy` pour lire l'IP réelle.
+fn client_ip(headers: &HeaderMap, trust_proxy: bool) -> String {
+    if !trust_proxy {
+        return "unknown".to_string();
+    }
     for header in ["x-forwarded-for", "x-real-ip"] {
         if let Some(value) = headers.get(header).and_then(|v| v.to_str().ok()) {
             let first = value.split(',').next().unwrap_or("").trim();
@@ -984,7 +991,7 @@ pub(crate) async fn record_visit<R>(
 where
     R: VisitCounter + Clone + Send + Sync + 'static,
 {
-    let ip = client_ip(&headers);
+    let ip = client_ip(&headers, state.trust_proxy);
     let visitor = hash_visitor(&state.visit_salt, &ip);
     let day = OffsetDateTime::now_utc().date();
     let stats = state.repo.record_visit(&visitor, day).await?;
@@ -1000,6 +1007,32 @@ where
 )]
 pub(crate) async fn health() -> &'static str {
     "ok"
+}
+
+/// `GET /health/ready` — sonde de **readiness** : vérifie l'accès à la base
+/// (lecture légère). `503` si la base est injoignable → le proxy/monitoring cesse
+/// d'y router le trafic (distinct de `/health`, liveness statique).
+#[utoipa::path(
+    get,
+    path = "/health/ready",
+    responses(
+        (status = 200, description = "Base accessible", body = String),
+        (status = 503, description = "Base indisponible", body = ErrorBody),
+    ),
+    tag = "opérations"
+)]
+pub(crate) async fn health_ready<R>(
+    State(state): State<AppState<R>>,
+) -> Result<&'static str, ApiError>
+where
+    R: IntensityRepository + Clone + Send + Sync + 'static,
+{
+    state
+        .repo
+        .latest(Region::National, "rte-direct")
+        .await
+        .map(|_| "ready")
+        .map_err(|_| ApiError::unavailable("base de données indisponible"))
 }
 
 /// `GET /v1/methodologies` — catalogue des méthodes carbone + versions (ADR-0010 §7).

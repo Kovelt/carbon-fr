@@ -8,6 +8,33 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Sécurité & robustesse (durcissement pré-déploiement, audit)
+
+- **SSRF webhooks — faille TOCTOU corrigée** : la livraison utilise désormais un
+  **resolver DNS custom** interne à reqwest (`PublicOnlyResolver`) qui filtre les
+  IP non publiques *au moment où reqwest résout l'hôte* — l'IP contactée est
+  exactement celle validée, éliminant le DNS rebinding (l'ancienne « valider puis
+  laisser reqwest re-résoudre » était contournable). Redirections refusées,
+  `no_proxy`, `connect_timeout`. **Deny-list SSRF complétée** : `0.0.0.0/8`,
+  `240/4`, 6to4 `2002::/16`, Teredo `2001::/32`, NAT64 `64:ff9b::/96`.
+- **Timeouts sur les clients amont** (ODRÉ, Open-Meteo, ENTSO-E) : sans eux, une
+  source qui *pend* gelait l'ingestion indéfiniment. `connect_timeout`/`timeout`.
+- **`X-Forwarded-For` non cru par défaut** (`CARBONFR_TRUST_PROXY`, défaut off) :
+  sans proxy de confiance l'en-tête est spoofable (contournement du quota anonyme,
+  pollution du compteur visiteurs) → ignoré par défaut. À activer derrière le
+  reverse proxy de prod.
+- **Sel visiteur** : avertissement au démarrage si `CARBONFR_VISIT_SALT` absent
+  (le défaut public rendrait les empreintes d'IP réversibles).
+- **Supervision des tâches de fond** : le poller/watcher étaient des `spawn` non
+  surveillés (panique = mort silencieuse). Supervision **fail-fast** (`select!`)
+  → le process s'arrête en erreur si une tâche critique meurt (relance superviseur).
+- **Arrêt gracieux sur SIGTERM** (en plus de SIGINT) — signal d'arrêt orchestré.
+- **Pool PostgreSQL** : `max_connections` configurable (défaut 10, était 5),
+  `acquire_timeout` (échec rapide sous saturation au lieu de pendre), recyclage
+  (`idle`/`max_lifetime`).
+- **Readiness** : `GET /health/ready` vérifie l'accès à la base (`503` si
+  injoignable), distinct de `/health` (liveness). **Retry de connexion DB au boot**.
+
 ### Ajouté
 
 - **Socle hexagonal** : crate `core` (domaine, cas d'usage, ports, sans IO),

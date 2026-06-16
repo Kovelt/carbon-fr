@@ -44,6 +44,7 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::handlers::list_webhooks,
         crate::handlers::delete_webhook,
         crate::handlers::health,
+        crate::handlers::health_ready,
     ),
     components(schemas(
         crate::dto::IntensityResponse,

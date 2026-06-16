@@ -1,0 +1,20 @@
+meta {
+  name: Erreur — version inconnue (400)
+  type: http
+  seq: 30
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/now?methodology=acv-ademe&version=9
+  body: none
+  auth: none
+}
+
+params:query {
+  methodology: acv-ademe
+  version: 9
+}
+
+assert {
+  res.status: eq 400
+}

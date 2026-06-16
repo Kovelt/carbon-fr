@@ -133,7 +133,7 @@ Un **nouveau port sortant** `CrossBorderSource` (flux par frontière **+** inten
 ### 6. Stockage : hybride (lecture + rollups)
 
 - **Lectures point** (`/intensity/now`, date unique) → **calcul à la lecture**, depuis le **meilleur millésime** du mix + le contexte d'import stocké. Cohérence automatique aux révisions (`tr → consolidated → definitive`), **aucune ligne `acv` dans la table primaire** (pas de doublement de volume, pas de drift).
-- **Lectures agrégées** (stats, `greenest-window`, entraînement du modèle de prévision) → `acv-ademe` **matérialisé dans les vues de rollup** (variante de méthode), rafraîchies par le poller → cohérence aux révisions **sans re-dérivation manuelle**.
+- **Lectures agrégées** (stats, `greenest-window`) → ⚠️ **mis à jour par l'implémentation** (voir « reste ouvert » et CLAUDE.md) : `@2` est finalement **dérivé à la lecture puis agrégé en mémoire** (`summarize`/`bucketize`), **sans rollup SQL matérialisé** — choix plus simple, cohérent aux révisions par construction. *(L'intention initiale de matérialiser `@2` dans les vues de rollup a été abandonnée.)*
 - Le poller **ingère aussi** le contexte d'import ENTSO-E (flux + intensités voisines) dans un store dédié, **aligné au pas quart d'heure** du mix.
 
 ### 7. Surface API

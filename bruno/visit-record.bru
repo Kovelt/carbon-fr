@@ -1,0 +1,16 @@
+meta {
+  name: Enregistrer une visite
+  type: http
+  seq: 27
+}
+
+post {
+  url: {{baseUrl}}/v1/stats/visit
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.unique: isNumber
+}

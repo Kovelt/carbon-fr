@@ -46,7 +46,8 @@
 //! | `CARBONFR_KEY_LABEL`         | `` (vide)      | `mint-key` : libellé de la clé      |
 //! | `CARBONFR_TRUST_PROXY`       | `0` (off)      | faire confiance à `X-Forwarded-For` (derrière un reverse proxy) |
 //! | `CARBONFR_DB_MAX_CONNECTIONS` | `20`         | taille du pool PostgreSQL           |
-//! | `CARBONFR_VISIT_SALT`        | `carbon-fr` (⚠ à surcharger) | sel du hachage des IP visiteurs |
+//! | `CARBONFR_VISIT_SALT`        | `carbon-fr` (⚠ requis si TRUST_PROXY) | sel du hachage des IP visiteurs |
+//! | `CARBONFR_LOG_FORMAT`        | (texte)        | `json` pour des logs structurés (prod) |
 //! | `RUST_LOG`                   | `info`         | filtre de logs (`tracing`)        |
 
 use std::net::SocketAddr;
@@ -102,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
         Some("mint-key") => run_mint_key().await,
         Some(other) => {
             anyhow::bail!(
-                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `train`, `mint-key`, ou aucune pour servir l'API)"
+                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `backtest-renewable`, `analyze-renewable-signal`, `train`, `mint-key`, ou aucune pour servir l'API)"
             )
         }
     }

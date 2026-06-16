@@ -1,0 +1,23 @@
+meta {
+  name: Webhook — supprimer (clé requise)
+  type: http
+  seq: 29
+}
+
+delete {
+  url: {{baseUrl}}/v1/webhooks/{{webhookId}}
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{apiKey}}
+}
+
+assert {
+  res.status: eq 204
+}
+
+docs {
+  Renseigner {{webhookId}} (retourné à la création). 204 si supprimé, 404 sinon.
+}

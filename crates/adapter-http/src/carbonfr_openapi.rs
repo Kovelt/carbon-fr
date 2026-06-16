@@ -76,6 +76,7 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::dto::WebhookListResponse,
         crate::dto::WebhookSummary,
         crate::dto::VisitStatsResponse,
+        crate::dto::StreamEventBody,
         crate::error::ErrorBody,
     )),
     tags(
@@ -169,7 +170,16 @@ mod tests {
     fn document_lists_schemas() {
         let doc = document();
         let components = doc.components.expect("components");
-        for schema in ["IntensityResponse", "MixResponse", "ErrorBody"] {
+        for schema in [
+            "IntensityResponse",
+            "MixResponse",
+            "ExchangesResponse",
+            "WeatherResponse",
+            "RenewableResponse",
+            "ForecastResponse",
+            "StreamEventBody",
+            "ErrorBody",
+        ] {
             assert!(
                 components.schemas.contains_key(schema),
                 "schéma manquant : {schema}"

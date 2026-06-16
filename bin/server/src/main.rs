@@ -68,7 +68,8 @@ use carbonfr_core::application::{
 };
 use carbonfr_core::domain::{
     ACV_FORECAST_ID, ACV_FORECAST_VERSION, CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams,
-    ErrorMetrics, IntensityUpdate, Region, TimeRange, hmac_sha256_hex, should_fire,
+    ErrorMetrics, IntensityUpdate, Region, TimeRange, hmac_sha256_hex, render_webhook_payload,
+    should_fire,
 };
 use carbonfr_core::ports::{
     ApiKeyRepository, ApiTier, ConsumptionRepository, ConsumptionSource, CrossBorderRepository,
@@ -1167,19 +1168,36 @@ where
     N: Notifier + Clone + 'static,
 {
     use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::Semaphore;
+
+    // Borne la concurrence des livraisons : un événement peut déclencher N
+    // abonnements ; sans plafond, un pic de franchissements ouvrirait N connexions
+    // HTTPS sortantes simultanées (pression FD/sockets).
+    let delivery_slots = Arc::new(Semaphore::new(50));
+
     tokio::spawn(async move {
         // Dernière intensité connue par région (pour détecter le franchissement).
         let mut previous: HashMap<Region, f64> = HashMap::new();
         loop {
             let update = match updates.recv().await {
                 Ok(u) => u,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                // Événements perdus (abonné en retard) : un franchissement a pu
+                // passer inaperçu. On invalide l'état pour ne pas comparer contre
+                // une baseline périmée (la prochaine mise à jour réamorce).
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    warn!(perdus = n, "watcher webhooks en retard — état réamorcé");
+                    previous.clear();
+                    continue;
+                }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             };
             let prev = previous.get(&update.region).copied();
             let current = update.intensity.value();
-            previous.insert(update.region, current);
 
+            // On lit les abonnements **avant** d'avancer la baseline : si la base
+            // est indisponible, on n'avance pas `previous` → le franchissement sera
+            // ré-évalué à la prochaine mise à jour (pas consommé en silence).
             let subscriptions = match repo.active().await {
                 Ok(s) => s,
                 Err(err) => {
@@ -1187,6 +1205,8 @@ where
                     continue;
                 }
             };
+            previous.insert(update.region, current);
+
             let Ok(timestamp) = update.at.format(&Rfc3339) else {
                 continue;
             };
@@ -1198,27 +1218,24 @@ where
                 if !should_fire(sub.direction, sub.threshold, prev, current) {
                     continue;
                 }
-                // Corps JSON (valeurs contrôlées : slugs, hex, nombres → pas
-                // d'échappement requis) + signature HMAC du secret de l'abonnement.
-                let body = format!(
-                    "{{\"subscription_id\":\"{}\",\"region\":\"{}\",\"timestamp\":\"{}\",\"intensity\":{},\"threshold\":{},\"direction\":\"{}\",\"unit\":\"gCO2eq/kWh\"}}",
-                    sub.id,
-                    update.region.slug(),
-                    timestamp,
-                    current,
-                    sub.threshold,
-                    sub.direction.code(),
-                );
+                // Contrat de payload + signature dans le domaine (pur, testé).
+                let body = render_webhook_payload(&sub, &timestamp, current);
                 let signature = hmac_sha256_hex(sub.secret.as_bytes(), body.as_bytes());
                 let delivery = WebhookDelivery {
                     url: sub.callback_url.clone(),
                     body,
                     signature,
                 };
-                // Livraison hors du chemin d'évaluation (une par franchissement).
+                // Livraison hors du chemin d'évaluation, sous permis (concurrence
+                // bornée). Permis indisponible → on saute (best-effort assumé).
+                let Ok(permit) = delivery_slots.clone().try_acquire_owned() else {
+                    warn!(subscription = %sub.id, "livraison webhook ignorée (saturation)");
+                    continue;
+                };
                 let notifier = notifier.clone();
                 let id = sub.id.clone();
                 tokio::spawn(async move {
+                    let _permit = permit; // relâché à la fin de la livraison
                     if let Err(err) = notifier.deliver(&delivery).await {
                         warn!(subscription = %id, error = %err, "livraison webhook échouée");
                     } else {
@@ -1261,5 +1278,12 @@ async fn shutdown_signal() {
 
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    let builder = tracing_subscriber::fmt().with_env_filter(filter);
+    // `CARBONFR_LOG_FORMAT=json` → logs structurés (agrégation Loki/journald) ;
+    // sinon format texte lisible (défaut dev).
+    if std::env::var("CARBONFR_LOG_FORMAT").as_deref() == Ok("json") {
+        builder.json().init();
+    } else {
+        builder.init();
+    }
 }

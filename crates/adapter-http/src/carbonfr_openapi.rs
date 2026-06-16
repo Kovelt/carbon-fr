@@ -132,7 +132,13 @@ mod tests {
             "/v1/schedule",
             "/v1/schedule/slots",
             "/v1/intensity/below",
+            "/v1/intensity/stream",
+            "/v1/stats",
+            "/v1/stats/visit",
+            "/v1/webhooks",
+            "/v1/webhooks/{id}",
             "/health",
+            "/health/ready",
         ] {
             assert!(
                 doc.paths.paths.contains_key(path),

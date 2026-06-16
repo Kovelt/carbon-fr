@@ -13,6 +13,12 @@ members = [
     "bin/server",
 ]
 
+# Build de production : binaire optimisé et allégé (déploiement VPS, ADR-0007).
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
 [workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -38,7 +44,7 @@ sha2 = "0.10.9"
 async-trait = "0.1.89"
 anyhow = "1.0.100"
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json"] }
 thiserror = "2.0.18"
 time = "0.3.49"
 serde = { version = "1.0.228", features = ["derive"] }
@@ -50,6 +56,7 @@ reqwest = { version = "0.12.24", default-features = false, features = [
 ] }
 tokio = { version = "1.52.3", features = ["macros", "rt"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
+tower-http = { version = "0.6.2", features = ["trace"] }
 quick-xml = { version = "0.37.5", features = ["serialize"] }
 sqlx = { version = "0.8.6", default-features = false, features = [
     "runtime-tokio",

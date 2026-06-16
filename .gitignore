@@ -3,9 +3,8 @@
 **/*.rs.bk
 *.pdb
 
-# Cargo.lock : suivi pour les binaires (bin/server), ignoré tant que le
-# workspace ne publie qu'une lib. À retirer de l'ignore-list dès le bin.
-Cargo.lock
+# Cargo.lock est **suivi** : le workspace produit un binaire (bin/server),
+# les builds de prod doivent être reproductibles.
 
 # Variables d'environnement / secrets (clés API, DSN Postgres…)
 .env

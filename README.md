@@ -89,6 +89,9 @@ carbon-fr/
 ├── bin/
 │   └── server/                 # ✅ composition root : adapters + poller
 ├── bruno/                      # collection Bruno (requêtes .bru versionnées)
+├── deploy/                     # Caddyfile (reverse proxy TLS) + unité systemd
+├── Dockerfile                  # image de prod multi-stage
+├── .env.example                # variables d'environnement documentées
 └── docs/
     ├── ARCHITECTURE.md
     └── adr/                    # Architecture Decision Records
@@ -109,6 +112,17 @@ cargo fmt --all
 ```
 
 Le crate `core` se teste **entièrement en mémoire**, avec des _fakes_ implémentant les ports — c'est le bénéfice direct de l'hexagonal (voir [`crates/core/tests/use_cases.rs`](crates/core/tests/use_cases.rs)).
+
+## Déploiement
+
+Image de production via le [`Dockerfile`](Dockerfile) multi-stage (binaire `--release`, runtime Debian slim, utilisateur non-root). En bare-metal, une unité systemd ([`deploy/carbonfr.service`](deploy/carbonfr.service)) avec `Restart=on-failure`. Dans les deux cas, placer l'API **derrière un reverse proxy TLS** ([`deploy/Caddyfile`](deploy/Caddyfile)) et activer `CARBONFR_TRUST_PROXY=1`.
+
+```bash
+docker build -t carbon-fr .
+docker run -e DATABASE_URL=postgres://… -e CARBONFR_VISIT_SALT=… -p 8080:8080 carbon-fr
+```
+
+Configuration via variables d'environnement — voir [`.env.example`](.env.example). Sondes : `GET /health` (liveness) et `GET /health/ready` (vérifie la base). Les migrations sont appliquées au démarrage.
 
 ## Méthodologie & données
 

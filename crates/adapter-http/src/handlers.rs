@@ -83,6 +83,25 @@ fn wants_consumption(methodology: &str, version: Option<u32>) -> bool {
     methodology == "acv-ademe" && version == Some(2)
 }
 
+/// Rejette une `version` **inconnue** pour la méthode demandée (sinon elle serait
+/// silencieusement ignorée et l'appelant croirait obtenir une autre version) :
+/// `rte-direct` → `{1}`, `acv-ademe` → `{1, 2}`.
+fn check_version(methodology: &str, version: Option<u32>) -> Result<(), ApiError> {
+    let Some(v) = version else { return Ok(()) };
+    let valid = match methodology {
+        "acv-ademe" => v == 1 || v == 2,
+        "rte-direct" => v == 1,
+        _ => true, // méthode inconnue : laissée au traitement aval (404/erreur).
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(format!(
+            "version {v} inconnue pour la méthodologie `{methodology}`"
+        )))
+    }
+}
+
 /// Parse un horodatage RFC 3339 fourni en paramètre, ou 400.
 fn parse_timestamp(name: &str, raw: &str) -> Result<OffsetDateTime, ApiError> {
     OffsetDateTime::parse(raw, &Rfc3339)
@@ -110,6 +129,7 @@ where
 {
     let region = query.resolve()?;
     let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    check_version(&methodology, query.version)?;
 
     // Chemin `acv-ademe@2` consumption-based : calculé à la lecture depuis le mix
     // FR + le contexte d'import (ADR-0010). National uniquement (§8).
@@ -219,6 +239,7 @@ where
         .ok_or_else(|| ApiError::bad_request("`to` doit être strictement postérieur à `from`"))?;
 
     let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    check_version(&methodology, query.version)?;
 
     // Chemin `acv-ademe@2` consommation : série calculée à la lecture (ADR-0010).
     let measurements = if wants_consumption(&methodology, query.version) {
@@ -305,6 +326,7 @@ where
         .ok_or_else(|| ApiError::bad_request("`to` doit être strictement postérieur à `from`"))?;
 
     let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    check_version(&methodology, query.version)?;
     let consumption = wants_consumption(&methodology, query.version);
     if consumption && region != Region::National {
         return Err(ApiError::bad_request(
@@ -411,6 +433,7 @@ where
 {
     let region = resolve_region(&query.region)?;
     let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    check_version(&methodology, query.version)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let horizon = Duration::hours(horizon_hours as i64);
 
@@ -718,6 +741,11 @@ where
     let threshold = query
         .threshold
         .ok_or_else(|| ApiError::bad_request("`threshold` requis (gCO2eq/kWh)"))?;
+    if !threshold.is_finite() {
+        return Err(ApiError::bad_request(
+            "`threshold` doit être un nombre fini",
+        ));
+    }
     let estimator = resolve_estimator(&query.estimator)?;
 
     let scheduler = CarbonAwareScheduler::new(state.forecaster.clone());
@@ -855,6 +883,11 @@ where
         .ok_or_else(|| ApiError::bad_request("`direction` doit valoir `below` ou `above`"))?;
     if !request.threshold.is_finite() || request.threshold < 0.0 {
         return Err(ApiError::bad_request("`threshold` doit être positif"));
+    }
+    if request.callback_url.len() > 2048 {
+        return Err(ApiError::bad_request(
+            "`callback_url` trop longue (max 2048)",
+        ));
     }
     // Garde anti-SSRF à l'inscription (re-validée à la livraison, ADR-0016 §3).
     validate_webhook_url(&request.callback_url)

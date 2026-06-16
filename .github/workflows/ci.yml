@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Scan quotidien : une CVE publiée après le dernier commit serait sinon
+  # invisible jusqu'au prochain PR (le job `deny` relance les advisories).
+  schedule:
+    - cron: "0 6 * * *"
 
 # Annule les exécutions obsolètes sur une même branche / PR.
 concurrency:
@@ -78,3 +82,15 @@ jobs:
       - name: Tests du workspace
         # Les tests ODRÉ « live » sont #[ignore] (réseau + quota) : non exécutés.
         run: cargo test --workspace
+
+  build-release:
+    name: build release (artefact déployable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Garantit que le binaire de prod compile (profil release optimisé) et que
+      # le lockfile est cohérent (`--locked`).
+      - name: Build du serveur (release)
+        run: cargo build --release --locked -p server --bin carbonfr-server

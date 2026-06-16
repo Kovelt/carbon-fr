@@ -1,0 +1,25 @@
+# Exemple de reverse proxy TLS devant carbon-fr (ADR-0007).
+#
+# Caddy termine le TLS (certificat automatique Let's Encrypt), pose
+# X-Forwarded-For de confiance, et relaie vers l'API en HTTP local.
+# Activer côté API : CARBONFR_TRUST_PROXY=1.
+#
+# Remplacer le domaine. Lancer : `caddy run --config deploy/Caddyfile`.
+
+carbon.example.fr {
+	encode zstd gzip
+
+	# En-têtes de sécurité (defense-in-depth ; l'API ne les pose pas elle-même).
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# Caddy réécrit X-Forwarded-For avec l'IP réelle du client (de confiance).
+	reverse_proxy 127.0.0.1:8080 {
+		health_uri /health/ready
+		health_interval 30s
+	}
+}

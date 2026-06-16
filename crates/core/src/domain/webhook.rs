@@ -187,6 +187,46 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
     }
 }
 
+/// Échappe une chaîne pour insertion dans une valeur JSON (guillemets, backslash,
+/// contrôles). Les champs du payload sont contrôlés (slug, hex, RFC 3339), mais on
+/// échappe par principe pour que le **contrat** reste sûr si un champ libre entrait.
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Corps JSON d'une notification de webhook (ADR-0016). **Contrat pur et
+/// testable** : c'est la forme du payload livré, centralisée ici plutôt que
+/// construite à la main dans la composition root. `timestamp` est fourni déjà
+/// formaté (RFC 3339) par l'appelant.
+pub fn render_webhook_payload(
+    subscription: &Subscription,
+    timestamp: &str,
+    intensity: f64,
+) -> String {
+    format!(
+        "{{\"subscription_id\":\"{}\",\"region\":\"{}\",\"timestamp\":\"{}\",\
+         \"intensity\":{},\"threshold\":{},\"direction\":\"{}\",\"unit\":\"gCO2eq/kWh\"}}",
+        json_escape(&subscription.id),
+        subscription.region.slug(),
+        json_escape(timestamp),
+        intensity,
+        subscription.threshold,
+        subscription.direction.code(),
+    )
+}
+
 /// HMAC-SHA256 (RFC 2104) en hexadécimal — tout-Rust sur `sha2`, sans dépendance
 /// supplémentaire (ADR-0016 §4). Signe le corps d'une livraison avec le secret
 /// de l'abonnement.
@@ -294,6 +334,25 @@ mod tests {
         // URL publique légitime : acceptée.
         assert!(validate_webhook_url("https://hooks.example.com/carbon").is_ok());
         assert!(validate_webhook_url("https://8.8.8.8/hook").is_ok());
+    }
+
+    #[test]
+    fn payload_is_well_formed_and_escaped() {
+        let sub = Subscription {
+            id: "ab\"cd".to_string(), // caractère à échapper
+            owner_key_hash: "h".to_string(),
+            region: Region::National,
+            threshold: 50.0,
+            direction: ThresholdDirection::Below,
+            callback_url: "https://x".to_string(),
+            secret: "s".to_string(),
+        };
+        let body = render_webhook_payload(&sub, "2024-01-01T00:00:00Z", 42.5);
+        assert!(body.contains("\\\"cd")); // guillemet échappé
+        assert!(body.contains("\"region\":\"national\""));
+        assert!(body.contains("\"intensity\":42.5"));
+        assert!(body.contains("\"direction\":\"below\""));
+        assert!(body.contains("\"unit\":\"gCO2eq/kWh\""));
     }
 
     #[test]

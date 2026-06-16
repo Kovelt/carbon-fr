@@ -79,7 +79,9 @@ impl PgIntensityRepository {
             .max_lifetime(std::time::Duration::from_secs(1800))
             .connect(database_url)
             .await
-            .map_err(|e| backend(format!("connexion à PostgreSQL : {e}")))?;
+            // On ne propage PAS `{e}` : un message d'erreur sqlx de connexion peut
+            // contenir le DSN (donc le mot de passe). On reste générique.
+            .map_err(|_| backend("connexion à PostgreSQL impossible".to_string()))?;
         Ok(Self { pool })
     }
 

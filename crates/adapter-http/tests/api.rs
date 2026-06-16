@@ -1169,3 +1169,45 @@ async fn rate_limit_not_bypassed_by_spoofed_xff() {
         StatusCode::TOO_MANY_REQUESTS
     );
 }
+
+#[tokio::test]
+async fn unknown_version_is_400() {
+    // rte-direct n'a pas de version 2 ; acv-ademe n'a pas de version 99.
+    let r1 = get(
+        app(None),
+        "/v1/intensity/now?methodology=rte-direct&version=2",
+    )
+    .await;
+    assert_eq!(r1.status(), StatusCode::BAD_REQUEST);
+    let r2 = get(
+        app(None),
+        "/v1/intensity/now?methodology=acv-ademe&version=99",
+    )
+    .await;
+    assert_eq!(r2.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn below_threshold_nan_is_400() {
+    let r = get(
+        app(None),
+        "/v1/intensity/below?threshold=NaN&horizon_hours=24",
+    )
+    .await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn webhook_callback_url_too_long_is_400() {
+    let long = format!("https://hooks.example.com/{}", "a".repeat(3000));
+    let body = format!(r#"{{"threshold":50,"direction":"below","callback_url":"{long}"}}"#);
+    let resp = send(
+        webhook_app(),
+        "POST",
+        "/v1/webhooks",
+        Some("wh-key"),
+        Some(&body),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}

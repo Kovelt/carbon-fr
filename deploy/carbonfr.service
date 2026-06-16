@@ -1,0 +1,32 @@
+# Unité systemd pour carbon-fr (ADR-0007). Déploiement bare-metal :
+#   sudo cp deploy/carbonfr.service /etc/systemd/system/
+#   sudo systemctl enable --now carbonfr
+#
+# Suppose le binaire dans /usr/local/bin et la config dans /etc/carbonfr/env.
+
+[Unit]
+Description=carbon-fr — API d'intensité carbone
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=carbonfr
+Group=carbonfr
+ExecStart=/usr/local/bin/carbonfr-server
+EnvironmentFile=/etc/carbonfr/env
+# Le serveur fait fail-fast si une tâche critique meurt → on le relance.
+Restart=on-failure
+RestartSec=3
+# SIGTERM déclenche l'arrêt gracieux du serveur ; on laisse le temps de drainer.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Durcissement.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

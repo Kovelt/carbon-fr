@@ -227,5 +227,11 @@ where
         .route("/v1/intensity/stream", get(handlers::intensity_stream))
         .with_state(stream);
 
-    core.merge(forecasting).merge(streaming)
+    core.merge(forecasting)
+        .merge(streaming)
+        // Limite de corps serrée : nos seuls POST (webhook, visite) sont de petits
+        // JSON. 16 Kio plafonne un corps abusif bien sous le défaut axum (2 Mio).
+        .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
+        // Trace HTTP (méthode, chemin, statut, latence) — observabilité prod.
+        .layer(tower_http::trace::TraceLayer::new_for_http())
 }

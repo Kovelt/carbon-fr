@@ -35,6 +35,29 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 - **Readiness** : `GET /health/ready` vérifie l'accès à la base (`503` si
   injoignable), distinct de `/health` (liveness). **Retry de connexion DB au boot**.
 
+### Exploitation & contrat d'API (durcissement pré-déploiement, suite)
+
+- **Packaging de production** : `Dockerfile` multi-stage (build `--release
+  --locked`, runtime Debian slim, utilisateur **non-root** uid 10001), unité
+  **systemd** (`deploy/carbonfr.service`, `Restart=on-failure`, durcissement),
+  **Caddyfile** (reverse proxy TLS + en-têtes de sécurité, sonde `/health/ready`),
+  `.env.example` documenté. `Cargo.lock` désormais **versionné** (binaire reproductible).
+- **Profil release optimisé** (`lto = "thin"`, `codegen-units = 1`,
+  `strip = "debuginfo"`) — binaire plus petit et plus rapide.
+- **CI** : job **`build-release`** (garantit que le binaire de prod compile et que
+  le lockfile est cohérent, `--locked`) + **scan d'advisories quotidien** (cron) —
+  une CVE publiée hors fenêtre de PR serait sinon invisible.
+- **Observabilité** : `TraceLayer` (tracing par requête) + **logs JSON** optionnels
+  (`CARBONFR_LOG_FORMAT=json`) pour l'agrégation en prod.
+- **Contrat d'API durci** : `?version=` **inconnue rejetée en 400** (au lieu d'être
+  silencieusement ignorée) ; seuil `NaN`/infini rejeté sur `/v1/intensity/below` ;
+  **limite de taille du corps** (16 Kio) ; `callback_url` de webhook plafonnée (2048).
+- **Robustesse webhooks** : payload JSON centralisé et **échappé**
+  (`render_webhook_payload`), **concurrence de livraison bornée** (sémaphore), état
+  « précédent » mémorisé **après** lecture réussie de la base (pas de transition ratée).
+- **Fuite de DSN évitée** : l'erreur de connexion PostgreSQL ne ré-expose plus la
+  chaîne de connexion (mot de passe) dans le message remonté.
+
 ### Ajouté
 
 - **Socle hexagonal** : crate `core` (domaine, cas d'usage, ports, sans IO),

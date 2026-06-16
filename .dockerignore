@@ -1,0 +1,26 @@
+# Contexte de build minimal : le Dockerfile ne COPIE que Cargo.*, crates/ et bin/.
+# Sans ce fichier, `target/` (~17 Go) et `.git/` seraient envoyés au démon → build
+# inutilisablement lent.
+
+# Artefacts de compilation (de loin le plus gros).
+target/
+
+# Historique git et CI.
+.git/
+.github/
+.gitignore
+
+# Documentation, collection Bruno, artefacts de déploiement : hors build.
+docs/
+bruno/
+deploy/
+*.md
+LICENSE-*
+
+# Secrets : ne JAMAIS embarquer dans une image.
+.env
+.env.*
+!.env.example
+
+# Divers outillage non nécessaire au build du binaire.
+deny.toml

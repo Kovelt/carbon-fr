@@ -8,6 +8,19 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Performance & infra (audit, lot 5)
+
+- **Rollups incrémentaux** (migration `0010`) : les vues matérialisées (rafraîchies
+  en entier à chaque cycle — coût O(table) croissant) deviennent de **vraies tables**
+  upsertées **par seau touché**. Le poller (`refresh_rollups`) ne réagrège que la
+  **fenêtre récente** (7 j) ; le backfill (`rebuild_rollups`) reconstruit tout. Lecture
+  `rollup()` inchangée. **Validé sur Postgres réel** (17 tests d'intégration, dont le
+  chemin incrémental). Supprime le coût croissant du « partitionnement reporté ».
+- **Dockerfile** : cache de build (cache mounts BuildKit pour le registre Cargo et
+  `target/`) → recompilations rapides ; note sur l'épinglage par digest.
+- **`deploy/README.md`** : clarifie les deux voies (self-hosting Caddy/systemd vs
+  prod Traefik d'org), avec les labels Traefik et le rappel `CARBONFR_TRUST_PROXY=1`.
+
 ### Contrat & documentation (audit, lot 4)
 
 - **OpenAPI** : ajout du schéma `StreamEventBody` (charge utile du flux SSE,

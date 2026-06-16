@@ -299,11 +299,12 @@ async fn run_backfill() -> anyhow::Result<()> {
         "backfill terminé"
     );
 
-    // Rollups à jour après le backfill massif.
-    repo.refresh_rollups()
+    // Reconstruction COMPLÈTE des rollups après le backfill massif (il écrit des
+    // seaux historiques arbitraires que l'incrémental récent du poller ne couvre pas).
+    repo.rebuild_rollups()
         .await
-        .context("rafraîchissement des rollups")?;
-    info!("rollups rafraîchis");
+        .context("reconstruction des rollups")?;
+    info!("rollups reconstruits");
 
     // Backfill de la **charge réalisée** historique (consommation) — store de
     // charge réutilisable (features du futur modèle ML, ADR-0012). Les prévisions

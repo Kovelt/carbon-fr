@@ -51,14 +51,13 @@ jobs:
             exit 1
           fi
 
-      - name: Skip publish if npm auth is not configured
-        if: ${{ !secrets.NPM_TOKEN }}
-        run: |
-          echo "::warning::NPM_TOKEN is not configured; skipping npm publish."
-          echo "::warning::Configure repository secret NPM_TOKEN to enable package publishing."
-
       - name: Publish
-        if: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public --provenance
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::warning::NPM_TOKEN is not configured; skipping npm publish."
+            echo "::warning::Configure repository secret NPM_TOKEN to enable package publishing."
+            exit 0
+          fi
+          npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

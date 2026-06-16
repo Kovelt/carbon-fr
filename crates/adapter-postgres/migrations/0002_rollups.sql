@@ -9,7 +9,7 @@
 -- session (déterminisme). L'index unique sur (region, methodology_id, bucket)
 -- est requis par REFRESH MATERIALIZED VIEW CONCURRENTLY.
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS measurement_rollup_hourly AS
+CREATE MATERIALIZED VIEW measurement_rollup_hourly AS
 SELECT
     region,
     methodology_id,
@@ -21,10 +21,10 @@ SELECT
 FROM measurement
 GROUP BY region, methodology_id, date_trunc('hour', at, 'UTC');
 
-CREATE UNIQUE INDEX IF NOT EXISTS measurement_rollup_hourly_key
+CREATE UNIQUE INDEX measurement_rollup_hourly_key
     ON measurement_rollup_hourly (region, methodology_id, bucket);
 
-CREATE MATERIALIZED VIEW IF NOT EXISTS measurement_rollup_daily AS
+CREATE MATERIALIZED VIEW measurement_rollup_daily AS
 SELECT
     region,
     methodology_id,
@@ -36,5 +36,5 @@ SELECT
 FROM measurement
 GROUP BY region, methodology_id, date_trunc('day', at, 'UTC');
 
-CREATE UNIQUE INDEX IF NOT EXISTS measurement_rollup_daily_key
+CREATE UNIQUE INDEX measurement_rollup_daily_key
     ON measurement_rollup_daily (region, methodology_id, bucket);

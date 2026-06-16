@@ -327,9 +327,18 @@ async fn run_backfill() -> anyhow::Result<()> {
     // Backfill de la **prévision météo archivée** (ADR-0012) pour entraîner le
     // GBDT, par tranches de 30 j (limite raisonnable de l'API). `run_at =
     // valid_at − 24 h` (anti-fuite). Échec non bloquant (best-effort).
+    //
+    // L'API Historical Forecast d'Open-Meteo ne couvre que **2016-01-01→** : on
+    // borne le départ pour ne pas émettre de requêtes vouées au 400 sur tout
+    // l'historique antérieur (sans ce garde-fou, 2012→2016 = ~49 tranches inutiles).
+    let weather_min = OffsetDateTime::new_utc(
+        time::Date::from_calendar_date(2016, time::Month::January, 1)
+            .context("date plancher de l'archive météo")?,
+        time::Time::MIDNIGHT,
+    );
     let meteo = OpenMeteoClient::new().context("initialisation du client Open-Meteo")?;
     let mut weather_written = 0usize;
-    let mut chunk_start = range.start();
+    let mut chunk_start = range.start().max(weather_min);
     while chunk_start < range.end() {
         let chunk_end = (chunk_start + Duration::days(30)).min(range.end());
         if let Some(chunk) = TimeRange::new(chunk_start, chunk_end) {

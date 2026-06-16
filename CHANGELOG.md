@@ -8,6 +8,19 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté — dérivation renouvelable, fondation (ADR-0018)
+
+- **Calculateur de domaine pur `RenewableModel`** : météo (vent à 100 m,
+  irradiance) → production **éolien/solaire estimée** (MW). Courbe de puissance
+  éolienne agrégée (sigmoïde) + modèle PV linéaire ; capacités effectives
+  **calibrées par moindres carrés** sur l'historique (`calibrate_renewable`).
+- **Backtest `BacktestRenewable`** + sous-commande **`backtest-renewable`** :
+  calibration 70 % / test 30 % hors échantillon, vs baseline « moyenne ».
+  **Mesuré (2024 S1, national)** : la météo bat le baseline **×2,4 (éolien)** et
+  **×3,4 (solaire)** au RMSE ; les capacités calibrées (~22 GW éolien, ~18 GW
+  solaire) **retrouvent le parc réellement installé** — dérivation physiquement
+  juste. Fondation du *moat* ; exposition (prévision, attribution carbone) à venir.
+
 ### Ajouté — échanges transfrontaliers (ADR-0017)
 
 - **`GET /v1/exchanges`** : expose les échanges transfrontaliers par frontière

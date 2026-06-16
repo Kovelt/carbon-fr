@@ -96,6 +96,8 @@ DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-acv
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-sweep
 # Calibration des intervalles (quantiles de résidus par horizon) :
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-bands
+# Backtest de la dérivation renouvelable météo→production (ADR-0018, CARBONFR_BACKTEST_FROM/_TO) :
+DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-renewable
 # Entraîner le modèle ML GBDT + comparer au backtest (CARBONFR_TRAIN_FROM/_TO, _GBDT_MODEL) :
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server train
 # Délivrer une clé API tier gratuit (ADR-0015 ; empreinte stockée, clé affichée 1 fois) :

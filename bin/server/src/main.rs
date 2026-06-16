@@ -64,7 +64,8 @@ use carbonfr_adapter_odre::OdreClient;
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_adapter_webhook::HttpNotifier;
 use carbonfr_core::application::{
-    BackfillHistory, BacktestConsumptionForecast, BacktestForecast, BacktestReport, IngestLatest,
+    BackfillHistory, BacktestConsumptionForecast, BacktestForecast, BacktestRenewable,
+    BacktestReport, IngestLatest,
 };
 use carbonfr_core::domain::{
     ACV_FORECAST_ID, ACV_FORECAST_VERSION, CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams,
@@ -93,6 +94,7 @@ async fn main() -> anyhow::Result<()> {
         Some("backtest") => run_backtest().await,
         Some("backtest-acv") => run_backtest_acv().await,
         Some("backtest-sweep") => run_backtest_sweep().await,
+        Some("backtest-renewable") => run_backtest_renewable().await,
         Some("backtest-bands") => run_backtest_bands().await,
         Some("train") => run_train().await,
         Some("mint-key") => run_mint_key().await,
@@ -493,6 +495,51 @@ async fn run_backtest_acv() -> anyhow::Result<()> {
         .context("backtest acv-ademe")?;
 
     print_backtest_report(&model, "national", "acv-ademe@2", &report);
+    Ok(())
+}
+
+/// Backtest de la **dérivation renouvelable** (ADR-0018) : production estimée
+/// depuis la météo vs production réelle, calibrée puis testée hors échantillon,
+/// comparée au baseline « moyenne ». N'est pas une prévision — on mesure d'abord
+/// que la météo **explique** la production avant d'en faire un modèle servi.
+async fn run_backtest_renewable() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let params = BacktestParams::from_env()?;
+
+    info!(from = %params.test.start(), to = %params.test.end(), "backtest dérivation renouvelable démarré");
+
+    let backtest = BacktestRenewable::new(repo.clone(), repo);
+    let report = backtest
+        .execute(params.test)
+        .await
+        .context("backtest renouvelable")?;
+
+    info!(
+        train = report.train,
+        test = report.test,
+        wind_capacity_mw = report.model.wind_capacity_mw.round(),
+        solar_capacity_mw = report.model.solar_capacity_mw.round(),
+        "modèle calibré"
+    );
+    info!(
+        rmse = report.wind.rmse.round(),
+        mae = report.wind.mae.round(),
+        baseline_rmse = report.wind_baseline.rmse.round(),
+        "éolien (MW) — modèle vs baseline"
+    );
+    info!(
+        rmse = report.solar.rmse.round(),
+        mae = report.solar.mae.round(),
+        baseline_rmse = report.solar_baseline.rmse.round(),
+        "solaire (MW) — modèle vs baseline"
+    );
+    info!(
+        eolien = report.wind.rmse < report.wind_baseline.rmse,
+        solaire = report.solar.rmse < report.solar_baseline.rmse,
+        "verdict : la météo bat le baseline (RMSE) ?"
+    );
     Ok(())
 }
 

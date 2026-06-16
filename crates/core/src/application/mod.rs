@@ -6,6 +6,7 @@
 
 mod backfill;
 mod backtest;
+mod backtest_renewable;
 mod cross_border;
 mod find_greenest_window;
 mod get_consumption;
@@ -17,6 +18,7 @@ mod schedule;
 
 pub use backfill::{BackfillHistory, BackfillReport};
 pub use backtest::{BacktestConsumptionForecast, BacktestForecast, BacktestReport, HorizonError};
+pub use backtest_renewable::{BacktestRenewable, RenewableReport};
 pub use cross_border::GetCrossBorderExchanges;
 pub use find_greenest_window::FindGreenestWindow;
 pub use get_consumption::GetConsumptionIntensity;

@@ -18,6 +18,7 @@ mod measurement;
 mod methodology;
 mod metrics;
 mod region;
+mod renewable;
 mod schedule;
 mod stats;
 mod time_range;
@@ -45,6 +46,7 @@ pub use measurement::{GenerationMix, Measurement, MeasurementKey};
 pub use methodology::{Methodology, Vintage};
 pub use metrics::{ErrorAccumulator, ErrorMetrics};
 pub use region::Region;
+pub use renewable::{RenewableModel, RenewableSample, calibrate as calibrate_renewable};
 pub use schedule::{
     Savings, ScheduleSlot, greenest_window_before, lowest_slots, savings_vs_now, slots_below,
 };

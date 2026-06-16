@@ -1,0 +1,57 @@
+name: Publier le SDK TypeScript
+
+# Publie @carbon-fr/sdk sur npm quand un tag `sdk-v*` est poussé.
+# Exemple : git tag sdk-v0.1.0 && git push origin sdk-v0.1.0
+#
+# Prérequis (une seule fois) :
+#   1. Créer l'organisation gratuite « carbon-fr » sur https://www.npmjs.com/org/create
+#      (le scope @carbon-fr doit exister, sinon `npm publish` échoue).
+#   2. Générer un jeton npm « Automation » (Account → Access Tokens → Generate New Token).
+#   3. L'ajouter en secret du dépôt GitHub : Settings → Secrets and variables → Actions
+#      → New repository secret → nom `NPM_TOKEN`.
+
+on:
+  push:
+    tags:
+      - "sdk-v*"
+
+permissions:
+  contents: read
+  id-token: write # provenance npm (chaîne d'approvisionnement vérifiable)
+
+jobs:
+  publish:
+    name: Build + publish npm
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+
+      - name: Install (lockfile)
+        run: npm ci
+
+      - name: Typecheck + build
+        run: npm run build
+
+      # Garde-fou : le tag (sdk-vX.Y.Z) doit correspondre à la version de package.json.
+      - name: Vérifier que le tag == version du paquet
+        run: |
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          TAG_VERSION="${GITHUB_REF_NAME#sdk-v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME (=$TAG_VERSION) ≠ package.json ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - name: Publish
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

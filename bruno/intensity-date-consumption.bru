@@ -1,0 +1,22 @@
+meta {
+  name: Intensité date — acv-ademe@2 (consommation)
+  type: http
+  seq: 23
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/date?from=2024-06-01T00:00:00Z&to=2024-06-02T00:00:00Z&methodology=acv-ademe&version=2
+  body: none
+  auth: none
+  query {
+    from: 2024-06-01T00:00:00Z
+    to: 2024-06-02T00:00:00Z
+    methodology: acv-ademe
+    version: 2
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.methodology: eq acv-ademe
+}

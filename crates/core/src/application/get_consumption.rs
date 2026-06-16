@@ -5,9 +5,12 @@
 //! **contexte d'import** au même horodatage, puis on applique le calculateur de
 //! domaine. La cohérence aux révisions est ainsi automatique.
 
+use time::Duration;
+
 use crate::domain::{
-    AcvAdemeConsumption, EmissionFactors, Measurement, MethodologyCalculator, MethodologyContext,
-    Region, TD_LOSS_FACTOR_V1,
+    AcvAdemeConsumption, EmissionFactors, Granularity, IntensityStats, Measurement,
+    MethodologyCalculator, MethodologyContext, Region, RollupBucket, TD_LOSS_FACTOR_V1, TimeRange,
+    bucketize, derive_consumption_series, summarize,
 };
 use crate::ports::{CrossBorderRepository, IntensityRepository};
 
@@ -66,6 +69,48 @@ impl<R: IntensityRepository, C: CrossBorderRepository> GetConsumptionIntensity<R
             vintage: base.vintage,
             mix: Some(mix),
         })
+    }
+
+    /// Série `acv-ademe@2` sur `range` : dérivée à la lecture en joignant le mix
+    /// stocké (`acv-ademe@1`) au contexte d'import (ADR-0010 §6). Les créneaux
+    /// sans contexte d'import disponible sont omis.
+    pub async fn history(
+        &self,
+        region: Region,
+        range: TimeRange,
+    ) -> Result<Vec<Measurement>, ApplicationError> {
+        let mix = self.repository.range(region, "acv-ademe", range).await?;
+        // On élargit la borne basse d'1 h pour capter le contexte d'import « au
+        // plus proche ≤ » des tout premiers créneaux de l'intervalle.
+        let flow_range =
+            TimeRange::new(range.start() - Duration::hours(1), range.end()).unwrap_or(range);
+        let snapshots = self.cross_border.flows_range(flow_range).await?;
+        Ok(derive_consumption_series(
+            &mix,
+            &snapshots,
+            &EmissionFactors::acv_ademe_v1(),
+            TD_LOSS_FACTOR_V1,
+        ))
+    }
+
+    /// Résumé (moyenne/min/max/effectif) `acv-ademe@2` sur `range`, ou `None` si
+    /// aucun créneau n'est calculable.
+    pub async fn summary(
+        &self,
+        region: Region,
+        range: TimeRange,
+    ) -> Result<Option<IntensityStats>, ApplicationError> {
+        Ok(summarize(&self.history(region, range).await?))
+    }
+
+    /// Série `acv-ademe@2` agrégée par `granularity` sur `range`.
+    pub async fn series(
+        &self,
+        region: Region,
+        range: TimeRange,
+        granularity: Granularity,
+    ) -> Result<Vec<RollupBucket>, ApplicationError> {
+        Ok(bucketize(&self.history(region, range).await?, granularity))
     }
 }
 
@@ -163,6 +208,12 @@ mod tests {
             _: OffsetDateTime,
         ) -> Result<Option<CrossBorderSnapshot>, RepositoryError> {
             Ok(self.snapshot.clone())
+        }
+        async fn flows_range(
+            &self,
+            _: crate::domain::TimeRange,
+        ) -> Result<Vec<CrossBorderSnapshot>, RepositoryError> {
+            Ok(self.snapshot.clone().into_iter().collect())
         }
     }
 

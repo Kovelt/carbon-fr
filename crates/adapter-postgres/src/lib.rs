@@ -555,4 +555,51 @@ impl CrossBorderRepository for PgIntensityRepository {
             flows: CrossBorderFlows::new(flows),
         }))
     }
+
+    async fn flows_range(
+        &self,
+        range: TimeRange,
+    ) -> Result<Vec<CrossBorderSnapshot>, RepositoryError> {
+        let rows = sqlx::query(
+            "SELECT at, neighbor, flow_mw, neighbor_intensity FROM cross_border_flow \
+             WHERE at >= $1 AND at < $2 ORDER BY at ASC, neighbor ASC",
+        )
+        .bind(range.start())
+        .bind(range.end())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| backend(format!("flows_range : {e}")))?;
+
+        // Regroupe les lignes consécutives par horodatage (déjà triées) en snapshots.
+        let mut snapshots: Vec<CrossBorderSnapshot> = Vec::new();
+        for row in &rows {
+            let at: OffsetDateTime = row.try_get("at").map_err(|e| backend(e.to_string()))?;
+            let slug: String = row
+                .try_get("neighbor")
+                .map_err(|e| backend(e.to_string()))?;
+            let Some(neighbor) = Neighbor::from_slug(&slug) else {
+                continue;
+            };
+            let flow_mw: f64 = row.try_get("flow_mw").map_err(|e| backend(e.to_string()))?;
+            let intensity: f64 = row
+                .try_get("neighbor_intensity")
+                .map_err(|e| backend(e.to_string()))?;
+            let Some(neighbor_intensity) = CarbonIntensity::new(intensity) else {
+                continue;
+            };
+            let flow = CrossBorderFlow {
+                neighbor,
+                flow_mw,
+                neighbor_intensity,
+            };
+            match snapshots.last_mut() {
+                Some(last) if last.at == at => last.flows.flows.push(flow),
+                _ => snapshots.push(CrossBorderSnapshot {
+                    at,
+                    flows: CrossBorderFlows::new(vec![flow]),
+                }),
+            }
+        }
+        Ok(snapshots)
+    }
 }

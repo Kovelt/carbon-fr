@@ -31,7 +31,7 @@ pub use calculator::{
 pub use cross_border::{CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Neighbor};
 pub use factors::{
     EmissionFactors, TD_LOSS_FACTOR_V1, acv_ademe_consumption_intensity, acv_ademe_intensity,
-    derive_acv_ademe,
+    derive_acv_ademe, derive_consumption_series,
 };
 pub use forecast::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, climatology_forecast};
 pub use forecast_point::{ForecastPoint, ModelVersion};
@@ -45,7 +45,7 @@ pub use region::Region;
 pub use schedule::{
     Savings, ScheduleSlot, greenest_window_before, lowest_slots, savings_vs_now, slots_below,
 };
-pub use stats::{Granularity, IntensityStats, RollupBucket};
+pub use stats::{Granularity, IntensityStats, RollupBucket, bucketize, summarize};
 pub use time_range::TimeRange;
 pub use update::IntensityUpdate;
 pub use visit::VisitStats;

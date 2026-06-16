@@ -72,6 +72,12 @@ fn resolve_methodology(requested: &Option<String>, default: &str) -> String {
     requested.clone().unwrap_or_else(|| default.to_string())
 }
 
+/// `true` si la requête vise `acv-ademe@2` (consommation) — chemin calculé à la
+/// lecture (ADR-0010). Exige le national (§8) : 400 sinon.
+fn wants_consumption(methodology: &str, version: Option<u32>) -> bool {
+    methodology == "acv-ademe" && version == Some(2)
+}
+
 /// Parse un horodatage RFC 3339 fourni en paramètre, ou 400.
 fn parse_timestamp(name: &str, raw: &str) -> Result<OffsetDateTime, ApiError> {
     OffsetDateTime::parse(raw, &Rfc3339)
@@ -162,6 +168,8 @@ pub(crate) struct HistoryQuery {
     region: Option<String>,
     /// Méthodologie. Défaut `rte-direct`.
     methodology: Option<String>,
+    /// Version de la méthode (`acv-ademe` : `2` = consommation, national).
+    version: Option<u32>,
 }
 
 /// `GET /v1/intensity/date?from=&to=&region=` — série historique sur un
@@ -181,7 +189,7 @@ pub(crate) async fn intensity_date<R>(
     Query(query): Query<HistoryQuery>,
 ) -> Result<Json<HistoryResponse>, ApiError>
 where
-    R: IntensityRepository + Clone + Send + Sync + 'static,
+    R: IntensityRepository + CrossBorderRepository + Clone + Send + Sync + 'static,
 {
     let region = resolve_region(&query.region)?;
 
@@ -206,8 +214,22 @@ where
         .ok_or_else(|| ApiError::bad_request("`to` doit être strictement postérieur à `from`"))?;
 
     let methodology = resolve_methodology(&query.methodology, &state.methodology);
-    let use_case = GetIntensityHistory::new(state.repo.clone(), methodology.clone());
-    let measurements = use_case.execute(region, range).await?;
+
+    // Chemin `acv-ademe@2` consommation : série calculée à la lecture (ADR-0010).
+    let measurements = if wants_consumption(&methodology, query.version) {
+        if region != Region::National {
+            return Err(ApiError::bad_request(
+                "acv-ademe@2 (consommation) n'est disponible qu'au national",
+            ));
+        }
+        GetConsumptionIntensity::new(state.repo.clone(), state.repo.clone())
+            .history(region, range)
+            .await?
+    } else {
+        GetIntensityHistory::new(state.repo.clone(), methodology.clone())
+            .execute(region, range)
+            .await?
+    };
 
     Ok(Json(HistoryResponse::new(
         region.slug(),
@@ -232,6 +254,8 @@ pub(crate) struct StatsQuery {
     interval: Option<String>,
     /// Méthodologie. Défaut `rte-direct`.
     methodology: Option<String>,
+    /// Version de la méthode (`acv-ademe` : `2` = consommation, national).
+    version: Option<u32>,
 }
 
 /// `GET /v1/intensity/stats?from=&to=&region=&interval=` — résumé (moyenne/min/
@@ -252,7 +276,7 @@ pub(crate) async fn intensity_stats<R>(
     Query(query): Query<StatsQuery>,
 ) -> Result<Json<StatsResponse>, ApiError>
 where
-    R: IntensityRepository + Clone + Send + Sync + 'static,
+    R: IntensityRepository + CrossBorderRepository + Clone + Send + Sync + 'static,
 {
     let region = resolve_region(&query.region)?;
 
@@ -276,8 +300,24 @@ where
         .ok_or_else(|| ApiError::bad_request("`to` doit être strictement postérieur à `from`"))?;
 
     let methodology = resolve_methodology(&query.methodology, &state.methodology);
-    let use_case = GetIntensityStats::new(state.repo.clone(), methodology.clone());
-    let summary = use_case.summary(region, range).await?.ok_or_else(|| {
+    let consumption = wants_consumption(&methodology, query.version);
+    if consumption && region != Region::National {
+        return Err(ApiError::bad_request(
+            "acv-ademe@2 (consommation) n'est disponible qu'au national",
+        ));
+    }
+
+    // `acv-ademe@2` : résumé et série agrégée **calculés à la lecture** (ADR-0010
+    // §6 ; la série n'est pas matérialisée en rollup). Sinon, agrégat SQL exact.
+    let consumption_uc = GetConsumptionIntensity::new(state.repo.clone(), state.repo.clone());
+    let stats_uc = GetIntensityStats::new(state.repo.clone(), methodology.clone());
+
+    let summary = if consumption {
+        consumption_uc.summary(region, range).await?
+    } else {
+        stats_uc.summary(region, range).await?
+    }
+    .ok_or_else(|| {
         ApiError::not_found(format!(
             "aucune donnée sur l'intervalle pour la région {}",
             region.slug()
@@ -289,7 +329,11 @@ where
         Some(raw) => {
             let granularity = Granularity::from_label(raw)
                 .ok_or_else(|| ApiError::bad_request("`interval` doit valoir `hour` ou `day`"))?;
-            let series = use_case.series(region, range, granularity).await?;
+            let series = if consumption {
+                consumption_uc.series(region, range, granularity).await?
+            } else {
+                stats_uc.series(region, range, granularity).await?
+            };
             (Some(granularity.label()), Some(series))
         }
     };

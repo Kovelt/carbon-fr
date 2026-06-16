@@ -127,6 +127,18 @@ impl CrossBorderRepository for FakeRepo {
     ) -> Result<Option<CrossBorderSnapshot>, RepositoryError> {
         Ok(self.flows.clone())
     }
+
+    async fn flows_range(
+        &self,
+        range: TimeRange,
+    ) -> Result<Vec<CrossBorderSnapshot>, RepositoryError> {
+        Ok(self
+            .flows
+            .clone()
+            .into_iter()
+            .filter(|s| range.contains(s.at))
+            .collect())
+    }
 }
 
 #[async_trait]
@@ -743,5 +755,76 @@ async fn stream_opens_event_stream() {
 #[tokio::test]
 async fn stream_rejects_unknown_region() {
     let response = get(app(None), "/v1/intensity/stream?region=pas-une-region").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// Série `acv-ademe@1` (porte le mix FR) sur `n` heures depuis l'epoch.
+fn consumption_history_repo(n: i32) -> FakeRepo {
+    use carbonfr_core::domain::{CrossBorderFlow, CrossBorderFlows, Neighbor};
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let step = Duration::hours(1);
+    let mix = national_measurement().mix.unwrap();
+    let series: Vec<Measurement> = (0..n)
+        .map(|i| Measurement {
+            at: t0 + step * i,
+            region: Region::National,
+            intensity: CarbonIntensity::new(12.0).unwrap(),
+            methodology: Methodology::acv_ademe(),
+            vintage: Vintage::Consolidated,
+            mix: Some(mix),
+        })
+        .collect();
+    FakeRepo {
+        series,
+        flows: Some(CrossBorderSnapshot {
+            at: t0,
+            flows: CrossBorderFlows::new(vec![CrossBorderFlow {
+                neighbor: Neighbor::Germany,
+                flow_mw: 5000.0,
+                neighbor_intensity: CarbonIntensity::new(400.0).unwrap(),
+            }]),
+        }),
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn intensity_date_consumption_v2_series() {
+    let response = get(
+        build(consumption_history_repo(3)),
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T05:00:00Z&methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["methodology"], "acv-ademe");
+    assert_eq!(body["count"], 3);
+    // Import charbon → chaque point au-dessus de la production seule (~12,56).
+    for pt in body["data"].as_array().unwrap() {
+        assert!(pt["intensity"].as_f64().unwrap() > 12.56);
+    }
+}
+
+#[tokio::test]
+async fn intensity_stats_consumption_v2_summary() {
+    let response = get(
+        build(consumption_history_repo(3)),
+        "/v1/intensity/stats?from=1970-01-01T00:00:00Z&to=1970-01-01T05:00:00Z&methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["methodology"], "acv-ademe");
+    assert_eq!(body["count"], 3);
+    assert!(body["average"].as_f64().unwrap() > 12.56);
+}
+
+#[tokio::test]
+async fn intensity_date_consumption_v2_rejects_regional() {
+    let response = get(
+        app(None),
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T05:00:00Z&region=bretagne&methodology=acv-ademe&version=2",
+    )
+    .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }

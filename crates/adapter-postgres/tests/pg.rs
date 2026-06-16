@@ -662,4 +662,12 @@ async fn cross_border_snapshot_roundtrips_and_picks_nearest() {
         .find(|f| f.neighbor == Neighbor::Germany)
         .unwrap();
     assert_eq!(de.flow_mw, 1500.0, "valeur mise à jour");
+
+    // flows_range : les deux créneaux, chacun avec ses 2 frontières, triés.
+    let window = TimeRange::new(t0, t1 + Duration::minutes(1)).unwrap();
+    let snapshots = repo.flows_range(window).await.unwrap();
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].at, t0);
+    assert_eq!(snapshots[1].at, t1);
+    assert_eq!(snapshots[0].flows.flows.len(), 2);
 }

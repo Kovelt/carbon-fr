@@ -202,6 +202,13 @@ pub trait CrossBorderRepository: Send + Sync {
         &self,
         at: OffsetDateTime,
     ) -> Result<Option<CrossBorderSnapshot>, RepositoryError>;
+
+    /// Snapshots d'import dont l'horodatage tombe dans `range`, triés par `at`
+    /// croissant — pour dériver la série `acv-ademe@2` sur un intervalle.
+    async fn flows_range(
+        &self,
+        range: TimeRange,
+    ) -> Result<Vec<CrossBorderSnapshot>, RepositoryError>;
 }
 
 /// Port sortant : compteur de consultations (visiteurs).

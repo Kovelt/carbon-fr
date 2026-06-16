@@ -2,7 +2,9 @@
 //! (ADR-0008). Table **versionnée** : c'est une constante de domaine, pas une
 //! dépendance IO.
 
-use crate::domain::{CarbonIntensity, CrossBorderFlows, GenerationMix, Measurement, Methodology};
+use crate::domain::{
+    CarbonIntensity, CrossBorderFlows, CrossBorderSnapshot, GenerationMix, Measurement, Methodology,
+};
 
 /// Facteur de pertes en transport & distribution (ADR-0010 §3), **versionné**.
 ///
@@ -153,6 +155,50 @@ pub fn derive_acv_ademe(measurement: &Measurement) -> Option<Measurement> {
     })
 }
 
+/// Dérive la série `acv-ademe@2` (consumption-based) en joignant chaque mesure
+/// de mix au **contexte d'import le plus proche** (≤ son horodatage).
+///
+/// `mix` et `snapshots` doivent être **triés par horodatage croissant** (jointure
+/// par fusion en O(n+m)). Les mesures sans mix, ou sans contexte d'import
+/// antérieur disponible, sont **omises** — `acv-ademe@2` n'est défini que là où
+/// le contexte d'import a été ingéré (ADR-0010 §6).
+pub fn derive_consumption_series(
+    mix: &[Measurement],
+    snapshots: &[CrossBorderSnapshot],
+    factors: &EmissionFactors,
+    td_loss: f64,
+) -> Vec<Measurement> {
+    let mut out = Vec::new();
+    let mut j = 0usize;
+    let mut current: Option<&CrossBorderSnapshot> = None;
+    for m in mix {
+        let Some(generation) = m.mix.as_ref() else {
+            continue;
+        };
+        // Avance tant que le prochain snapshot est antérieur ou égal à la mesure.
+        while j < snapshots.len() && snapshots[j].at <= m.at {
+            current = Some(&snapshots[j]);
+            j += 1;
+        }
+        let Some(snapshot) = current else {
+            continue;
+        };
+        if let Some(intensity) =
+            acv_ademe_consumption_intensity(generation, &snapshot.flows, factors, td_loss)
+        {
+            out.push(Measurement {
+                at: m.at,
+                region: m.region,
+                intensity,
+                methodology: Methodology::acv_ademe_consumption(),
+                vintage: m.vintage,
+                mix: Some(*generation),
+            });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,5 +302,44 @@ mod tests {
             ..source
         };
         assert!(derive_acv_ademe(&no_mix).is_none());
+    }
+
+    #[test]
+    fn consumption_series_joins_nearest_prior_snapshot_and_omits_uncovered() {
+        use crate::domain::{
+            CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Neighbor, Vintage,
+        };
+        use time::Duration;
+
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let step = Duration::minutes(15);
+        let measure = |i: i32| Measurement {
+            at: t0 + step * i,
+            region: Region::National,
+            intensity: CarbonIntensity::new(12.0).unwrap(),
+            methodology: Methodology::acv_ademe(),
+            vintage: Vintage::Consolidated,
+            mix: Some(national_mix()),
+        };
+        let mix = [measure(0), measure(1), measure(2)];
+
+        // Un seul snapshot (import charbon allemand) à t0+1 → couvre t1 et t2,
+        // PAS t0 (aucun contexte antérieur). t0 doit être omis.
+        let snapshots = [CrossBorderSnapshot {
+            at: t0 + step,
+            flows: CrossBorderFlows::new(vec![CrossBorderFlow {
+                neighbor: Neighbor::Germany,
+                flow_mw: 5000.0,
+                neighbor_intensity: CarbonIntensity::new(400.0).unwrap(),
+            }]),
+        }];
+
+        let series =
+            derive_consumption_series(&mix, &snapshots, &EmissionFactors::acv_ademe_v1(), 0.0);
+        assert_eq!(series.len(), 2, "t0 omis (sans contexte d'import)");
+        assert_eq!(series[0].at, t0 + step);
+        assert_eq!(series[0].methodology, Methodology::acv_ademe_consumption());
+        // Import carboné → au-dessus de la production seule (~12,56).
+        assert!(series[0].intensity.value() > 12.56);
     }
 }

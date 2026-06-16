@@ -59,10 +59,23 @@ guide RESTful API ENTSO-E, **à valider contre l'API live** (test `tests/live.rs
 Le défaut de l'API **reste `rte-direct`**. Sans token ENTSO-E, le chemin de calcul
 existe mais renvoie `404` faute de contexte d'import ingéré.
 
+**Historique & stats `@2` (§6) : livrés.** `acv-ademe@2` est désormais servi
+**à la lecture** au-delà de `/now` :
+
+- port `CrossBorderRepository::flows_range` (snapshots d'import sur un
+  intervalle) + impl Postgres (validée sur base réelle) ;
+- fonction pure `derive_consumption_series` (jointure par fusion mix × contexte
+  d'import le plus proche ≤, O(n+m), créneaux non couverts omis) ;
+- agrégats **calculés dans le domaine** (`summarize`/`bucketize`) — la série
+  `@2` n'étant pas matérialisée, le résumé et la série par pas sont dérivés en
+  mémoire, sans rollup SQL ;
+- exposés via `GET /v1/intensity/date` et `GET /v1/intensity/stats` avec
+  `?methodology=acv-ademe&version=2` (national). `@2` n'existe que là où le
+  contexte d'import a été ingéré.
+
 **Reste ouvert** : (a) **validation des chemins XML ENTSO-E** contre l'API live
-(test `--ignored`, token) ; (b) `TD_LOSS_FACTOR_V1 = 0,072` à sourcer
-précisément ; (c) `@2` sur l'historique/les stats (rollups, §6) — le point
-(`now`) est servi, l'agrégé viendra avec les rollups de variante.
+(test `--ignored`, token — le parsing est déjà validé sur les exemples XML
+officiels) ; (b) `TD_LOSS_FACTOR_V1 = 0,072` à sourcer précisément.
 
 ## Contexte
 

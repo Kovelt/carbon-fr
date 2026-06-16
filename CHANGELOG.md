@@ -115,6 +115,14 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   **`GET /v1/intensity/now?methodology=acv-ademe&version=2`** (national).
   `acv-ademe@2` passe `served` dans `/v1/methodologies`. Défaut de l'API inchangé
   (`rte-direct`) ; sans token, le calcul renvoie `404` faute de contexte d'import.
+- **`acv-ademe@2` sur l'historique et les stats** (ADR-0010 §6) : la méthode
+  consommation est servie **à la lecture** au-delà de `/now`, via
+  `GET /v1/intensity/date` et `GET /v1/intensity/stats`
+  (`?methodology=acv-ademe&version=2`, national). Port
+  `CrossBorderRepository::flows_range`, fonction pure `derive_consumption_series`
+  (jointure mix × contexte d'import le plus proche), agrégats `summarize`/
+  `bucketize` calculés dans le domaine (la série `@2` n'est pas matérialisée).
+  `@2` n'existe que là où le contexte d'import a été ingéré.
 - **Primitives de scheduling carbon-aware** (ADR-0014, tranche A) : fonctions
   **pures** du domaine (zéro nouveau port) sur la prévision, réutilisant le
   sélecteur `central`/`prudent` — créneau contigu le plus bas-carbone **avant une

@@ -1,0 +1,21 @@
+meta {
+  name: Webhooks — lister (clé requise)
+  type: http
+  seq: 28
+}
+
+get {
+  url: {{baseUrl}}/v1/webhooks
+  body: none
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{apiKey}}
+}
+
+assert {
+  res.status: eq 200
+  res.body.count: isNumber
+  res.body.webhooks: isArray
+}

@@ -8,6 +8,18 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Contrat & documentation (audit, lot 4)
+
+- **OpenAPI** : ajout du schéma `StreamEventBody` (charge utile du flux SSE,
+  jusque-là absent de la spec) + test des schémas étendu (anti-régression).
+- **Bruno** : ajout des requêtes manquantes (`/v1/stats`, `/stats/visit`,
+  `GET`/`DELETE /v1/webhooks`, `/health/ready`, cas `?version=` invalide).
+- **Doc à jour** : CLAUDE.md « État d'avancement » (Phase 5 : échanges, météo,
+  renouvelable, déploiement, SDK, audit) + liste des ADR (0017/0018) ; index ADR ;
+  ADR-0010 §6 corrigé (acv-ademe@2 dérivé en mémoire, pas de rollup matérialisé) ;
+  README roadmap ; `.env.example` (vars ENTSO-E/calibration manquantes) ; tableau
+  des variables d'env (`CARBONFR_LOG_FORMAT`) ; message CLI des sous-commandes.
+
 ### Sécurité (audit, lot 3)
 
 - **IP client non spoofable derrière proxy** : on lit désormais `X-Real-Ip` (posé

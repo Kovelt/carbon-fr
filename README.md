@@ -146,7 +146,8 @@ Configuration via variables d'environnement — voir [`.env.example`](.env.examp
 - [x] **Phase 2 — Historique & régional** : backfill par export de masse · `/intensity/date` · rollups + `/intensity/stats` · régional via `acv-ademe` (12 régions) · OpenAPI 3.1 + Bruno.
 - [x] **Phase 3 — Prévision** : `climatology@1` (backtest, calibration des intervalles) → `/forecast` + `/greenest-window`.
 - [x] **Phase 4 — Enrichissement & usage** : `acv-ademe@2` consumption-based (ENTSO-E) · prévision `acv-ademe` · scheduling carbon-aware + SSE · clés API + quota · webhooks signés. *(ML GBDT exploré, gardé par backtest ; raffinements ouverts.)*
-- [ ] **Déploiement** (ADR-0007) : conteneur, VPS FR/EU + PostgreSQL, sous-domaine Kovelt ; SDK (Rust + TS).
+- [x] **Phase 5 — Enrichissement, déploiement & SDK** : échanges transfrontaliers (`/v1/exchanges`), météo (`/v1/weather`), dérivation renouvelable (`/v1/renewable`) ; **déployé** sur VPS FR/EU (Traefik + PostgreSQL) ; **SDK TypeScript** (`@carbon-fr/sdk`).
+- [ ] **À venir** : SDK Rust ; site statique (o2switch) ; `UsageMeter` persistant.
 
 ## Contribuer
 

@@ -1,0 +1,21 @@
+meta {
+  name: Compteur de visiteurs
+  type: http
+  seq: 26
+}
+
+get {
+  url: {{baseUrl}}/v1/stats
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.unique: isNumber
+  res.body.total: isNumber
+}
+
+docs {
+  Statistiques de consultation (RGPD : aucune IP stockée, empreinte SHA-256 salée).
+}

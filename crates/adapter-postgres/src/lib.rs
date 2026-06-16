@@ -63,11 +63,10 @@ impl PgIntensityRepository {
     /// Ouvre un pool de connexions vers `database_url`.
     ///
     /// Taille via `CARBONFR_DB_MAX_CONNECTIONS` (défaut **20** — le pool est
-    /// partagé par l'API, le poller et le watcher, et un `REFRESH MATERIALIZED
-    /// VIEW CONCURRENTLY` monopolise une connexion le temps de l'agrégat).
-    /// `acquire_timeout` borné : sous saturation, une requête **échoue vite**
-    /// (→ 500) plutôt que de pendre jusqu'au défaut de 30 s. Recyclage
-    /// (`idle`/`max_lifetime`) pour éviter les connexions mortes côté serveur.
+    /// partagé par l'API, le poller et le watcher). `acquire_timeout` borné :
+    /// sous saturation, une requête **échoue vite** (→ 500) plutôt que de pendre
+    /// jusqu'au défaut de 30 s. Recyclage (`idle`/`max_lifetime`) pour éviter les
+    /// connexions mortes côté serveur après de longues durées.
     pub async fn connect(database_url: &str) -> Result<Self, RepositoryError> {
         let max_connections = std::env::var("CARBONFR_DB_MAX_CONNECTIONS")
             .ok()
@@ -273,14 +272,62 @@ impl IntensityRepository for PgIntensityRepository {
     }
 
     async fn refresh_rollups(&self) -> Result<(), RepositoryError> {
-        for view in ["measurement_rollup_hourly", "measurement_rollup_daily"] {
-            // CONCURRENTLY : ne verrouille pas les lectures (index unique requis).
-            sqlx::query(&format!("REFRESH MATERIALIZED VIEW CONCURRENTLY {view}"))
+        // Incrémental : on ne réagrège que les seaux **récents**. Le poller n'écrit
+        // que du récent ; les corrections anciennes (millésime définitif) passent par
+        // le backfill → `rebuild_rollups`. Marge de 7 j (révisions tr→consolidated).
+        // Coût O(7 j) au lieu de O(table entière) à chaque cycle.
+        let since = (OffsetDateTime::now_utc() - time::Duration::days(7))
+            .replace_time(time::Time::MIDNIGHT);
+        self.upsert_rollups(Some(since)).await
+    }
+}
+
+impl PgIntensityRepository {
+    /// Upsert des rollups (horaire + journalier) par seau, depuis `measurement`.
+    /// `since = Some(t)` (borné à minuit UTC) ne recalcule que les seaux ≥ `t`
+    /// (incrémental, le poller) ; `None` recalcule **tout** (reconstruction). Chaque
+    /// seau touché est **entièrement** réagrégé → avg/min/max/count exacts (les
+    /// mesures ne sont jamais supprimées, donc pas de ligne de rollup orpheline).
+    async fn upsert_rollups(&self, since: Option<OffsetDateTime>) -> Result<(), RepositoryError> {
+        // `table`/`unit` proviennent d'un littéral (pas d'entrée utilisateur).
+        for (table, unit) in [
+            ("measurement_rollup_hourly", "hour"),
+            ("measurement_rollup_daily", "day"),
+        ] {
+            let filter = if since.is_some() {
+                "WHERE at >= $1"
+            } else {
+                ""
+            };
+            let sql = format!(
+                "INSERT INTO {table} \
+                   (region, methodology_id, bucket, avg_intensity, min_intensity, max_intensity, n) \
+                 SELECT region, methodology_id, date_trunc('{unit}', at, 'UTC'), \
+                        avg(intensity), min(intensity), max(intensity), count(*) \
+                 FROM measurement {filter} \
+                 GROUP BY region, methodology_id, date_trunc('{unit}', at, 'UTC') \
+                 ON CONFLICT (region, methodology_id, bucket) DO UPDATE SET \
+                   avg_intensity = EXCLUDED.avg_intensity, min_intensity = EXCLUDED.min_intensity, \
+                   max_intensity = EXCLUDED.max_intensity, n = EXCLUDED.n"
+            );
+            let query = sqlx::query(&sql);
+            let query = match since {
+                Some(t) => query.bind(t),
+                None => query,
+            };
+            query
                 .execute(&self.pool)
                 .await
-                .map_err(|e| backend(format!("refresh {view} : {e}")))?;
+                .map_err(|e| backend(format!("upsert rollup {table} : {e}")))?;
         }
         Ok(())
+    }
+
+    /// Reconstruction **complète** des rollups (tous les seaux). Pour le backfill,
+    /// qui écrit des seaux historiques arbitraires que l'incrémental récent ne
+    /// couvre pas. Hors trait (le poller utilise `refresh_rollups`, incrémental).
+    pub async fn rebuild_rollups(&self) -> Result<(), RepositoryError> {
+        self.upsert_rollups(None).await
     }
 }
 

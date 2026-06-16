@@ -229,7 +229,7 @@ async fn stats_summary_and_hourly_rollup() {
     ])
     .await
     .unwrap();
-    repo.refresh_rollups().await.unwrap();
+    repo.rebuild_rollups().await.unwrap();
 
     let window = TimeRange::new(t0, t0 + Duration::hours(2)).unwrap();
 
@@ -262,6 +262,34 @@ async fn stats_summary_and_hourly_rollup() {
             .unwrap()
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn refresh_rollups_covers_recent_buckets() {
+    // Chemin INCRÉMENTAL du poller : refresh_rollups (fenêtre récente) doit
+    // réagréger les seaux récemment écrits. On insère à l'heure courante (dans la
+    // fenêtre de 7 j) et on vérifie le seau horaire.
+    let m = "test-pg-rollup-recent";
+    let Some(repo) = setup(m).await else { return };
+    let now = OffsetDateTime::now_utc();
+    let recent = now.replace_time(time::Time::from_hms(now.hour(), 0, 0).unwrap());
+
+    repo.upsert_many(&[
+        measurement(m, recent, 40.0, Vintage::Tr, None),
+        measurement(m, recent + Duration::minutes(15), 60.0, Vintage::Tr, None),
+    ])
+    .await
+    .unwrap();
+
+    repo.refresh_rollups().await.unwrap();
+
+    let window = TimeRange::new(recent, recent + Duration::hours(1)).unwrap();
+    let hourly = repo
+        .rollup(Region::National, m, window, Granularity::Hourly)
+        .await
+        .unwrap();
+    assert_eq!(hourly.len(), 1, "le seau récent doit être réagrégé");
+    assert_eq!(hourly[0].stats.average.value(), 50.0); // (40 + 60) / 2
 }
 
 #[tokio::test]
@@ -526,7 +554,7 @@ async fn daily_rollup_buckets_by_utc_day() {
     ])
     .await
     .unwrap();
-    repo.refresh_rollups().await.unwrap();
+    repo.rebuild_rollups().await.unwrap();
 
     let window = TimeRange::new(day0, day1 + Duration::days(1)).unwrap();
     let daily = repo

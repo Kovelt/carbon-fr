@@ -12,8 +12,11 @@
 //! token (`CARBONFR_ENTSOE_TOKEN`) est requis ; **jamais appelée par requête
 //! utilisateur** — le poller l'ingère.
 //!
-//! ⚠️ Les chemins XML et codes sont calés sur le guide RESTful API ENTSO-E mais
-//! **doivent être validés contre l'API live** (test `tests/live.rs`, `--ignored`).
+//! Chemins XML, codes EIC et URL de base **validés contre l'API live** le
+//! 2026-06-16 (test `tests/live.rs`, `--ignored`) : 5 frontières actives
+//! (BE/DE/ES/IT/CH), flux et intensités voisines plausibles. La frontière GB est
+//! indisponible côté ENTSO-E depuis le Brexit — dégradation propre (frontière
+//! simplement absente des snapshots, pas d'erreur).
 
 mod codes;
 mod dto;
@@ -34,7 +37,7 @@ use time::{Duration, OffsetDateTime};
 use codes::{FR_EIC, neighbor_eic};
 use dto::{FiliereMw, FlowDocument, GenerationDocument};
 
-const DEFAULT_BASE_URL: &str = "https://web-api.tps.entsoe.eu/api";
+const DEFAULT_BASE_URL: &str = "https://web-api.tp.entsoe.eu/api";
 /// Fenêtre récente interrogée à chaque cycle (heures).
 const DEFAULT_WINDOW_HOURS: i64 = 6;
 /// `documentType` flux physique transfrontalier.

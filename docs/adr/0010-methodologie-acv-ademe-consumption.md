@@ -23,8 +23,8 @@ est entièrement spécifié et testé **sans IO** :
   (table des facteurs + facteur T&D) — le levier de vérifiabilité (§7), servis
   **sans dépendance externe**.
 
-⚠️ `TD_LOSS_FACTOR_V1 = 0,072` est un **ordre de grandeur à sourcer précisément**
-(Bilan électrique RTE / Base Carbone ADEME) avant publication de `@2` ; tout
+`TD_LOSS_FACTOR_V1 = 0,072` (≈ 7,2 %) est **sourcé** (§3 : transport RTE ~2,3 % +
+distribution Enedis ~6 %, pertes techniques, hors non technique) ; tout
 changement = bump de version.
 
 **Tranche B (1/2) — adapter ENTSO-E + port : livrée.** Port sortant
@@ -73,9 +73,11 @@ existe mais renvoie `404` faute de contexte d'import ingéré.
   `?methodology=acv-ademe&version=2` (national). `@2` n'existe que là où le
   contexte d'import a été ingéré.
 
-**Reste ouvert** : (a) **validation des chemins XML ENTSO-E** contre l'API live
-(test `--ignored`, token — le parsing est déjà validé sur les exemples XML
-officiels) ; (b) `TD_LOSS_FACTOR_V1 = 0,072` à sourcer précisément.
+**Résolu (2026-06-16)** : (a) **chemins XML ENTSO-E validés** contre l'API live
+(test `--ignored`, token réel) — 5 frontières actives (BE/DE/ES/IT/CH ; GB
+indisponible depuis le Brexit), flux et intensités voisines plausibles ; URL de
+base corrigée (`tp`, pas `tps`). (b) `TD_LOSS_FACTOR_V1 = 0,072` **sourcé** (§3 :
+Bilans électriques RTE + Enedis, pertes techniques ≈ 7 %).
 
 ## Contexte
 
@@ -103,7 +105,18 @@ Une **table de facteurs cycle de vie** (gCO₂eq/kWh) par filière, issue de la 
 
 ### 3. Pertes de transport/distribution (T&D)
 
-**Incluses**, cohérent avec un périmètre consommation et le modèle UK, via un **facteur versionné**. Le raffinement (taux instantané si la donnée est disponible *vs* constante documentée) est tranché à l'implémentation et **porté par la version** de la méthode.
+**Incluses**, cohérent avec un périmètre consommation et le modèle UK, via un **facteur versionné** (`TD_LOSS_FACTOR_V1`).
+
+**Valeur v1 = 0,072 (≈ 7,2 %)**, *uplift* `× (1 + facteur)` sur l'intensité réseau. Sourcée sur les pertes **techniques** du système français, ramenées à l'énergie injectée :
+
+| Segment | Taux | Source |
+|---|---|---|
+| Transport (RTE) | ~2,3 % (2,16 % en 2018, 2,22 % en 2019, 2,31 % en 2020) | [Bilan électrique RTE](https://www.rte-france.com/donnees-publications/publications/bilans-electriques-nationaux-regionaux) |
+| Distribution (Enedis) | ~6 % (≈ 23 TWh/an) | [Bilan électrique Enedis](https://www.enedis.fr/) |
+
+En cascade, livrer au consommateur BT impose `1,023 × 1,06 ≈ 1,084` (8,4 %) ; pondéré par la part de consommation transitant par la distribution (les gros industriels sont raccordés directement au réseau de transport), la moyenne système ressort à **≈ 7 %**. Les pertes **non techniques** (fraude, erreurs de comptage — le ~10 % parfois cité les inclut) sont **exclues** : cette énergie est consommée, pas dissipée, donc hors d'un périmètre carbone. Cohérent avec les facteurs ADEME, eux-mêmes dérivés des bilans RTE/Enedis.
+
+Le raffinement (taux instantané si la donnée est disponible *vs* cette constante documentée) est tranché à l'implémentation et **porté par la version** de la méthode.
 
 ### 4. Calcul : une *stratégie de domaine* pure
 

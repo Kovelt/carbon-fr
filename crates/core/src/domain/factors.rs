@@ -10,10 +10,24 @@ use crate::domain::{
 ///
 /// Périmètre consommation : livrer 1 kWh au compteur impose d'en produire
 /// davantage (pertes réseau). On applique un *uplift* `× (1 + facteur)` à
-/// l'intensité réseau. **v1 = 0,072** (~7,2 %, ordre de grandeur des pertes du
-/// système électrique français — transport RTE ~2 % + distribution Enedis
-/// ~6 %). ⚠️ **valeur à sourcer précisément** (Bilan électrique RTE / Base
-/// Carbone ADEME) avant publication ; tout changement = bump `acv-ademe@N`.
+/// l'intensité réseau.
+///
+/// **v1 = 0,072 (≈ 7,2 %)** = pertes **techniques** du système électrique
+/// français, ramenées à l'énergie injectée :
+/// - **transport (RTE)** ~2,3 % — Bilan électrique RTE (2,16 % en 2018, 2,22 %
+///   en 2019, 2,31 % en 2020) ;
+/// - **distribution (Enedis)** ~6 % — Bilan électrique Enedis (≈ 23 TWh/an).
+///
+/// En cascade, livrer au consommateur BT impose `1,023 × 1,06 ≈ 1,084` ; pondéré
+/// par la part de consommation transitant par la distribution (les gros
+/// industriels sont raccordés directement au réseau de transport), la moyenne
+/// système ressort à ≈ 7 %. Les pertes **non techniques** (fraude, erreurs de
+/// comptage — le ~10 % parfois cité les inclut) sont **exclues** : cette énergie
+/// est consommée, pas dissipée. Tout changement = bump `acv-ademe@N`.
+///
+/// Sources : Bilan électrique RTE (réseau de transport, taux de pertes annuel) ;
+/// Bilan électrique Enedis (réseau de distribution). Cohérent avec les facteurs
+/// ADEME (eux-mêmes dérivés des bilans RTE/Enedis).
 pub const TD_LOSS_FACTOR_V1: f64 = 0.072;
 
 /// Facteurs d'émission par filière (gCO₂eq/kWh), en analyse de cycle de vie.

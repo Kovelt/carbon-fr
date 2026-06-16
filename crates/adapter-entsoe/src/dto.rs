@@ -7,7 +7,7 @@
 //! - **flux physique transfrontalier** (`documentType=A11`) → racine
 //!   `Publication_MarketDocument`, `Period/Point` → série de puissance.
 //!
-//! ⚠️ Chemins XML **à valider contre l'API live** (test `--ignored`).
+//! Chemins XML **validés contre l'API live** le 2026-06-16 (test `--ignored`).
 
 use std::collections::BTreeMap;
 

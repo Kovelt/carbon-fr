@@ -8,6 +8,16 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté — échanges transfrontaliers (ADR-0017)
+
+- **`GET /v1/exchanges`** : expose les échanges transfrontaliers par frontière
+  (flux net signé FR↔voisin, `> 0` = import vers la France) et l'**intensité
+  carbone de chaque voisin** (cycle de vie ADEME), au pas quart d'heure. La
+  donnée ENTSO-E était déjà ingérée pour `acv-ademe@2` ; l'endpoint la **sert**
+  sans nouvelle ingestion (cas d'usage pur `GetCrossBorderExchanges`, projection
+  de lecture). Solde net + totaux import/export + détail par pays. `gb`
+  indisponible côté ENTSO-E (Brexit) → absent. OpenAPI + collection Bruno.
+
 ### Sécurité & robustesse (durcissement pré-déploiement, audit)
 
 - **SSRF webhooks — faille TOCTOU corrigée** : la livraison utilise désormais un

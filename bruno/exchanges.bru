@@ -1,0 +1,24 @@
+meta {
+  name: Échanges transfrontaliers
+  type: http
+  seq: 12
+}
+
+get {
+  url: {{baseUrl}}/v1/exchanges
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.direction: isDefined
+  res.body.net_flow_mw: isNumber
+  res.body.exchanges: isArray
+}
+
+docs {
+  Échanges transfrontaliers (ENTSO-E, ADR-0017) : flux net signé par frontière
+  (flow_mw > 0 = import vers la France) + intensité carbone de chaque voisin.
+  Données ingérées toutes les 15 min, alignées sur la dernière mesure nationale.
+}

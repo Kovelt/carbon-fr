@@ -6,6 +6,7 @@
 
 mod backfill;
 mod backtest;
+mod cross_border;
 mod find_greenest_window;
 mod get_consumption;
 mod get_current;
@@ -16,6 +17,7 @@ mod schedule;
 
 pub use backfill::{BackfillHistory, BackfillReport};
 pub use backtest::{BacktestConsumptionForecast, BacktestForecast, BacktestReport, HorizonError};
+pub use cross_border::GetCrossBorderExchanges;
 pub use find_greenest_window::FindGreenestWindow;
 pub use get_consumption::GetConsumptionIntensity;
 pub use get_current::GetCurrentIntensity;

@@ -5,8 +5,8 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use carbonfr_core::application::{
-    CarbonAwareScheduler, FindGreenestWindow, GetConsumptionIntensity, GetCurrentIntensity,
-    GetIntensityHistory, GetIntensityStats,
+    CarbonAwareScheduler, FindGreenestWindow, GetConsumptionIntensity, GetCrossBorderExchanges,
+    GetCurrentIntensity, GetIntensityHistory, GetIntensityStats,
 };
 use carbonfr_core::domain::{
     Granularity, Region, Subscription, ThresholdDirection, TimeRange, WindowEstimator,
@@ -23,10 +23,10 @@ use time::{Duration, OffsetDateTime};
 use utoipa::IntoParams;
 
 use crate::dto::{
-    CreateWebhookRequest, CreatedWebhookResponse, FactorsResponse, ForecastResponse,
-    GreenestWindowResponse, HistoryResponse, IntensityResponse, MethodologiesResponse, MixResponse,
-    ScheduleResponse, SlotsResponse, StatsResponse, StreamEventBody, VisitStatsResponse,
-    WebhookListResponse,
+    CreateWebhookRequest, CreatedWebhookResponse, ExchangesResponse, FactorsResponse,
+    ForecastResponse, GreenestWindowResponse, HistoryResponse, IntensityResponse,
+    MethodologiesResponse, MixResponse, ScheduleResponse, SlotsResponse, StatsResponse,
+    StreamEventBody, VisitStatsResponse, WebhookListResponse,
 };
 use crate::error::{ApiError, ErrorBody};
 use crate::{AppState, ForecastState};
@@ -179,6 +179,30 @@ where
         ))
     })?;
     Ok(Json(MixResponse::from_measurement(&measurement, mix)?))
+}
+
+/// `GET /v1/exchanges` — échanges transfrontaliers : flux net signé par
+/// frontière (`> 0` = import vers la France) + intensité carbone du voisin
+/// (ADR-0017). Donnée ENTSO-E déjà ingérée pour `acv-ademe@2`, servie au pas
+/// quart d'heure, alignée sur la dernière mesure nationale.
+#[utoipa::path(
+    get,
+    path = "/v1/exchanges",
+    responses(
+        (status = 200, description = "Échanges transfrontaliers courants", body = ExchangesResponse),
+        (status = 404, description = "Aucune donnée d'échange disponible", body = ErrorBody),
+    ),
+    tag = "échanges"
+)]
+pub(crate) async fn exchanges<R>(
+    State(state): State<AppState<R>>,
+) -> Result<Json<ExchangesResponse>, ApiError>
+where
+    R: IntensityRepository + CrossBorderRepository + Clone + Send + Sync + 'static,
+{
+    let use_case = GetCrossBorderExchanges::new(state.repo.clone(), state.repo.clone());
+    let snapshot = use_case.latest().await?;
+    Ok(Json(ExchangesResponse::from_snapshot(&snapshot)?))
 }
 
 /// Paramètres de `GET /v1/intensity/date`.

@@ -2,8 +2,8 @@
 //! jamais dans `core`). L'unité canonique est exposée explicitement.
 
 use carbonfr_core::domain::{
-    ForecastPoint, GenerationMix, GreenWindow, IntensityStats, Measurement, RollupBucket,
-    VisitStats,
+    CrossBorderSnapshot, ForecastPoint, GenerationMix, GreenWindow, IntensityStats, Measurement,
+    Neighbor, RollupBucket, VisitStats,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -44,6 +44,95 @@ impl IntensityResponse {
             methodology_version: m.methodology.version,
             vintage: m.vintage.code(),
         })
+    }
+}
+
+/// Réponse de `GET /v1/exchanges` — échanges transfrontaliers (ADR-0017).
+///
+/// Données déjà ingérées pour `acv-ademe@2` (flux ENTSO-E par frontière +
+/// intensité du voisin), exposées au pas quart d'heure. Convention de signe :
+/// **`> 0` = import vers la France**, `< 0` = export.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ExchangesResponse {
+    /// Horodatage du snapshot (RFC 3339, UTC), aligné sur `/v1/intensity/now`.
+    timestamp: String,
+    /// Solde net FR (MW) : `> 0` = la France importe, `< 0` = exporte.
+    net_flow_mw: f64,
+    /// Sens du solde : `import` | `export` | `balanced`.
+    direction: &'static str,
+    /// Total importé (MW) — somme des frontières entrantes.
+    imports_mw: f64,
+    /// Total exporté (MW) — somme des frontières sortantes.
+    exports_mw: f64,
+    /// Détail par frontière.
+    exchanges: Vec<ExchangeEntry>,
+}
+
+/// Une frontière : flux net signé FR↔voisin + intensité carbone du voisin.
+#[derive(Serialize, ToSchema)]
+struct ExchangeEntry {
+    /// Code du voisin (`be`, `de-lu`, `es`, `it-north`, `ch`, `gb`).
+    country: String,
+    /// Nom lisible du voisin.
+    country_name: &'static str,
+    /// Flux net (MW) : `> 0` = la France **importe** de ce pays, `< 0` = exporte.
+    flow_mw: f64,
+    /// Sens FR↔pays pour la flèche : `import` | `export` | `balanced`.
+    direction: &'static str,
+    /// Intensité carbone (cycle de vie ADEME) du voisin au même instant.
+    intensity: IntensityValue,
+}
+
+impl ExchangesResponse {
+    pub(crate) fn from_snapshot(s: &CrossBorderSnapshot) -> Result<Self, time::error::Format> {
+        let imports_mw = s.flows.imports_mw();
+        let exports_mw = s.flows.exports_mw();
+        let exchanges = s
+            .flows
+            .flows
+            .iter()
+            .map(|f| ExchangeEntry {
+                country: f.neighbor.slug().to_string(),
+                country_name: neighbor_name(f.neighbor),
+                flow_mw: f.flow_mw,
+                direction: flow_direction(f.flow_mw),
+                intensity: IntensityValue {
+                    value: f.neighbor_intensity.value(),
+                    unit: "gCO2eq/kWh",
+                },
+            })
+            .collect();
+        Ok(Self {
+            timestamp: to_rfc3339(s.at)?,
+            net_flow_mw: imports_mw - exports_mw,
+            direction: flow_direction(imports_mw - exports_mw),
+            imports_mw,
+            exports_mw,
+            exchanges,
+        })
+    }
+}
+
+/// Sens d'un flux signé. Zone morte de 1 MW autour de zéro → `balanced`.
+fn flow_direction(mw: f64) -> &'static str {
+    if mw > 1.0 {
+        "import"
+    } else if mw < -1.0 {
+        "export"
+    } else {
+        "balanced"
+    }
+}
+
+/// Nom lisible (FR) d'un voisin électrique.
+fn neighbor_name(n: Neighbor) -> &'static str {
+    match n {
+        Neighbor::Belgium => "Belgique",
+        Neighbor::Germany => "Allemagne",
+        Neighbor::Spain => "Espagne",
+        Neighbor::Italy => "Italie",
+        Neighbor::Switzerland => "Suisse",
+        Neighbor::GreatBritain => "Royaume-Uni",
     }
 }
 

@@ -10,8 +10,9 @@ use axum::http::{Request, StatusCode};
 use carbonfr_adapter_forecast::ClimatologyForecaster;
 use carbonfr_adapter_http::{AppState, ForecastState, StreamState, router};
 use carbonfr_core::domain::{
-    CarbonIntensity, CrossBorderSnapshot, GenerationMix, Granularity, IntensityStats, Measurement,
-    Methodology, Region, RollupBucket, TimeRange, Vintage, VisitStats,
+    CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, GenerationMix,
+    Granularity, IntensityStats, Measurement, Methodology, Neighbor, Region, RollupBucket,
+    TimeRange, Vintage, VisitStats,
 };
 use carbonfr_core::ports::{
     CrossBorderRepository, IntensityRepository, RepositoryError, VisitCounter,
@@ -336,6 +337,51 @@ async fn cors_allows_cross_origin_reads() {
             .expect("en-tête CORS présent"),
         "*"
     );
+}
+
+#[tokio::test]
+async fn exchanges_returns_neighbor_flows() {
+    let snapshot = CrossBorderSnapshot {
+        at: OffsetDateTime::UNIX_EPOCH,
+        flows: CrossBorderFlows::new(vec![
+            CrossBorderFlow {
+                neighbor: Neighbor::Belgium,
+                flow_mw: -3064.0, // la France exporte vers la Belgique
+                neighbor_intensity: CarbonIntensity::new(171.0).unwrap(),
+            },
+            CrossBorderFlow {
+                neighbor: Neighbor::Spain,
+                flow_mw: 1376.0, // la France importe d'Espagne
+                neighbor_intensity: CarbonIntensity::new(120.0).unwrap(),
+            },
+        ]),
+    };
+    let repo = FakeRepo {
+        measurement: Some(national_measurement()),
+        flows: Some(snapshot),
+        ..Default::default()
+    };
+    let response = get(build(repo), "/v1/exchanges").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = json_body(response).await;
+    // Solde net = imports (1376) − exports (3064) = −1688 → la France exporte.
+    assert_eq!(body["direction"], "export");
+    assert_eq!(body["imports_mw"], 1376.0);
+    assert_eq!(body["exports_mw"], 3064.0);
+    assert_eq!(body["exchanges"][0]["country"], "be");
+    assert_eq!(body["exchanges"][0]["country_name"], "Belgique");
+    assert_eq!(body["exchanges"][0]["direction"], "export");
+    assert_eq!(body["exchanges"][1]["country"], "es");
+    assert_eq!(body["exchanges"][1]["direction"], "import");
+    assert_eq!(body["exchanges"][1]["intensity"]["value"], 120.0);
+}
+
+#[tokio::test]
+async fn exchanges_without_data_is_404() {
+    // Mesure présente mais aucun contexte d'import → 404.
+    let response = get(app(Some(national_measurement())), "/v1/exchanges").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

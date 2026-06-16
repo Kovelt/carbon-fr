@@ -34,6 +34,7 @@ L'intensité carbone du réseau électrique français (en **gCO₂eq/kWh**) est 
 | --- | --- | --- |
 | `GET /v1/intensity/now` | Intensité courante (national + 12 régions) | ✅ |
 | `GET /v1/mix` | Mix de production par filière | ✅ |
+| `GET /v1/exchanges` | Échanges transfrontaliers par frontière (flux signé + carbone du voisin, ENTSO-E) | ✅ |
 | `GET /v1/intensity/date?from=&to=` | Historique sur un intervalle (révisé/consolidé/définitif) | ✅ |
 | `GET /v1/intensity/stats?from=&to=[&interval=hour\|day]` | Résumé (moyenne/min/max) + série agrégée | ✅ |
 | `GET /v1/intensity/forecast` | Prévision d'intensité (`climatology@1`) | ✅ |

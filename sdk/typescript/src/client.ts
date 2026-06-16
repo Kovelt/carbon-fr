@@ -145,15 +145,16 @@ export class CarbonFr {
     version?: number;
     from?: string;
     horizonHours?: number;
-    estimator?: Estimator;
   } = {}) {
+    // Pas d'`estimator` ici : /v1/intensity/forecast renvoie toujours l'intervalle
+    // complet (expected/lower/upper). L'estimateur ne concerne que greenest-window,
+    // schedule, scheduleSlots et below.
     return this.get<ForecastResponse>("/v1/intensity/forecast", {
       region: opts.region,
       methodology: opts.methodology,
       version: opts.version,
       from: opts.from,
       horizon_hours: opts.horizonHours,
-      estimator: opts.estimator,
     });
   }
 

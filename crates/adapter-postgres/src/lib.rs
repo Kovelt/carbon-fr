@@ -17,12 +17,12 @@ mod mapping;
 use async_trait::async_trait;
 use carbonfr_core::domain::{
     CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Granularity,
-    IntensityStats, LoadRecord, Measurement, Neighbor, Region, RollupBucket, TimeRange, VisitStats,
-    WeatherForecast,
+    IntensityStats, LoadRecord, Measurement, Neighbor, Region, RollupBucket, Subscription,
+    ThresholdDirection, TimeRange, VisitStats, WeatherForecast,
 };
 use carbonfr_core::ports::{
     ApiKeyRecord, ApiKeyRepository, ApiTier, ConsumptionRepository, CrossBorderRepository,
-    IntensityRepository, RepositoryError, VisitCounter, WeatherRepository,
+    IntensityRepository, RepositoryError, SubscriptionRepository, VisitCounter, WeatherRepository,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, QueryBuilder, Row};
@@ -650,5 +650,110 @@ impl ApiKeyRepository for PgIntensityRepository {
         .await
         .map_err(|e| backend(format!("insert_key : {e}")))?;
         Ok(())
+    }
+}
+
+/// Reconstruit un `Subscription` depuis une ligne. Ignore les régions/directions
+/// inconnues (donnée héritée) en les signalant par `None`.
+fn row_to_subscription(
+    row: &sqlx::postgres::PgRow,
+) -> Result<Option<Subscription>, RepositoryError> {
+    let id: String = row.try_get("id").map_err(|e| backend(e.to_string()))?;
+    let owner_key_hash: String = row
+        .try_get("owner_key_hash")
+        .map_err(|e| backend(e.to_string()))?;
+    let region_slug: String = row.try_get("region").map_err(|e| backend(e.to_string()))?;
+    let direction_code: String = row
+        .try_get("direction")
+        .map_err(|e| backend(e.to_string()))?;
+    let threshold: f64 = row
+        .try_get("threshold")
+        .map_err(|e| backend(e.to_string()))?;
+    let callback_url: String = row
+        .try_get("callback_url")
+        .map_err(|e| backend(e.to_string()))?;
+    let secret: String = row.try_get("secret").map_err(|e| backend(e.to_string()))?;
+
+    let (Some(region), Some(direction)) = (
+        Region::from_slug(&region_slug),
+        ThresholdDirection::from_code(&direction_code),
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(Subscription {
+        id,
+        owner_key_hash,
+        region,
+        threshold,
+        direction,
+        callback_url,
+        secret,
+    }))
+}
+
+#[async_trait]
+impl SubscriptionRepository for PgIntensityRepository {
+    async fn create(&self, s: &Subscription) -> Result<(), RepositoryError> {
+        sqlx::query(
+            "INSERT INTO webhook_subscription \
+             (id, owner_key_hash, region, threshold, direction, callback_url, secret) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(&s.id)
+        .bind(&s.owner_key_hash)
+        .bind(s.region.slug())
+        .bind(s.threshold)
+        .bind(s.direction.code())
+        .bind(&s.callback_url)
+        .bind(&s.secret)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| backend(format!("create subscription : {e}")))?;
+        Ok(())
+    }
+
+    async fn list_for_owner(
+        &self,
+        owner_key_hash: &str,
+    ) -> Result<Vec<Subscription>, RepositoryError> {
+        let rows = sqlx::query(
+            "SELECT id, owner_key_hash, region, threshold, direction, callback_url, secret \
+             FROM webhook_subscription WHERE owner_key_hash = $1 ORDER BY created_at ASC",
+        )
+        .bind(owner_key_hash)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| backend(format!("list_for_owner : {e}")))?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| row_to_subscription(r).transpose())
+            .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    async fn delete(&self, id: &str, owner_key_hash: &str) -> Result<bool, RepositoryError> {
+        // Filtre sur le propriétaire : on ne supprime jamais la ligne d'autrui,
+        // et on ne révèle pas son existence (même résultat qu'un id inconnu).
+        let result =
+            sqlx::query("DELETE FROM webhook_subscription WHERE id = $1 AND owner_key_hash = $2")
+                .bind(id)
+                .bind(owner_key_hash)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| backend(format!("delete subscription : {e}")))?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn active(&self) -> Result<Vec<Subscription>, RepositoryError> {
+        let rows = sqlx::query(
+            "SELECT id, owner_key_hash, region, threshold, direction, callback_url, secret \
+             FROM webhook_subscription",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| backend(format!("active subscriptions : {e}")))?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| row_to_subscription(r).transpose())
+            .collect::<Result<Vec<_>, _>>()?)
     }
 }

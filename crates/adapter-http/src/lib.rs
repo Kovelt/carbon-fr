@@ -25,6 +25,8 @@
 //! - `GET /v1/schedule`, `GET /v1/schedule/slots`, `GET /v1/intensity/below` —
 //!   scheduling carbon-aware (ADR-0014).
 //! - `GET /v1/intensity/stream` — flux **live** SSE des mises à jour (ADR-0014).
+//! - `POST`/`GET /v1/webhooks`, `DELETE /v1/webhooks/{id}` — abonnements webhook
+//!   (ADR-0016, **clé API requise**).
 //! - `GET /v1/openapi.json` — spécification OpenAPI 3.1 ; `GET /docs` — Swagger UI.
 //! - `GET /health` — sonde de disponibilité.
 //!
@@ -43,7 +45,8 @@ pub use auth::{AuthConfig, AuthState, enforce, key_fingerprint};
 use axum::Router;
 use axum::routing::{get, post};
 use carbonfr_core::ports::{
-    CrossBorderRepository, ForecastModel, IntensityRepository, VisitCounter,
+    ApiKeyRepository, CrossBorderRepository, ForecastModel, IntensityRepository,
+    SubscriptionRepository, VisitCounter,
 };
 
 pub use error::ApiError;
@@ -164,7 +167,15 @@ impl StreamState {
 /// (`merge`) — ce qui évite d'imposer le type du modèle aux handlers existants.
 pub fn router<R, F>(state: AppState<R>, forecast: ForecastState<F>, stream: StreamState) -> Router
 where
-    R: IntensityRepository + VisitCounter + CrossBorderRepository + Clone + Send + Sync + 'static,
+    R: IntensityRepository
+        + VisitCounter
+        + CrossBorderRepository
+        + ApiKeyRepository
+        + SubscriptionRepository
+        + Clone
+        + Send
+        + Sync
+        + 'static,
     F: ForecastModel + Clone + Send + Sync + 'static,
 {
     let core = Router::new()
@@ -176,6 +187,14 @@ where
         .route("/v1/factors", get(handlers::factors))
         .route("/v1/stats", get(handlers::visit_stats::<R>))
         .route("/v1/stats/visit", post(handlers::record_visit::<R>))
+        .route(
+            "/v1/webhooks",
+            post(handlers::create_webhook::<R>).get(handlers::list_webhooks::<R>),
+        )
+        .route(
+            "/v1/webhooks/{id}",
+            axum::routing::delete(handlers::delete_webhook::<R>),
+        )
         .route("/v1/openapi.json", get(carbonfr_openapi::openapi))
         .route("/docs", get(carbonfr_openapi::swagger_ui))
         .route("/health", get(handlers::health))

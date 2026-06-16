@@ -32,6 +32,14 @@ impl ApiError {
         }
     }
 
+    pub(crate) fn unauthorized(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::UNAUTHORIZED,
+            code: "unauthorized",
+            message: message.into(),
+        }
+    }
+
     /// Erreur serveur générique : ne divulgue aucun détail interne au client.
     pub(crate) fn internal() -> Self {
         Self {

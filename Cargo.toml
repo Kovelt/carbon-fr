@@ -8,6 +8,7 @@ members = [
     "crates/adapter-forecast",
     "crates/adapter-meteo",
     "crates/adapter-entsoe",
+    "crates/adapter-webhook",
     "crates/adapter-gbdt",
     "bin/server",
 ]
@@ -25,6 +26,7 @@ carbonfr-adapter-postgres = { path = "crates/adapter-postgres" }
 carbonfr-adapter-http = { path = "crates/adapter-http" }
 carbonfr-adapter-meteo = { path = "crates/adapter-meteo" }
 carbonfr-adapter-entsoe = { path = "crates/adapter-entsoe" }
+carbonfr-adapter-webhook = { path = "crates/adapter-webhook" }
 carbonfr-adapter-gbdt = { path = "crates/adapter-gbdt" }
 carbonfr-adapter-forecast = { path = "crates/adapter-forecast" }
 

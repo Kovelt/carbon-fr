@@ -59,17 +59,18 @@ use carbonfr_adapter_http::{
 use carbonfr_adapter_meteo::OpenMeteoClient;
 use carbonfr_adapter_odre::OdreClient;
 use carbonfr_adapter_postgres::PgIntensityRepository;
+use carbonfr_adapter_webhook::HttpNotifier;
 use carbonfr_core::application::{
     BackfillHistory, BacktestConsumptionForecast, BacktestForecast, BacktestReport, IngestLatest,
 };
 use carbonfr_core::domain::{
     ACV_FORECAST_ID, ACV_FORECAST_VERSION, CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams,
-    ErrorMetrics, IntensityUpdate, Region, TimeRange,
+    ErrorMetrics, IntensityUpdate, Region, TimeRange, hmac_sha256_hex, should_fire,
 };
 use carbonfr_core::ports::{
     ApiKeyRepository, ApiTier, ConsumptionRepository, ConsumptionSource, CrossBorderRepository,
-    CrossBorderSource, Eco2mixArchive, Eco2mixSource, IntensityRepository, WeatherForecastSource,
-    WeatherRepository,
+    CrossBorderSource, Eco2mixArchive, Eco2mixSource, IntensityRepository, Notifier,
+    SubscriptionRepository, WeatherForecastSource, WeatherRepository, WebhookDelivery,
 };
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, Month, OffsetDateTime};
@@ -134,6 +135,11 @@ async fn run_server() -> anyhow::Result<()> {
         config.poll_interval,
     );
 
+    // Watcher de webhooks (ADR-0016) : s'abonne au même flux que le SSE, détecte
+    // les franchissements de seuil et livre des notifications signées.
+    let webhook_watcher =
+        spawn_webhook_watcher(updates_tx.subscribe(), repo.clone(), HttpNotifier::new());
+
     // Prévision (ADR-0009) : modèle climatology@1 alimenté par le même
     // repository. Intervalles **calibrés** au démarrage par quantiles de résidus
     // par horizon (ADR-0011), repli sur la dispersion par créneau si l'historique
@@ -171,6 +177,7 @@ async fn run_server() -> anyhow::Result<()> {
         .context("serveur HTTP");
 
     poller.abort();
+    webhook_watcher.abort();
     serve_result
 }
 
@@ -1090,6 +1097,84 @@ where
                 && let Err(err) = repo.refresh_rollups().await
             {
                 warn!(error = %err, "échec du rafraîchissement des rollups");
+            }
+        }
+    })
+}
+
+/// Tâche de fond **watcher de webhooks** (ADR-0016) : consomme le flux des mises
+/// à jour nationales, détecte les **franchissements de seuil** (*edge-triggered*)
+/// des abonnements actifs, et émet une livraison **signée** par abonnement. La
+/// livraison (avec garde SSRF + retries) est déléguée au `Notifier`, hors du
+/// chemin d'évaluation.
+fn spawn_webhook_watcher<R, N>(
+    mut updates: tokio::sync::broadcast::Receiver<IntensityUpdate>,
+    repo: R,
+    notifier: N,
+) -> JoinHandle<()>
+where
+    R: SubscriptionRepository + 'static,
+    N: Notifier + Clone + 'static,
+{
+    use std::collections::HashMap;
+    tokio::spawn(async move {
+        // Dernière intensité connue par région (pour détecter le franchissement).
+        let mut previous: HashMap<Region, f64> = HashMap::new();
+        loop {
+            let update = match updates.recv().await {
+                Ok(u) => u,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            };
+            let prev = previous.get(&update.region).copied();
+            let current = update.intensity.value();
+            previous.insert(update.region, current);
+
+            let subscriptions = match repo.active().await {
+                Ok(s) => s,
+                Err(err) => {
+                    warn!(error = %err, "watcher webhooks : lecture des abonnements impossible");
+                    continue;
+                }
+            };
+            let Ok(timestamp) = update.at.format(&Rfc3339) else {
+                continue;
+            };
+
+            for sub in subscriptions
+                .into_iter()
+                .filter(|s| s.region == update.region)
+            {
+                if !should_fire(sub.direction, sub.threshold, prev, current) {
+                    continue;
+                }
+                // Corps JSON (valeurs contrôlées : slugs, hex, nombres → pas
+                // d'échappement requis) + signature HMAC du secret de l'abonnement.
+                let body = format!(
+                    "{{\"subscription_id\":\"{}\",\"region\":\"{}\",\"timestamp\":\"{}\",\"intensity\":{},\"threshold\":{},\"direction\":\"{}\",\"unit\":\"gCO2eq/kWh\"}}",
+                    sub.id,
+                    update.region.slug(),
+                    timestamp,
+                    current,
+                    sub.threshold,
+                    sub.direction.code(),
+                );
+                let signature = hmac_sha256_hex(sub.secret.as_bytes(), body.as_bytes());
+                let delivery = WebhookDelivery {
+                    url: sub.callback_url.clone(),
+                    body,
+                    signature,
+                };
+                // Livraison hors du chemin d'évaluation (une par franchissement).
+                let notifier = notifier.clone();
+                let id = sub.id.clone();
+                tokio::spawn(async move {
+                    if let Err(err) = notifier.deliver(&delivery).await {
+                        warn!(subscription = %id, error = %err, "livraison webhook échouée");
+                    } else {
+                        info!(subscription = %id, "webhook livré");
+                    }
+                });
             }
         }
     })

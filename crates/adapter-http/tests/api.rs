@@ -28,6 +28,10 @@ struct FakeRepo {
     visits: Arc<Mutex<HashSet<(String, Date)>>>,
     flows: Option<CrossBorderSnapshot>,
     flow_series: Vec<CrossBorderSnapshot>,
+    /// Empreintes de clés API valides (auth webhooks).
+    api_keys: std::collections::HashSet<String>,
+    /// Abonnements webhook en mémoire.
+    subs: Arc<Mutex<Vec<carbonfr_core::domain::Subscription>>>,
 }
 
 #[async_trait]
@@ -143,6 +147,63 @@ impl CrossBorderRepository for FakeRepo {
             .into_iter()
             .filter(|s| range.contains(s.at))
             .collect())
+    }
+}
+
+#[async_trait]
+impl carbonfr_core::ports::ApiKeyRepository for FakeRepo {
+    async fn resolve(
+        &self,
+        key_hash: &str,
+    ) -> Result<Option<carbonfr_core::ports::ApiKeyRecord>, RepositoryError> {
+        Ok(self
+            .api_keys
+            .contains(key_hash)
+            .then(|| carbonfr_core::ports::ApiKeyRecord {
+                tier: carbonfr_core::ports::ApiTier::Free,
+                label: "test".to_string(),
+            }))
+    }
+    async fn insert_key(
+        &self,
+        _: &str,
+        _: carbonfr_core::ports::ApiTier,
+        _: &str,
+    ) -> Result<(), RepositoryError> {
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl carbonfr_core::ports::SubscriptionRepository for FakeRepo {
+    async fn create(
+        &self,
+        subscription: &carbonfr_core::domain::Subscription,
+    ) -> Result<(), RepositoryError> {
+        self.subs.lock().unwrap().push(subscription.clone());
+        Ok(())
+    }
+    async fn list_for_owner(
+        &self,
+        owner_key_hash: &str,
+    ) -> Result<Vec<carbonfr_core::domain::Subscription>, RepositoryError> {
+        Ok(self
+            .subs
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| s.owner_key_hash == owner_key_hash)
+            .cloned()
+            .collect())
+    }
+    async fn delete(&self, id: &str, owner_key_hash: &str) -> Result<bool, RepositoryError> {
+        let mut subs = self.subs.lock().unwrap();
+        let before = subs.len();
+        subs.retain(|s| !(s.id == id && s.owner_key_hash == owner_key_hash));
+        Ok(subs.len() < before)
+    }
+    async fn active(&self) -> Result<Vec<carbonfr_core::domain::Subscription>, RepositoryError> {
+        Ok(self.subs.lock().unwrap().clone())
     }
 }
 
@@ -983,4 +1044,96 @@ async fn auth_valid_key_gets_higher_limit() {
         let ok = get_auth(app.clone(), "/health", Some("good-key")).await;
         assert_eq!(ok.status(), StatusCode::OK);
     }
+}
+
+// ── Endpoints webhooks (ADR-0016) ─────────────────────────────────────────────
+
+fn webhook_app() -> axum::Router {
+    let mut keys = std::collections::HashSet::new();
+    keys.insert(key_fingerprint("wh-key"));
+    build(FakeRepo {
+        api_keys: keys,
+        ..Default::default()
+    })
+}
+
+async fn send(
+    app: axum::Router,
+    method: &str,
+    uri: &str,
+    bearer: Option<&str>,
+    body: Option<&str>,
+) -> axum::response::Response {
+    let mut req = Request::builder().method(method).uri(uri);
+    if let Some(token) = bearer {
+        req = req.header("authorization", format!("Bearer {token}"));
+    }
+    if body.is_some() {
+        req = req.header("content-type", "application/json");
+    }
+    let body = Body::from(body.unwrap_or("").to_string());
+    app.oneshot(req.body(body).unwrap()).await.unwrap()
+}
+
+#[tokio::test]
+async fn webhook_create_requires_key() {
+    let body =
+        r#"{"threshold":50,"direction":"below","callback_url":"https://hooks.example.com/c"}"#;
+    let resp = send(webhook_app(), "POST", "/v1/webhooks", None, Some(body)).await;
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn webhook_create_rejects_ssrf_url() {
+    let body = r#"{"threshold":50,"direction":"below","callback_url":"https://127.0.0.1/c"}"#;
+    let resp = send(
+        webhook_app(),
+        "POST",
+        "/v1/webhooks",
+        Some("wh-key"),
+        Some(body),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn webhook_create_list_delete_roundtrip() {
+    let app = webhook_app();
+    let body =
+        r#"{"threshold":50,"direction":"below","callback_url":"https://hooks.example.com/c"}"#;
+
+    // Création → 201 + secret + id.
+    let created = send(
+        app.clone(),
+        "POST",
+        "/v1/webhooks",
+        Some("wh-key"),
+        Some(body),
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let cbody = json_body(created).await;
+    assert!(cbody["secret"].as_str().unwrap().len() >= 32);
+    let id = cbody["id"].as_str().unwrap().to_string();
+
+    // Liste → contient l'abonnement (sans secret).
+    let listed = send(app.clone(), "GET", "/v1/webhooks", Some("wh-key"), None).await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let lbody = json_body(listed).await;
+    assert_eq!(lbody["count"], 1);
+    assert!(lbody["webhooks"][0].get("secret").is_none());
+
+    // Suppression → 204, puis liste vide.
+    let deleted = send(
+        app.clone(),
+        "DELETE",
+        &format!("/v1/webhooks/{id}"),
+        Some("wh-key"),
+        None,
+    )
+    .await;
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    let after = send(app, "GET", "/v1/webhooks", Some("wh-key"), None).await;
+    assert_eq!(json_body(after).await["count"], 0);
 }

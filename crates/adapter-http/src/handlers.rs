@@ -2,15 +2,19 @@
 //! le résultat en DTO JSON.
 
 use axum::Json;
-use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use carbonfr_core::application::{
     CarbonAwareScheduler, FindGreenestWindow, GetConsumptionIntensity, GetCurrentIntensity,
     GetIntensityHistory, GetIntensityStats,
 };
-use carbonfr_core::domain::{Granularity, Region, TimeRange, WindowEstimator};
+use carbonfr_core::domain::{
+    Granularity, Region, Subscription, ThresholdDirection, TimeRange, WindowEstimator,
+    validate_webhook_url,
+};
 use carbonfr_core::ports::{
-    CrossBorderRepository, ForecastModel, IntensityRepository, VisitCounter,
+    ApiKeyRepository, CrossBorderRepository, ForecastModel, IntensityRepository,
+    SubscriptionRepository, VisitCounter,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -19,9 +23,10 @@ use time::{Duration, OffsetDateTime};
 use utoipa::IntoParams;
 
 use crate::dto::{
-    FactorsResponse, ForecastResponse, GreenestWindowResponse, HistoryResponse, IntensityResponse,
-    MethodologiesResponse, MixResponse, ScheduleResponse, SlotsResponse, StatsResponse,
-    StreamEventBody, VisitStatsResponse,
+    CreateWebhookRequest, CreatedWebhookResponse, FactorsResponse, ForecastResponse,
+    GreenestWindowResponse, HistoryResponse, IntensityResponse, MethodologiesResponse, MixResponse,
+    ScheduleResponse, SlotsResponse, StatsResponse, StreamEventBody, VisitStatsResponse,
+    WebhookListResponse,
 };
 use crate::error::{ApiError, ErrorBody};
 use crate::{AppState, ForecastState};
@@ -803,6 +808,124 @@ pub(crate) async fn intensity_stream(
     });
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+/// Authentifie la requête par clé API et renvoie l'**empreinte** de la clé
+/// (le propriétaire d'abonnement, ADR-0016 §1). `401` si la clé manque ou est
+/// inconnue. Les webhooks **exigent toujours** une clé (indépendamment du quota
+/// global opt-in de l'ADR-0015).
+async fn authenticate_owner<R: ApiKeyRepository>(
+    repo: &R,
+    headers: &HeaderMap,
+) -> Result<String, ApiError> {
+    let token = crate::auth::bearer_token(headers)
+        .ok_or_else(|| ApiError::unauthorized("clé API requise (Authorization: Bearer …)"))?;
+    let hash = crate::auth::key_fingerprint(&token);
+    match repo.resolve(&hash).await {
+        Ok(Some(_)) => Ok(hash),
+        Ok(None) => Err(ApiError::unauthorized("clé API inconnue")),
+        Err(_) => Err(ApiError::internal()),
+    }
+}
+
+/// `POST /v1/webhooks` — crée un abonnement webhook (ADR-0016). **Auth requise.**
+/// Le `secret` de signature est renvoyé **une seule fois**.
+#[utoipa::path(
+    post,
+    path = "/v1/webhooks",
+    request_body = CreateWebhookRequest,
+    responses(
+        (status = 201, description = "Abonnement créé (secret affiché une fois)", body = CreatedWebhookResponse),
+        (status = 400, description = "Paramètre invalide ou URL refusée (anti-SSRF)", body = ErrorBody),
+        (status = 401, description = "Clé API requise/inconnue", body = ErrorBody),
+    ),
+    tag = "webhooks"
+)]
+pub(crate) async fn create_webhook<R>(
+    State(state): State<AppState<R>>,
+    headers: HeaderMap,
+    Json(request): Json<CreateWebhookRequest>,
+) -> Result<(StatusCode, Json<CreatedWebhookResponse>), ApiError>
+where
+    R: ApiKeyRepository + SubscriptionRepository + Clone + Send + Sync + 'static,
+{
+    let owner = authenticate_owner(&state.repo, &headers).await?;
+    let region = resolve_region(&request.region)?;
+    let direction = ThresholdDirection::from_code(&request.direction)
+        .ok_or_else(|| ApiError::bad_request("`direction` doit valoir `below` ou `above`"))?;
+    if !request.threshold.is_finite() || request.threshold < 0.0 {
+        return Err(ApiError::bad_request("`threshold` doit être positif"));
+    }
+    // Garde anti-SSRF à l'inscription (re-validée à la livraison, ADR-0016 §3).
+    validate_webhook_url(&request.callback_url)
+        .map_err(|e| ApiError::bad_request(format!("`callback_url` : {e}")))?;
+
+    let id = crate::auth::random_hex(16).ok_or_else(ApiError::internal)?;
+    let secret = crate::auth::random_hex(32).ok_or_else(ApiError::internal)?;
+    let subscription = Subscription {
+        id,
+        owner_key_hash: owner,
+        region,
+        threshold: request.threshold,
+        direction,
+        callback_url: request.callback_url,
+        secret,
+    };
+    state.repo.create(&subscription).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(CreatedWebhookResponse::from_subscription(&subscription)),
+    ))
+}
+
+/// `GET /v1/webhooks` — liste les abonnements de la clé. **Auth requise.**
+#[utoipa::path(
+    get,
+    path = "/v1/webhooks",
+    responses(
+        (status = 200, description = "Abonnements de la clé", body = WebhookListResponse),
+        (status = 401, description = "Clé API requise/inconnue", body = ErrorBody),
+    ),
+    tag = "webhooks"
+)]
+pub(crate) async fn list_webhooks<R>(
+    State(state): State<AppState<R>>,
+    headers: HeaderMap,
+) -> Result<Json<WebhookListResponse>, ApiError>
+where
+    R: ApiKeyRepository + SubscriptionRepository + Clone + Send + Sync + 'static,
+{
+    let owner = authenticate_owner(&state.repo, &headers).await?;
+    let subscriptions = state.repo.list_for_owner(&owner).await?;
+    Ok(Json(WebhookListResponse::new(&subscriptions)))
+}
+
+/// `DELETE /v1/webhooks/{id}` — supprime un abonnement **possédé par la clé**.
+#[utoipa::path(
+    delete,
+    path = "/v1/webhooks/{id}",
+    params(("id" = String, Path, description = "Identifiant d'abonnement")),
+    responses(
+        (status = 204, description = "Supprimé"),
+        (status = 401, description = "Clé API requise/inconnue", body = ErrorBody),
+        (status = 404, description = "Abonnement introuvable", body = ErrorBody),
+    ),
+    tag = "webhooks"
+)]
+pub(crate) async fn delete_webhook<R>(
+    State(state): State<AppState<R>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<StatusCode, ApiError>
+where
+    R: ApiKeyRepository + SubscriptionRepository + Clone + Send + Sync + 'static,
+{
+    let owner = authenticate_owner(&state.repo, &headers).await?;
+    if state.repo.delete(&id, &owner).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::not_found("abonnement introuvable"))
+    }
 }
 
 /// Adresse IP du client, lue des en-têtes posés par le reverse proxy

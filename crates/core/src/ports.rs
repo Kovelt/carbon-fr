@@ -9,7 +9,7 @@ use time::{Date, Duration, OffsetDateTime};
 
 use crate::domain::{
     CrossBorderSnapshot, ForecastPoint, Granularity, IntensityStats, LoadRecord, Measurement,
-    Region, RollupBucket, TimeRange, VisitStats, WeatherForecast,
+    Region, RollupBucket, Subscription, TimeRange, VisitStats, WeatherForecast,
 };
 
 /// Erreur de récupération depuis une source amont (ODRÉ, ou source de secours).
@@ -248,6 +248,47 @@ pub trait ApiKeyRepository: Send + Sync {
         tier: ApiTier,
         label: &str,
     ) -> Result<(), RepositoryError>;
+}
+
+/// Port sortant : **registre des abonnements webhook** (ADR-0016). Possédés par
+/// une clé (empreinte). Consommé par les endpoints de gestion **et** par le
+/// watcher de fond (`active`).
+#[async_trait]
+pub trait SubscriptionRepository: Send + Sync {
+    /// Crée un abonnement.
+    async fn create(&self, subscription: &Subscription) -> Result<(), RepositoryError>;
+
+    /// Liste les abonnements d'un propriétaire (par empreinte de clé).
+    async fn list_for_owner(
+        &self,
+        owner_key_hash: &str,
+    ) -> Result<Vec<Subscription>, RepositoryError>;
+
+    /// Supprime un abonnement **possédé par** `owner_key_hash`. `true` si une
+    /// ligne a été supprimée (sinon : inexistant ou non possédé → pas de fuite).
+    async fn delete(&self, id: &str, owner_key_hash: &str) -> Result<bool, RepositoryError>;
+
+    /// Tous les abonnements actifs (pour l'évaluation par le watcher).
+    async fn active(&self) -> Result<Vec<Subscription>, RepositoryError>;
+}
+
+/// Une livraison de webhook prête à émettre : corps JSON + signature HMAC.
+#[derive(Debug, Clone)]
+pub struct WebhookDelivery {
+    pub url: String,
+    pub body: String,
+    /// Signature `sha256=<hex>` pour l'en-tête `X-Carbonfr-Signature`.
+    pub signature: String,
+}
+
+/// Port sortant : **émission** d'une livraison de webhook (ADR-0016). La seule
+/// frontière par laquelle `carbon-fr` fait une requête **sortante** ; l'adapter
+/// re-valide l'IP à la résolution (anti-SSRF TOCTOU) avant d'émettre.
+#[async_trait]
+pub trait Notifier: Send + Sync {
+    /// Émet la livraison. `Err` si l'endpoint échoue (l'appelant gère retries /
+    /// désactivation).
+    async fn deliver(&self, delivery: &WebhookDelivery) -> Result<(), SourceError>;
 }
 
 /// Port sortant : compteur de consultations (visiteurs).

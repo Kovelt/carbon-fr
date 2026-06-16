@@ -1,0 +1,17 @@
+[package]
+name = "carbonfr-adapter-webhook"
+version = "0.0.0"
+description = "Adapter sortant carbon-fr : livraison de webhooks signés (Notifier), avec re-validation anti-SSRF (ADR-0016)."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+carbonfr-core = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["net", "time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

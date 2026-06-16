@@ -21,6 +21,7 @@ carbonfr-adapter-http = { workspace = true }
 carbonfr-adapter-forecast = { workspace = true }
 carbonfr-adapter-meteo = { workspace = true }
 carbonfr-adapter-entsoe = { workspace = true }
+carbonfr-adapter-webhook = { workspace = true }
 carbonfr-adapter-gbdt = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true, features = [

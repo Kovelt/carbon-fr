@@ -44,6 +44,7 @@ bru run --env Local
 | Schedule — créneau + économie | `200`, `savings` |
 | Schedule — créneaux divisibles (lowest-k) | `200`, `count` |
 | Intensité — créneaux sous un seuil | `200`, `slots` |
+| Webhook — créer (clé requise) | `201`, `id`, `secret` (nécessite `{{apiKey}}`) |
 | OpenAPI — spec | `200`, `openapi: 3.1.0` |
 | Erreur — région en rte-direct | `404 no_data` |
 | Erreur — région inconnue | `400 bad_request` |

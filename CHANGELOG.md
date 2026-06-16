@@ -123,6 +123,23 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   (jointure mix × contexte d'import le plus proche), agrégats `summarize`/
   `bucketize` calculés dans le domaine (la série `@2` n'est pas matérialisée).
   `@2` n'existe que là où le contexte d'import a été ingéré.
+- **Webhooks — fondation de sécurité** (ADR-0016, tranche A) : tout le code
+  **dangereux** posé d'abord, **pur et testé à froid** dans `core` — déclenchement
+  **edge-triggered** (`should_fire` : notifie au *franchissement* de seuil, pas à
+  chaque cycle), validation **anti-SSRF** de l'URL de rappel (`validate_webhook_url`
+  : HTTPS only + deny-list des IP privées/loopback/link-local/réservées, IPv4 et
+  IPv6), **signature HMAC-SHA256** tout-Rust (`hmac_sha256_hex`, sans nouvelle
+  dépendance, **validée contre les vecteurs RFC 4231**), modèle `Subscription`.
+  Ports `SubscriptionRepository` et `Notifier`. Débloqué par l'*ownership* des
+  clés API.
+- **Webhooks — store, livraison, watcher, endpoints** (ADR-0016, tranche B) :
+  table `webhook_subscription` (CRUD **scopé au propriétaire**) ; crate
+  `carbonfr-adapter-webhook` (`HttpNotifier`) qui **re-valide l'IP à la résolution
+  DNS** (parade TOCTOU), **refuse les redirections** et **réessaie** à *backoff*
+  borné ; **watcher** de fond branché sur le flux `IntensityUpdate` (détecte les
+  franchissements, signe en HMAC, délègue la livraison) ; endpoints
+  `POST`/`GET /v1/webhooks` et `DELETE /v1/webhooks/{id}` (**clé API requise**, le
+  secret de signature n'est affiché qu'à la création).
 - **Tier hébergé — clés API + quota au bord** (ADR-0015, tranche A) : middleware
   d'authentification (`Authorization: Bearer …`) et de **quota par minute**
   (`401` clé inconnue, `429` quota dépassé + en-têtes `RateLimit-*`/`Retry-After`),

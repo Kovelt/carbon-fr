@@ -24,7 +24,8 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0012](0012-modele-prevision-ml-gbdt.md) | Modèle de prévision ML (`GbdtForecaster` tout-Rust + météo) | Accepté (engagé) |
 | [0013](0013-prevision-acv-ademe.md) | Prévision `acv-ademe` (prévoir les entrées → calculateur) | Proposé |
 | [0014](0014-usage-scheduling-streaming.md) | Usage : primitives carbon-aware + livraison live (SSE) | Proposé |
-| [0015](0015-tier-heberge-cles-api.md) | Tier hébergé : clés API en couche de bord, anonyme par défaut | Proposé |
+| [0015](0015-tier-heberge-cles-api.md) | Tier hébergé : clés API en couche de bord, anonyme par défaut | Accepté (engagé) |
+| [0016](0016-webhooks.md) | Webhooks : notification sortante signée, gardée par l'ownership de clé | Accepté (engagé) |
 
 ## Gabarit
 

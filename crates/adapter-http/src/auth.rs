@@ -98,7 +98,7 @@ fn hash_key(key: &str) -> String {
 }
 
 /// Jeton `Authorization: Bearer …`, le cas échéant.
-fn bearer_token(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<String> {
     let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
     let token = value
         .strip_prefix("Bearer ")
@@ -211,6 +211,18 @@ pub async fn enforce(State(state): State<AuthState>, request: Request, next: Nex
 /// Empreinte d'une clé en clair, pour la délivrance (`mint-key`).
 pub fn key_fingerprint(key: &str) -> String {
     hash_key(key)
+}
+
+/// Jeton aléatoire hexadécimal de `bytes` octets (`/dev/urandom`) — id et secret
+/// d'abonnement webhook. `None` si l'entropie système est inaccessible.
+pub(crate) fn random_hex(bytes: usize) -> Option<String> {
+    use std::io::Read;
+    let mut buf = vec![0u8; bytes];
+    std::fs::File::open("/dev/urandom")
+        .ok()?
+        .read_exact(&mut buf)
+        .ok()?;
+    Some(buf.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 #[cfg(test)]

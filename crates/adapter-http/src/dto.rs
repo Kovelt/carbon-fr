@@ -5,7 +5,7 @@ use carbonfr_core::domain::{
     ForecastPoint, GenerationMix, GreenWindow, IntensityStats, Measurement, RollupBucket,
     VisitStats,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use utoipa::ToSchema;
@@ -631,5 +631,79 @@ impl StreamEventBody {
             methodology_version: u.methodology.version,
             unit: "gCO2eq/kWh",
         })
+    }
+}
+
+/// Corps de `POST /v1/webhooks` (ADR-0016).
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreateWebhookRequest {
+    /// Slug de région à surveiller. National par défaut.
+    pub region: Option<String>,
+    /// Seuil d'intensité (gCO₂eq/kWh).
+    pub threshold: f64,
+    /// Sens du franchissement : `below` ou `above`.
+    pub direction: String,
+    /// URL HTTPS de rappel (validée anti-SSRF).
+    pub callback_url: String,
+}
+
+/// Réponse de création : inclut le **secret** (affiché une seule fois).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CreatedWebhookResponse {
+    id: String,
+    /// Secret de signature HMAC — **à conserver, non ré-affiché**.
+    secret: String,
+    region: String,
+    threshold: f64,
+    direction: &'static str,
+    callback_url: String,
+}
+
+impl CreatedWebhookResponse {
+    pub(crate) fn from_subscription(s: &carbonfr_core::domain::Subscription) -> Self {
+        Self {
+            id: s.id.clone(),
+            secret: s.secret.clone(),
+            region: s.region.slug().to_string(),
+            threshold: s.threshold,
+            direction: s.direction.code(),
+            callback_url: s.callback_url.clone(),
+        }
+    }
+}
+
+/// Résumé d'un abonnement (sans le secret).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct WebhookSummary {
+    id: String,
+    region: String,
+    threshold: f64,
+    direction: &'static str,
+    callback_url: String,
+}
+
+/// Réponse de `GET /v1/webhooks`.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct WebhookListResponse {
+    count: usize,
+    webhooks: Vec<WebhookSummary>,
+}
+
+impl WebhookListResponse {
+    pub(crate) fn new(subs: &[carbonfr_core::domain::Subscription]) -> Self {
+        let webhooks = subs
+            .iter()
+            .map(|s| WebhookSummary {
+                id: s.id.clone(),
+                region: s.region.slug().to_string(),
+                threshold: s.threshold,
+                direction: s.direction.code(),
+                callback_url: s.callback_url.clone(),
+            })
+            .collect::<Vec<_>>();
+        Self {
+            count: webhooks.len(),
+            webhooks,
+        }
     }
 }

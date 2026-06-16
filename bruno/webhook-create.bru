@@ -1,0 +1,30 @@
+meta {
+  name: Webhook — créer (clé requise)
+  type: http
+  seq: 25
+}
+
+post {
+  url: {{baseUrl}}/v1/webhooks
+  body: json
+  auth: none
+}
+
+headers {
+  Authorization: Bearer {{apiKey}}
+}
+
+body:json {
+  {
+    "region": "national",
+    "threshold": 50,
+    "direction": "below",
+    "callback_url": "https://hooks.example.com/carbon"
+  }
+}
+
+assert {
+  res.status: eq 201
+  res.body.id: isString
+  res.body.secret: isString
+}

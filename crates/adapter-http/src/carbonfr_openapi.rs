@@ -40,6 +40,9 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::handlers::intensity_stream,
         crate::handlers::visit_stats,
         crate::handlers::record_visit,
+        crate::handlers::create_webhook,
+        crate::handlers::list_webhooks,
+        crate::handlers::delete_webhook,
         crate::handlers::health,
     ),
     components(schemas(
@@ -57,6 +60,10 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::dto::SavingsBody,
         crate::dto::SlotsResponse,
         crate::dto::SlotBody,
+        crate::dto::CreateWebhookRequest,
+        crate::dto::CreatedWebhookResponse,
+        crate::dto::WebhookListResponse,
+        crate::dto::WebhookSummary,
         crate::dto::VisitStatsResponse,
         crate::error::ErrorBody,
     )),
@@ -66,6 +73,7 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         (name = "méthodologie", description = "Méthodes de calcul & facteurs (ADR-0010)"),
         (name = "prévision", description = "Prévision d'intensité (ADR-0009)"),
         (name = "usage", description = "Scheduling carbon-aware (ADR-0014)"),
+        (name = "webhooks", description = "Abonnements webhook (ADR-0016, clé requise)"),
         (name = "opérations", description = "Exploitation & statistiques"),
     ),
 )]

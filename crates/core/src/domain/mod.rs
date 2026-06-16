@@ -24,6 +24,7 @@ mod time_range;
 mod update;
 mod visit;
 mod weather;
+mod webhook;
 mod window;
 
 pub use calculator::{
@@ -52,4 +53,8 @@ pub use time_range::TimeRange;
 pub use update::IntensityUpdate;
 pub use visit::VisitStats;
 pub use weather::WeatherForecast;
+pub use webhook::{
+    Subscription, ThresholdDirection, WebhookUrlError, hmac_sha256_hex, is_public_ip, should_fire,
+    validate_webhook_url, webhook_host,
+};
 pub use window::{GreenWindow, WindowEstimator, greenest_window};

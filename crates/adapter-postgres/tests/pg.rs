@@ -701,3 +701,45 @@ async fn api_key_resolve_and_upsert() {
         .unwrap();
     assert_eq!(repo.resolve(hash).await.unwrap().unwrap().label, "renomme");
 }
+
+#[tokio::test]
+async fn webhook_subscription_crud_scoped_to_owner() {
+    let Some(repo) = setup("test-pg-webhook").await else {
+        return;
+    };
+    use carbonfr_core::domain::{Subscription, ThresholdDirection};
+    use carbonfr_core::ports::SubscriptionRepository;
+
+    let id = "wh-test-1";
+    sqlx::query("DELETE FROM webhook_subscription WHERE id = $1")
+        .bind(id)
+        .execute(repo.pool())
+        .await
+        .expect("nettoyage");
+
+    let sub = Subscription {
+        id: id.to_string(),
+        owner_key_hash: "owner-aaa".to_string(),
+        region: Region::National,
+        threshold: 50.0,
+        direction: ThresholdDirection::Below,
+        callback_url: "https://hooks.example.com/c".to_string(),
+        secret: "s3cr3t".to_string(),
+    };
+    repo.create(&sub).await.unwrap();
+
+    // Listé pour son propriétaire, pas pour un autre.
+    assert_eq!(repo.list_for_owner("owner-aaa").await.unwrap().len(), 1);
+    assert!(repo.list_for_owner("owner-bbb").await.unwrap().is_empty());
+
+    // active() le retourne.
+    assert!(repo.active().await.unwrap().iter().any(|s| s.id == id));
+
+    // Suppression par un autre propriétaire : aucun effet.
+    assert!(!repo.delete(id, "owner-bbb").await.unwrap());
+    assert_eq!(repo.list_for_owner("owner-aaa").await.unwrap().len(), 1);
+
+    // Suppression par le propriétaire : effective.
+    assert!(repo.delete(id, "owner-aaa").await.unwrap());
+    assert!(repo.list_for_owner("owner-aaa").await.unwrap().is_empty());
+}

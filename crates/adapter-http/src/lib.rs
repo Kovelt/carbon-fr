@@ -32,10 +32,13 @@
 //! (national par défaut) et `?methodology=<id>` (`rte-direct` par défaut ;
 //! `acv-ademe` pour la vue cycle de vie, ADR-0008).
 
+mod auth;
 mod carbonfr_openapi;
 mod dto;
 mod error;
 mod handlers;
+
+pub use auth::{AuthConfig, AuthState, enforce, key_fingerprint};
 
 use axum::Router;
 use axum::routing::{get, post};

@@ -51,6 +51,15 @@ pub(crate) struct ErrorBody {
     pub message: String,
 }
 
+impl ErrorBody {
+    pub(crate) fn new(error: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            error,
+            message: message.into(),
+        }
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let body = ErrorBody {

@@ -14,6 +14,8 @@
 //!   (ADR-0011).
 //! - `train` : entraîne le modèle ML GBDT (ADR-0012) → artefact, et compare
 //!   `gbdt@1` à `climatology@1` au backtest (garde de promotion).
+//! - `mint-key` : délivre une clé API tier gratuit (ADR-0015) — stocke son
+//!   empreinte, affiche la clé une seule fois.
 //!
 //! ## Configuration (variables d'environnement)
 //!
@@ -37,6 +39,10 @@
 //! | `CARBONFR_TRAIN_FROM`/`_TO`  | 120 j av. test | `train` : période d'entraînement   |
 //! | `CARBONFR_TRAIN_ORIGIN_STEP_HOURS` | `6`      | `train` : espacement des origines  |
 //! | `CARBONFR_GBDT_MODEL`        | `gbdt.model`   | `train` : chemin de l'artefact GBDT |
+//! | `CARBONFR_RATELIMIT_ENABLED` | `0` (off)      | tier hébergé : auth+quota (ADR-0015) |
+//! | `CARBONFR_RATELIMIT_ANON_PER_MIN` | `60`      | quota anonyme (req/min)            |
+//! | `CARBONFR_RATELIMIT_FREE_PER_MIN` | `600`     | quota clé gratuite (req/min)        |
+//! | `CARBONFR_KEY_LABEL`         | `` (vide)      | `mint-key` : libellé de la clé      |
 //! | `RUST_LOG`                   | `info`         | filtre de logs (`tracing`)        |
 
 use std::net::SocketAddr;
@@ -47,7 +53,9 @@ use carbonfr_adapter_forecast::{AcvAdemeForecaster, ClimatologyForecaster};
 use carbonfr_adapter_gbdt::{
     GbdtForecaster, GbdtHyperParams, build_training_examples, train_model,
 };
-use carbonfr_adapter_http::{AppState, ForecastState, StreamState, router};
+use carbonfr_adapter_http::{
+    AppState, AuthConfig, AuthState, ForecastState, StreamState, enforce, key_fingerprint, router,
+};
 use carbonfr_adapter_meteo::OpenMeteoClient;
 use carbonfr_adapter_odre::OdreClient;
 use carbonfr_adapter_postgres::PgIntensityRepository;
@@ -59,8 +67,9 @@ use carbonfr_core::domain::{
     ErrorMetrics, IntensityUpdate, Region, TimeRange,
 };
 use carbonfr_core::ports::{
-    ConsumptionRepository, ConsumptionSource, CrossBorderRepository, CrossBorderSource,
-    Eco2mixArchive, Eco2mixSource, IntensityRepository, WeatherForecastSource, WeatherRepository,
+    ApiKeyRepository, ApiTier, ConsumptionRepository, ConsumptionSource, CrossBorderRepository,
+    CrossBorderSource, Eco2mixArchive, Eco2mixSource, IntensityRepository, WeatherForecastSource,
+    WeatherRepository,
 };
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, Month, OffsetDateTime};
@@ -81,9 +90,10 @@ async fn main() -> anyhow::Result<()> {
         Some("backtest-sweep") => run_backtest_sweep().await,
         Some("backtest-bands") => run_backtest_bands().await,
         Some("train") => run_train().await,
+        Some("mint-key") => run_mint_key().await,
         Some(other) => {
             anyhow::bail!(
-                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `train`, ou aucune pour servir l'API)"
+                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `train`, `mint-key`, ou aucune pour servir l'API)"
             )
         }
     }
@@ -137,12 +147,19 @@ async fn run_server() -> anyhow::Result<()> {
     let forecast_state = ForecastState::new(forecaster, model)
         .with_consumption(std::sync::Arc::new(acv_forecaster), acv_model);
 
-    let mut state = AppState::new(repo);
+    let mut state = AppState::new(repo.clone());
     if let Some(salt) = config.visit_salt {
         state = state.with_visit_salt(salt);
     }
     let stream_state = StreamState::new(updates_tx);
-    let app = router(state, forecast_state, stream_state);
+    let mut app = router(state, forecast_state, stream_state);
+
+    // Tier hébergé (ADR-0015) : middleware clés API + quota, **opt-in**. Désactivé
+    // par défaut → l'API reste anonyme et sans limite (parité self-hosting).
+    if let Some(auth_state) = build_auth_state(repo.clone()) {
+        info!("tier hébergé activé : auth par clé + quota par minute");
+        app = app.layer(axum::middleware::from_fn_with_state(auth_state, enforce));
+    }
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("écoute sur {}", config.bind))?;
@@ -155,6 +172,68 @@ async fn run_server() -> anyhow::Result<()> {
 
     poller.abort();
     serve_result
+}
+
+/// Construit l'état du middleware d'auth/quota si le tier hébergé est **activé**
+/// (`CARBONFR_RATELIMIT_ENABLED=1`), sinon `None` (mode anonyme par défaut,
+/// ADR-0015 §6). Limites surchargeables par env.
+fn build_auth_state(repo: PgIntensityRepository) -> Option<AuthState> {
+    let enabled = matches!(
+        std::env::var("CARBONFR_RATELIMIT_ENABLED").as_deref(),
+        Ok("1") | Ok("true")
+    );
+    if !enabled {
+        return None;
+    }
+    let env_u32 = |name: &str, default: u32| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    };
+    let defaults = AuthConfig::default();
+    let config = AuthConfig {
+        anonymous_per_min: env_u32(
+            "CARBONFR_RATELIMIT_ANON_PER_MIN",
+            defaults.anonymous_per_min,
+        ),
+        free_per_min: env_u32("CARBONFR_RATELIMIT_FREE_PER_MIN", defaults.free_per_min),
+    };
+    let keys: std::sync::Arc<dyn ApiKeyRepository> = std::sync::Arc::new(repo);
+    Some(AuthState::new(keys, config))
+}
+
+/// Mode `mint-key` : génère une clé API gratuite, en stocke l'empreinte, et
+/// l'affiche **une seule fois** (ADR-0015). Libellé via `CARBONFR_KEY_LABEL`.
+async fn run_mint_key() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let label = std::env::var("CARBONFR_KEY_LABEL").unwrap_or_default();
+
+    let key = generate_api_key().context("génération de la clé")?;
+    let hash = key_fingerprint(&key);
+    repo.insert_key(&hash, ApiTier::Free, &label)
+        .await
+        .context("enregistrement de la clé")?;
+
+    // La clé en clair n'est jamais stockée ni re-affichable : on ne garde que
+    // son empreinte. À transmettre une seule fois au porteur.
+    println!("Clé API (tier gratuit) — à conserver, non ré-affichée :");
+    println!("{key}");
+    Ok(())
+}
+
+/// Génère une clé aléatoire `cfr_<64 hex>` (32 octets de `/dev/urandom`).
+fn generate_api_key() -> anyhow::Result<String> {
+    use std::io::Read;
+    let mut buf = [0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .context("ouverture de /dev/urandom")?
+        .read_exact(&mut buf)
+        .context("lecture d'entropie")?;
+    let hex: String = buf.iter().map(|b| format!("{b:02x}")).collect();
+    Ok(format!("cfr_{hex}"))
 }
 
 /// Mode backfill : rapatriement de l'historique national, puis arrêt.

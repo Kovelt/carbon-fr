@@ -904,3 +904,83 @@ async fn forecast_consumption_v2_unwired_is_404() {
     .await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
+
+// ── Middleware d'auth + quota (ADR-0015) ──────────────────────────────────────
+
+use carbonfr_adapter_http::{AuthConfig, AuthState, enforce, key_fingerprint};
+use carbonfr_core::ports::{ApiKeyRecord, ApiKeyRepository, ApiTier};
+
+struct FakeKeys {
+    valid_hash: String,
+}
+
+#[async_trait]
+impl ApiKeyRepository for FakeKeys {
+    async fn resolve(&self, key_hash: &str) -> Result<Option<ApiKeyRecord>, RepositoryError> {
+        Ok((key_hash == self.valid_hash).then(|| ApiKeyRecord {
+            tier: ApiTier::Free,
+            label: "test".to_string(),
+        }))
+    }
+    async fn insert_key(&self, _: &str, _: ApiTier, _: &str) -> Result<(), RepositoryError> {
+        Ok(())
+    }
+}
+
+fn guarded_app() -> axum::Router {
+    use std::sync::Arc;
+    let keys = Arc::new(FakeKeys {
+        valid_hash: key_fingerprint("good-key"),
+    });
+    let state = AuthState::new(
+        keys,
+        AuthConfig {
+            anonymous_per_min: 2,
+            free_per_min: 100,
+        },
+    );
+    axum::Router::new()
+        .route("/health", axum::routing::get(|| async { "ok" }))
+        .layer(axum::middleware::from_fn_with_state(state, enforce))
+}
+
+async fn get_auth(app: axum::Router, uri: &str, bearer: Option<&str>) -> axum::response::Response {
+    let mut req = Request::get(uri);
+    if let Some(token) = bearer {
+        req = req.header("authorization", format!("Bearer {token}"));
+    }
+    app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap()
+}
+
+#[tokio::test]
+async fn auth_anonymous_is_rate_limited() {
+    let app = guarded_app();
+    // Limite anonyme = 2/min (IP « unknown » partagée en test).
+    assert_eq!(
+        get_auth(app.clone(), "/health", None).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        get_auth(app.clone(), "/health", None).await.status(),
+        StatusCode::OK
+    );
+    let limited = get_auth(app.clone(), "/health", None).await;
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(limited.headers().contains_key("ratelimit-limit"));
+}
+
+#[tokio::test]
+async fn auth_unknown_key_is_401() {
+    let response = get_auth(guarded_app(), "/health", Some("wrong")).await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn auth_valid_key_gets_higher_limit() {
+    let app = guarded_app();
+    // Avec la bonne clé (limite 100) : la 3e requête passe encore.
+    for _ in 0..3 {
+        let ok = get_auth(app.clone(), "/health", Some("good-key")).await;
+        assert_eq!(ok.status(), StatusCode::OK);
+    }
+}

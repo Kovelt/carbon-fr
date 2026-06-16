@@ -1,8 +1,34 @@
 # ADR-0015 — Tier hébergé : clés API en couche de bord, anonyme par défaut
 
-- **Statut** : Proposé
+- **Statut** : Accepté (mise en œuvre **engagée** — auth par clé + quota livrés ; métering persistant & webhooks à venir)
 - **Date** : 2026-06-15
 - **S'appuie sur** : ADR-0002 (hexagonal), ADR-0004 (Postgres natif), ADR-0007 (déploiement / tier hébergé), ADR-0014 (webhooks reportés, en attente d'un *ownership*)
+
+## État d'implémentation (2026-06-16)
+
+**Tranche A — clés API + quota au bord, opt-in : livrée.** `core` **strictement
+intact** (aucun cas d'usage, aucun type carbone touché — le seul ajout est un
+**port sortant** `ApiKeyRepository` + ses value objects `ApiTier`/`ApiKeyRecord`,
+qui vivent **avec le port**, pas dans le domaine carbone).
+
+- **Middleware de bord** (`adapter-http`, `enforce`) : résout un **principal**
+  (anonyme par IP, ou clé `Authorization: Bearer …`), applique un **quota par
+  minute** (fenêtre fixe en mémoire), renvoie `401` (clé inconnue), `429` (quota,
+  + en-têtes `RateLimit-*` / `Retry-After`) ; **`core` ne voit jamais le principal**.
+- **Opt-in** (§6) : appliqué **seulement si** `CARBONFR_RATELIMIT_ENABLED=1`. Par
+  défaut, l'API reste **anonyme et sans limite** → parité self-hosting préservée.
+  Limites surchargeables (`CARBONFR_RATELIMIT_ANON_PER_MIN`/`_FREE_PER_MIN`).
+- **Store** : port `ApiKeyRepository` + table `api_key` (empreinte SHA-256, tier,
+  libellé — **jamais la clé en clair**), impl Postgres (validée sur base réelle).
+- **Délivrance** : sous-commande **`carbonfr-server mint-key`** (génère une clé
+  `cfr_<hex>`, stocke son empreinte, l'affiche **une seule fois** ;
+  `CARBONFR_KEY_LABEL`).
+
+**À venir :** **`UsageMeter`** persistant (métering/analytics, §2) — le quota
+actuel suffit à l'enforcement, le métering persistant viendra avec le payant ;
+**webhooks** (ADR-0014 §3, désormais débloqués par l'*ownership* de la clé) ;
+identité email + lien magique (§3) ; **payant** = adapter de facturation cantonné
+à l'instance hébergée (§7).
 
 ## Contexte
 

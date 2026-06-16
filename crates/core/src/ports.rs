@@ -211,6 +211,45 @@ pub trait CrossBorderRepository: Send + Sync {
     ) -> Result<Vec<CrossBorderSnapshot>, RepositoryError>;
 }
 
+/// Niveau d'accès d'un appelant authentifié (ADR-0015). L'**anonyme** n'est pas
+/// un tier : c'est l'**absence** de clé (géré au bord, jamais ici). Le payant
+/// sera un tier additionnel, sans refonte (ADR-0015 §7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiTier {
+    Free,
+}
+
+/// Enregistrement d'une clé API résolue (ADR-0015). Type **de bord** : il vit
+/// avec son port, pas dans le domaine carbone — le `core` n'apprend jamais qui
+/// appelle (les cas d'usage ne prennent aucun principal).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiKeyRecord {
+    pub tier: ApiTier,
+    /// Libellé non-sensible (ex. nom du projet). **Jamais** la clé en clair.
+    pub label: String,
+}
+
+/// Port sortant : **registre des clés API** (tier hébergé, ADR-0015).
+///
+/// Ne manipule que l'**empreinte** d'une clé (hachée par l'adapter entrant),
+/// jamais la clé en clair. Le `core` ne dépend pas de l'auth : ce port n'est
+/// consommé que par le **middleware de bord** (`adapter-http`), pas par les cas
+/// d'usage — l'identité reste une préoccupation d'infrastructure.
+#[async_trait]
+pub trait ApiKeyRepository: Send + Sync {
+    /// Résout l'empreinte d'une clé présentée. `None` si inconnue (→ 401 au bord).
+    async fn resolve(&self, key_hash: &str) -> Result<Option<ApiKeyRecord>, RepositoryError>;
+
+    /// Enregistre une nouvelle clé (empreinte + tier + libellé). Idempotent sur
+    /// l'empreinte.
+    async fn insert_key(
+        &self,
+        key_hash: &str,
+        tier: ApiTier,
+        label: &str,
+    ) -> Result<(), RepositoryError>;
+}
+
 /// Port sortant : compteur de consultations (visiteurs).
 ///
 /// Ne reçoit qu'une **clé visiteur déjà anonymisée** (hachée par l'adapter

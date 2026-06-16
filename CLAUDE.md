@@ -93,6 +93,8 @@ DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-sweep
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-bands
 # Entraîner le modèle ML GBDT + comparer au backtest (CARBONFR_TRAIN_FROM/_TO, _GBDT_MODEL) :
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server train
+# Délivrer une clé API tier gratuit (ADR-0015 ; empreinte stockée, clé affichée 1 fois) :
+DATABASE_URL=postgres://localhost/carbonfr CARBONFR_KEY_LABEL=projet cargo run -p server mint-key
 
 # Tests d'intégration nécessitant des ressources externes :
 DATABASE_URL=postgres://localhost/carbonfr_test \
@@ -121,7 +123,7 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 - ADR-0012 — modèle de prévision **ML** (`GbdtForecaster`, GBDT tout-Rust + features météo) derrière le même port ; ne livre que s'il bat le `StatForecaster` au backtest. **Accepté, engagé** : store météo livré (port `WeatherForecastSource` + `adapter-meteo` Open-Meteo + table `weather_forecast` anti-fuite `(run_at, valid_at)`) ; `bin/train` + `GbdtForecaster` à venir.
 - ADR-0013 — **prévision `acv-ademe`** (**Accepté, engagé**) : prévoir les entrées (mix + imports) puis appliquer le calculateur ; `MixForecaster` + `CrossBorderForecastSource`. **Tranche A livrée** : `acv_ademe_forecast` (climatologie par canal → calculateur, converge au nowcast), adapter `AcvAdemeForecaster<R,C>`, routage par méthode (`ForecastState` + modèle `@2` dynamique), servi via `GET /v1/intensity/forecast?methodology=acv-ademe&version=2`. **À venir** : GBDT `MixForecaster`, ENTSO-E day-ahead, backtest `acv-ademe`.
 - ADR-0014 — **usage** (**Accepté, livré** sauf webhooks) : primitives carbon-aware (créneau sous échéance, lowest-k, seuil, annotation d'économie) + livraison live **SSE** (`/v1/intensity/stream`) ; webhooks reportés (gated sur le tier hébergé). **Tranche A** : primitives pures + `CarbonAwareScheduler` + endpoints `/v1/schedule`, `/v1/schedule/slots`, `/v1/intensity/below`. **Tranche B** : SSE via canal mémoire `tokio::broadcast` (migration `LISTEN`/`NOTIFY` documentée pour `bin/poller` séparé).
-- ADR-0015 — **tier hébergé** : clés API (`Bearer`) en **middleware de bord** (`core` intact, ports `ApiKeyRepository`/`UsageMeter` sur Postgres), **anonyme conservé par défaut** (auth opt-in, self-hosting préservé), payant = extension future non-bloquante. Débloque les webhooks (fournit l'*ownership*). **Post-phase 4.**
+- ADR-0015 — **tier hébergé** (**Accepté, engagé**) : clés API (`Bearer`) en **middleware de bord** (`core` intact, port `ApiKeyRepository` sur Postgres), **anonyme conservé par défaut** (auth opt-in, self-hosting préservé), payant = extension future non-bloquante. Débloque les webhooks (fournit l'*ownership*). **Tranche A livrée** : middleware `enforce` (401/429 + en-têtes `RateLimit-*`), quota fenêtre-minute en mémoire, table `api_key`, sous-commande `mint-key`, opt-in via `CARBONFR_RATELIMIT_ENABLED`. **À venir** : `UsageMeter` persistant + webhooks.
 
 ## État d'avancement
 
@@ -160,7 +162,9 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
   - [x] **usage** : primitives de scheduling carbon-aware + streaming **SSE** (ADR-0014) ; webhooks reportés (tier hébergé) :
     - [x] **tranche A** — primitives **pures** (`schedule.rs` : `greenest_window_before` sous échéance, `lowest_slots` divisible, `slots_below` seuil, `savings_vs_now`/`Savings` Δ vs maintenant + absolu si `energy_kwh`), cas d'usage `CarbonAwareScheduler`, endpoints `GET /v1/schedule`, `/v1/schedule/slots`, `/v1/intensity/below`. Zéro nouveau port, anonyme/sans état.
     - [x] **tranche B** — livraison live **SSE** : `GET /v1/intensity/stream` (`text/event-stream`, événement `intensity`, filtres `region`/`below`, keep-alive). Type domaine `IntensityUpdate` + `StreamState` (canal `tokio::broadcast`). **Mécanisme = canal mémoire** (poller intégré) ; migration `LISTEN`/`NOTIFY` documentée pour un futur `bin/poller` séparé. Le poller publie chaque mesure nationale `rte-direct`. Webhooks toujours reportés (gated ADR-0015).
-  - [ ] **tier hébergé** : clés API en middleware de bord, anonyme par défaut, `core` intact (ADR-0015) ; débloque les webhooks. Direction posée, calendrier libre.
+  - [~] **tier hébergé** : clés API en middleware de bord, anonyme par défaut, `core` intact (ADR-0015) ; débloque les webhooks :
+    - [x] **tranche A** — port `ApiKeyRepository` (+ `ApiTier`/`ApiKeyRecord`, **avec le port, pas dans le domaine**) + table `api_key` (empreinte SHA-256, validée Postgres réel) ; middleware `enforce` (`adapter-http`) : principal anonyme/clé, quota fenêtre-minute en mémoire, `401`/`429` + en-têtes `RateLimit-*`. **Opt-in** (`CARBONFR_RATELIMIT_ENABLED`, défaut off → parité self-hosting). Sous-commande `mint-key`. **`core` strictement intact** (aucun cas d'usage).
+    - [ ] **à venir** : `UsageMeter` persistant (métering/analytics), webhooks (ADR-0014 §3, débloqués), identité email/lien magique, payant (adapter facturation cantonné à l'instance).
 
 ### Repères d'implémentation (phases 1-2)
 

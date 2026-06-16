@@ -20,8 +20,8 @@ use carbonfr_core::domain::{
     WeatherForecast,
 };
 use carbonfr_core::ports::{
-    ConsumptionRepository, CrossBorderRepository, IntensityRepository, VisitCounter,
-    WeatherRepository,
+    ApiKeyRepository, ApiTier, ConsumptionRepository, CrossBorderRepository, IntensityRepository,
+    VisitCounter, WeatherRepository,
 };
 use time::{Date, Duration, Month, OffsetDateTime};
 
@@ -670,4 +670,34 @@ async fn cross_border_snapshot_roundtrips_and_picks_nearest() {
     assert_eq!(snapshots[0].at, t0);
     assert_eq!(snapshots[1].at, t1);
     assert_eq!(snapshots[0].flows.flows.len(), 2);
+}
+
+#[tokio::test]
+async fn api_key_resolve_and_upsert() {
+    let Some(repo) = setup("test-pg-apikey").await else {
+        return;
+    };
+    let hash = "deadbeefcafe0001";
+    sqlx::query("DELETE FROM api_key WHERE key_hash = $1")
+        .bind(hash)
+        .execute(repo.pool())
+        .await
+        .expect("nettoyage api_key");
+
+    // Clé inconnue → None.
+    assert!(repo.resolve(hash).await.unwrap().is_none());
+
+    // Insertion puis résolution.
+    repo.insert_key(hash, ApiTier::Free, "projet-test")
+        .await
+        .unwrap();
+    let record = repo.resolve(hash).await.unwrap().expect("clé résolue");
+    assert_eq!(record.tier, ApiTier::Free);
+    assert_eq!(record.label, "projet-test");
+
+    // Ré-insertion (même empreinte) → met à jour le libellé, pas de doublon.
+    repo.insert_key(hash, ApiTier::Free, "renomme")
+        .await
+        .unwrap();
+    assert_eq!(repo.resolve(hash).await.unwrap().unwrap().label, "renomme");
 }

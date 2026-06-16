@@ -123,6 +123,15 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   (jointure mix × contexte d'import le plus proche), agrégats `summarize`/
   `bucketize` calculés dans le domaine (la série `@2` n'est pas matérialisée).
   `@2` n'existe que là où le contexte d'import a été ingéré.
+- **Tier hébergé — clés API + quota au bord** (ADR-0015, tranche A) : middleware
+  d'authentification (`Authorization: Bearer …`) et de **quota par minute**
+  (`401` clé inconnue, `429` quota dépassé + en-têtes `RateLimit-*`/`Retry-After`),
+  **opt-in** (`CARBONFR_RATELIMIT_ENABLED`, désactivé par défaut → l'API reste
+  anonyme et sans limite, parité self-hosting). Port `ApiKeyRepository` + table
+  `api_key` (empreinte SHA-256, **jamais la clé en clair**) ; sous-commande
+  `carbonfr-server mint-key`. **`core` strictement intact** : aucun cas d'usage ne
+  voit le principal — l'identité reste une préoccupation de bord. *(Métering
+  persistant `UsageMeter` et webhooks à venir.)*
 - **Prévision `acv-ademe@2` (consumption-based)** (ADR-0013, tranche A) : on
   prévoit les **entrées** (mix par filière + contexte d'import : flux et intensité
   de chaque voisin) par climatologie horaire-de-semaine + correction de

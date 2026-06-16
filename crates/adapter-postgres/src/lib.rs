@@ -21,8 +21,8 @@ use carbonfr_core::domain::{
     WeatherForecast,
 };
 use carbonfr_core::ports::{
-    ConsumptionRepository, CrossBorderRepository, IntensityRepository, RepositoryError,
-    VisitCounter, WeatherRepository,
+    ApiKeyRecord, ApiKeyRepository, ApiTier, ConsumptionRepository, CrossBorderRepository,
+    IntensityRepository, RepositoryError, VisitCounter, WeatherRepository,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, QueryBuilder, Row};
@@ -601,5 +601,54 @@ impl CrossBorderRepository for PgIntensityRepository {
             }
         }
         Ok(snapshots)
+    }
+}
+
+/// Conversion tier ↔ texte stocké.
+fn tier_label(tier: ApiTier) -> &'static str {
+    match tier {
+        ApiTier::Free => "free",
+    }
+}
+
+fn parse_tier(label: &str) -> Option<ApiTier> {
+    match label {
+        "free" => Some(ApiTier::Free),
+        _ => None,
+    }
+}
+
+#[async_trait]
+impl ApiKeyRepository for PgIntensityRepository {
+    async fn resolve(&self, key_hash: &str) -> Result<Option<ApiKeyRecord>, RepositoryError> {
+        let row = sqlx::query("SELECT tier, label FROM api_key WHERE key_hash = $1")
+            .bind(key_hash)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| backend(format!("resolve : {e}")))?;
+        let Some(row) = row else { return Ok(None) };
+        let tier: String = row.try_get("tier").map_err(|e| backend(e.to_string()))?;
+        let label: String = row.try_get("label").map_err(|e| backend(e.to_string()))?;
+        // Un tier inconnu (donnée héritée) est traité comme clé absente.
+        Ok(parse_tier(&tier).map(|tier| ApiKeyRecord { tier, label }))
+    }
+
+    async fn insert_key(
+        &self,
+        key_hash: &str,
+        tier: ApiTier,
+        label: &str,
+    ) -> Result<(), RepositoryError> {
+        sqlx::query(
+            "INSERT INTO api_key (key_hash, tier, label) VALUES ($1, $2, $3) \
+             ON CONFLICT (key_hash) DO UPDATE SET tier = EXCLUDED.tier, label = EXCLUDED.label",
+        )
+        .bind(key_hash)
+        .bind(tier_label(tier))
+        .bind(label)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| backend(format!("insert_key : {e}")))?;
+        Ok(())
     }
 }

@@ -189,7 +189,10 @@ pub fn climatology_forecast(
 /// Décalages bas/haut (≥ 0) de l'intervalle empirique d'un créneau, exprimés
 /// **autour de sa propre moyenne** `mean` (pour être ensuite recentrés sur la
 /// valeur prévue). Quantiles 10 %/90 % ([`BAND_QUANTILE`]).
-fn band_offsets(samples: &[f64], mean: f64) -> (f64, f64) {
+///
+/// `pub(crate)` : réutilisé par la prévision `acv-ademe` (ADR-0013), qui encadre
+/// par la dispersion de la série `@2` dérivée de l'historique.
+pub(crate) fn band_offsets(samples: &[f64], mean: f64) -> (f64, f64) {
     let mut sorted: Vec<f64> = samples.to_vec();
     sorted.sort_by(|a, b| a.total_cmp(b));
     let low = quantile(&sorted, BAND_QUANTILE);
@@ -211,8 +214,9 @@ fn quantile(sorted: &[f64], q: f64) -> f64 {
 
 /// Index du créneau dans la semaine (`jour-de-semaine × pas`), en UTC pour un
 /// découpage déterministe indépendant du fuseau (cohérent avec les rollups,
-/// ADR-0004). Ex. à 15 min : 7 × 96 = 672 créneaux.
-fn week_slot(t: OffsetDateTime, step_secs: i64) -> i64 {
+/// ADR-0004). Ex. à 15 min : 7 × 96 = 672 créneaux. `pub(crate)` : partagé avec
+/// la prévision `acv-ademe` (ADR-0013).
+pub(crate) fn week_slot(t: OffsetDateTime, step_secs: i64) -> i64 {
     let t = t.to_offset(UtcOffset::UTC);
     let weekday = t.weekday().number_days_from_monday() as i64;
     let secs_in_day = t.hour() as i64 * 3600 + t.minute() as i64 * 60 + t.second() as i64;

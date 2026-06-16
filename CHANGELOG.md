@@ -123,6 +123,17 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   (jointure mix × contexte d'import le plus proche), agrégats `summarize`/
   `bucketize` calculés dans le domaine (la série `@2` n'est pas matérialisée).
   `@2` n'existe que là où le contexte d'import a été ingéré.
+- **Prévision `acv-ademe@2` (consumption-based)** (ADR-0013, tranche A) : on
+  prévoit les **entrées** (mix par filière + contexte d'import : flux et intensité
+  de chaque voisin) par climatologie horaire-de-semaine + correction de
+  persistance (formule `climatology@1`, par canal), puis on applique le **même**
+  calculateur pur `AcvAdeme` (ADR-0010) — la prévision hérite de la version de
+  méthode, reste **auditable** et **converge vers le nowcast** quand l'horizon → 0
+  (invariant testé). Fonction domaine `acv_ademe_forecast`, adapter
+  `AcvAdemeForecaster<R, C>`, **routage par méthode** au composition root, servi
+  via `GET /v1/intensity/forecast?methodology=acv-ademe&version=2` (national).
+  *Modèle `acv-clim@1`* ; baseline que le futur `MixForecaster` GBDT + ENTSO-E
+  day-ahead devront battre (garde de promotion).
 - **Primitives de scheduling carbon-aware** (ADR-0014, tranche A) : fonctions
   **pures** du domaine (zéro nouveau port) sur la prévision, réutilisant le
   sélecteur `central`/`prudent` — créneau contigu le plus bas-carbone **avant une

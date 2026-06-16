@@ -1,8 +1,39 @@
 # ADR-0013 — Prévision `acv-ademe` : prévoir les entrées, puis appliquer le calculateur
 
-- **Statut** : Proposé
+- **Statut** : Accepté (mise en œuvre **engagée** — pipeline + baseline climatologique livrés ; ML & day-ahead à venir)
 - **Date** : 2026-06-15
 - **Consolide** : ADR-0010 (méthode `acv-ademe`) × ADR-0012 (modèle ML) ; s'appuie sur le contrat ADR-0011
+
+## État d'implémentation (2026-06-16)
+
+**Tranche A — pipeline « prévoir les entrées → appliquer le calculateur » +
+baseline climatologique : livrée.** C'est exactement le **baseline** du §7 (mix
+saisonnier + imports climatologiques), et la **preuve du pipeline** §1-2.
+
+- fonction pure `acv_ademe_forecast` (`crates/core/src/domain/forecast_acv.rs`) :
+  prévoit **chaque entrée par canal** (8 filières du mix, flux + intensité de
+  chaque voisin) avec la formule de `climatology@1` (climatologie
+  horaire-de-semaine + biais de persistance décroissant), réassemble
+  `GenerationMix` + `CrossBorderFlows` par créneau, puis applique le **même**
+  calculateur `AcvAdemeConsumption` (ADR-0010) ;
+- **invariant de convergence au nowcast garanti et testé** (§1) : à horizon → 0,
+  chaque canal vaut sa dernière observation → entrées prévues = entrées observées
+  → prévision = nowcast ;
+- intervalle : dispersion empirique par créneau de la série `@2` dérivée de
+  l'historique (la calibration par quantiles de résidus par horizon, §6, viendra
+  derrière le même contrat) ;
+- adapter `AcvAdemeForecaster<R, C>` (lit mix `@1` via `IntensityRepository` +
+  contexte d'import via `CrossBorderRepository`, délègue au calcul pur) ;
+- **routage par méthode** au composition root (§5) : `ForecastState` porte un
+  modèle `@2` optionnel (dispatch dynamique) ; servi via
+  **`GET /v1/intensity/forecast?methodology=acv-ademe&version=2`** (national).
+
+**À venir :** `MixForecaster` **GBDT multi-sorties** (§2) et
+`CrossBorderForecastSource` **ENTSO-E day-ahead ⊕ proxy** (§3-4) — la tranche A
+tient lieu de proxy (climatologie du contexte d'import stocké), pas encore de
+day-ahead ; **backtest `acv-ademe`** (§7) et **calibration des intervalles** (§6).
+Le GBDT n'est livré que s'il bat ce baseline (garde de promotion, cohérent
+ADR-0012).
 
 ## Contexte
 

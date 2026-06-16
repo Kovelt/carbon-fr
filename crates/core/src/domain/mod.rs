@@ -9,6 +9,7 @@ mod calculator;
 mod cross_border;
 mod factors;
 mod forecast;
+mod forecast_acv;
 mod forecast_point;
 mod horizon_bands;
 mod intensity;
@@ -34,6 +35,7 @@ pub use factors::{
     derive_acv_ademe, derive_consumption_series,
 };
 pub use forecast::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, climatology_forecast};
+pub use forecast_acv::{ACV_FORECAST_ID, ACV_FORECAST_VERSION, acv_ademe_forecast};
 pub use forecast_point::{ForecastPoint, ModelVersion};
 pub use horizon_bands::HorizonBands;
 pub use intensity::CarbonIntensity;

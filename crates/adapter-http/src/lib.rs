@@ -92,6 +92,13 @@ pub struct ForecastState<F> {
     pub(crate) forecaster: F,
     pub(crate) model: String,
     pub(crate) methodology: String,
+    /// Modèle de prévision **`acv-ademe@2`** (consommation, ADR-0013), optionnel.
+    /// Dispatch **dynamique** : son type concret (composé de deux ports) n'a pas
+    /// à contaminer le `F` générique du chemin scalaire. `None` si non câblé.
+    pub(crate) consumption:
+        Option<std::sync::Arc<dyn carbonfr_core::ports::ForecastModel + Send + Sync>>,
+    /// Identité versionnée du modèle `@2` (ex. `acv-clim@1`).
+    pub(crate) consumption_model: String,
 }
 
 impl<F> ForecastState<F> {
@@ -102,12 +109,26 @@ impl<F> ForecastState<F> {
             forecaster,
             model: model.into(),
             methodology: "rte-direct".to_string(),
+            consumption: None,
+            consumption_model: String::new(),
         }
     }
 
     /// Sélectionne une autre méthodologie servie par défaut.
     pub fn with_methodology(mut self, methodology: impl Into<String>) -> Self {
         self.methodology = methodology.into();
+        self
+    }
+
+    /// Câble le modèle de prévision `acv-ademe@2` (ADR-0013) servi via
+    /// `?methodology=acv-ademe&version=2`.
+    pub fn with_consumption(
+        mut self,
+        model: std::sync::Arc<dyn carbonfr_core::ports::ForecastModel + Send + Sync>,
+        model_id: impl Into<String>,
+    ) -> Self {
+        self.consumption = Some(model);
+        self.consumption_model = model_id.into();
         self
     }
 }

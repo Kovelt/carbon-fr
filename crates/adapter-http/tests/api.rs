@@ -27,6 +27,7 @@ struct FakeRepo {
     series: Vec<Measurement>,
     visits: Arc<Mutex<HashSet<(String, Date)>>>,
     flows: Option<CrossBorderSnapshot>,
+    flow_series: Vec<CrossBorderSnapshot>,
 }
 
 #[async_trait]
@@ -132,9 +133,13 @@ impl CrossBorderRepository for FakeRepo {
         &self,
         range: TimeRange,
     ) -> Result<Vec<CrossBorderSnapshot>, RepositoryError> {
-        Ok(self
-            .flows
-            .clone()
+        // `flow_series` si fourni (chemin prévision), sinon le snapshot unique.
+        let source = if self.flow_series.is_empty() {
+            self.flows.clone().into_iter().collect()
+        } else {
+            self.flow_series.clone()
+        };
+        Ok(source
             .into_iter()
             .filter(|s| range.contains(s.at))
             .collect())
@@ -827,4 +832,75 @@ async fn intensity_date_consumption_v2_rejects_regional() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// Monte le routeur avec le modèle de prévision acv-ademe@2 câblé (ADR-0013).
+fn build_with_acv(repo: FakeRepo) -> axum::Router {
+    use carbonfr_adapter_forecast::AcvAdemeForecaster;
+    use std::sync::Arc;
+    let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1")
+        .with_consumption(
+            Arc::new(AcvAdemeForecaster::new(repo.clone(), repo.clone())),
+            "acv-clim@1",
+        );
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    router(AppState::new(repo), forecast, StreamState::new(updates))
+}
+
+#[tokio::test]
+async fn forecast_consumption_v2_uses_dedicated_model() {
+    use carbonfr_core::domain::{CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Neighbor};
+    let from = forecast_from();
+    let step = Duration::hours(1);
+    let mix = national_measurement().mix.unwrap();
+    // 14 jours d'historique acv-ademe@1 (porte le mix) + contexte d'import.
+    let series: Vec<Measurement> = (1..=14 * 24)
+        .map(|i: i32| Measurement {
+            at: from - step * i,
+            region: Region::National,
+            intensity: CarbonIntensity::new(12.0).unwrap(),
+            methodology: Methodology::acv_ademe(),
+            vintage: Vintage::Consolidated,
+            mix: Some(mix),
+        })
+        .collect();
+    let flow_series: Vec<CrossBorderSnapshot> = (1..=14 * 24)
+        .map(|i: i32| CrossBorderSnapshot {
+            at: from - step * i,
+            flows: CrossBorderFlows::new(vec![CrossBorderFlow {
+                neighbor: Neighbor::Germany,
+                flow_mw: 3000.0,
+                neighbor_intensity: CarbonIntensity::new(400.0).unwrap(),
+            }]),
+        })
+        .collect();
+    let repo = FakeRepo {
+        series,
+        flow_series,
+        ..Default::default()
+    };
+
+    let response = get(
+        build_with_acv(repo),
+        "/v1/intensity/forecast?from=1970-03-02T00:00:00Z&horizon_hours=24&methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["model"], "acv-clim@1");
+    assert_eq!(body["methodology"], "acv-ademe");
+    assert!(body["count"].as_u64().unwrap() > 0);
+    // Intensité consommation plausible (import carboné au-dessus de la prod).
+    assert!(body["data"][0]["expected"].as_f64().unwrap() > 12.56);
+}
+
+#[tokio::test]
+async fn forecast_consumption_v2_unwired_is_404() {
+    // Routeur sans modèle @2 câblé → 404 explicite.
+    let response = get(
+        app(None),
+        "/v1/intensity/forecast?methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

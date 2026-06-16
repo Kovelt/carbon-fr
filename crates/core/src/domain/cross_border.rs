@@ -13,7 +13,7 @@ use crate::domain::CarbonIntensity;
 /// Voisin électrique de la France métropolitaine (zone d'ajustement ENTSO-E
 /// adjacente à RTE). Les interconnexions Manche (IFA/IFA2/ElecLink) sont
 /// agrégées sous `GreatBritain`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Neighbor {
     Belgium,
     Germany,

@@ -380,6 +380,8 @@ pub(crate) struct ForecastQuery {
     from: Option<String>,
     /// Profondeur de l'horizon en heures (1..=72). Défaut 24.
     horizon_hours: Option<u32>,
+    /// Version de la méthode (`acv-ademe` : `2` = consommation prévue, ADR-0013).
+    version: Option<u32>,
 }
 
 /// `GET /v1/intensity/forecast` — série d'intensité **prévue** sur l'horizon,
@@ -405,21 +407,33 @@ where
     let region = resolve_region(&query.region)?;
     let methodology = resolve_methodology(&query.methodology, &state.methodology);
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
+    let horizon = Duration::hours(horizon_hours as i64);
 
-    let points = state
-        .forecaster
-        .forecast(
-            region,
-            &methodology,
-            from,
-            Duration::hours(horizon_hours as i64),
+    // Chemin `acv-ademe@2` : prévision de la consommation (entrées prévues +
+    // calculateur, ADR-0013), via le modèle dédié si câblé. Sinon, le modèle
+    // scalaire prévoit la série stockée de la méthode demandée.
+    let (points, model) = if wants_consumption(&methodology, query.version) {
+        let model = state.consumption.as_ref().ok_or_else(|| {
+            ApiError::not_found("prévision acv-ademe@2 non disponible (source d'import non câblée)")
+        })?;
+        (
+            model.forecast(region, &methodology, from, horizon).await?,
+            state.consumption_model.as_str(),
         )
-        .await?;
+    } else {
+        (
+            state
+                .forecaster
+                .forecast(region, &methodology, from, horizon)
+                .await?,
+            state.model.as_str(),
+        )
+    };
 
     Ok(Json(ForecastResponse::new(
         region.slug(),
         &methodology,
-        &state.model,
+        model,
         from,
         horizon_hours,
         &points,

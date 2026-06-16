@@ -11,9 +11,12 @@
 
 use async_trait::async_trait;
 use carbonfr_core::domain::{
-    ClimatologyParams, ForecastPoint, HorizonBands, Region, TimeRange, climatology_forecast,
+    ClimatologyParams, EmissionFactors, ForecastPoint, HorizonBands, Region, TD_LOSS_FACTOR_V1,
+    TimeRange, acv_ademe_forecast, climatology_forecast,
 };
-use carbonfr_core::ports::{ForecastError, ForecastModel, IntensityRepository};
+use carbonfr_core::ports::{
+    CrossBorderRepository, ForecastError, ForecastModel, IntensityRepository,
+};
 use time::{Duration, OffsetDateTime};
 
 /// Profondeur d'historique par défaut alimentant la climatologie.
@@ -96,6 +99,83 @@ impl<R: IntensityRepository> ForecastModel for ClimatologyForecaster<R> {
         climatology_forecast(&history, from, horizon, self.params, self.bands.as_ref())
             .filter(|points| !points.is_empty())
             .ok_or(ForecastError::NotEnoughData)
+    }
+}
+
+/// Modèle de prévision **`acv-ademe@2`** (consumption-based, ADR-0013) :
+/// climatologie des **entrées** (mix + contexte d'import) puis application du
+/// calculateur pur `AcvAdeme`.
+///
+/// Cet adapter ne porte aucune logique métier : il lit l'historique du mix
+/// (`acv-ademe@1`, via [`IntensityRepository`]) et du contexte d'import (via
+/// [`CrossBorderRepository`]), puis **délègue au calcul pur** du domaine
+/// ([`acv_ademe_forecast`]). **National** uniquement (ADR-0013 §8).
+#[derive(Clone)]
+pub struct AcvAdemeForecaster<R, C> {
+    repo: R,
+    cross_border: C,
+    weeks: i64,
+    params: ClimatologyParams,
+}
+
+impl<R, C> AcvAdemeForecaster<R, C> {
+    /// Construit avec les défauts calés (10 semaines d'historique, ADR-0009).
+    pub fn new(repo: R, cross_border: C) -> Self {
+        Self {
+            repo,
+            cross_border,
+            weeks: DEFAULT_WEEKS,
+            params: ClimatologyParams::default(),
+        }
+    }
+}
+
+#[async_trait]
+impl<R, C> ForecastModel for AcvAdemeForecaster<R, C>
+where
+    R: IntensityRepository,
+    C: CrossBorderRepository,
+{
+    async fn forecast(
+        &self,
+        region: Region,
+        _methodology_id: &str,
+        from: OffsetDateTime,
+        horizon: Duration,
+    ) -> Result<Vec<ForecastPoint>, ForecastError> {
+        if region != Region::National {
+            return Err(ForecastError::Unavailable(
+                "acv-ademe@2 (consommation) n'est prévu qu'au national".into(),
+            ));
+        }
+        let history_start = from - Duration::days(self.weeks * 7);
+        let window = TimeRange::new(history_start, from)
+            .ok_or_else(|| ForecastError::Unavailable("fenêtre d'historique invalide".into()))?;
+
+        // Mix FR : porté par les mesures `acv-ademe@1` ; contexte d'import : store
+        // ENTSO-E. Les deux **tels que disponibles** (anti-fuite, ADR-0013 §7).
+        let mix_history = self
+            .repo
+            .range(region, "acv-ademe", window)
+            .await
+            .map_err(|e| ForecastError::Unavailable(e.to_string()))?;
+        let flow_history = self
+            .cross_border
+            .flows_range(window)
+            .await
+            .map_err(|e| ForecastError::Unavailable(e.to_string()))?;
+
+        acv_ademe_forecast(
+            &mix_history,
+            &flow_history,
+            from,
+            horizon,
+            self.params,
+            &EmissionFactors::acv_ademe_v1(),
+            TD_LOSS_FACTOR_V1,
+        )
+        .filter(|points| !points.is_empty())
+        .ok_or(ForecastError::NotEnoughData)
     }
 }
 

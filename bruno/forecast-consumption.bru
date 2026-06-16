@@ -1,0 +1,22 @@
+meta {
+  name: Prévision — acv-ademe@2 (consommation)
+  type: http
+  seq: 24
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/forecast?methodology=acv-ademe&version=2&horizon_hours=24
+  body: none
+  auth: none
+  query {
+    methodology: acv-ademe
+    version: 2
+    horizon_hours: 24
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.model: eq acv-clim@1
+  res.body.methodology: eq acv-ademe
+}

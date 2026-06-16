@@ -43,7 +43,7 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use carbonfr_adapter_entsoe::EntsoeClient;
-use carbonfr_adapter_forecast::ClimatologyForecaster;
+use carbonfr_adapter_forecast::{AcvAdemeForecaster, ClimatologyForecaster};
 use carbonfr_adapter_gbdt::{
     GbdtForecaster, GbdtHyperParams, build_training_examples, train_model,
 };
@@ -53,8 +53,8 @@ use carbonfr_adapter_odre::OdreClient;
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_core::application::{BackfillHistory, BacktestForecast, BacktestReport, IngestLatest};
 use carbonfr_core::domain::{
-    CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, ErrorMetrics, IntensityUpdate, Region,
-    TimeRange,
+    ACV_FORECAST_ID, ACV_FORECAST_VERSION, CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams,
+    ErrorMetrics, IntensityUpdate, Region, TimeRange,
 };
 use carbonfr_core::ports::{
     ConsumptionRepository, ConsumptionSource, CrossBorderRepository, CrossBorderSource,
@@ -127,7 +127,12 @@ async fn run_server() -> anyhow::Result<()> {
     // récent est insuffisant. Son identité versionnée est annoncée au client.
     let forecaster = build_calibrated_forecaster(repo.clone()).await;
     let model = format!("{CLIMATOLOGY_ID}@{CLIMATOLOGY_VERSION}");
-    let forecast_state = ForecastState::new(forecaster, model);
+    // Prévision `acv-ademe@2` (ADR-0013) : climatologie des entrées (mix + import)
+    // + calculateur. Servie via `?methodology=acv-ademe&version=2`.
+    let acv_forecaster = AcvAdemeForecaster::new(repo.clone(), repo.clone());
+    let acv_model = format!("{ACV_FORECAST_ID}@{ACV_FORECAST_VERSION}");
+    let forecast_state = ForecastState::new(forecaster, model)
+        .with_consumption(std::sync::Arc::new(acv_forecaster), acv_model);
 
     let mut state = AppState::new(repo);
     if let Some(salt) = config.visit_salt {

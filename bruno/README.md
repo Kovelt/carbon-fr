@@ -39,6 +39,7 @@ bru run --env Local
 | Intensité date — historique | `200` |
 | Intensité stats — résumé / série journalière | `200`, `intervals` |
 | Prévision — série (climatology@1) | `200`, `model`, unité |
+| Prévision — acv-ademe@2 (consommation) | `200`, `model` `acv-clim@1` (si contexte d'import ingéré) |
 | Prévision — créneau le plus bas-carbone | `200`, `average_intensity` |
 | Schedule — créneau + économie | `200`, `savings` |
 | Schedule — créneaux divisibles (lowest-k) | `200`, `count` |

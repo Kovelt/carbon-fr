@@ -24,11 +24,16 @@ carbon-fr/
 ├── Cargo.toml                # workspace
 ├── crates/
 │   ├── core/                 # lib PURE : domaine + cas d'usage + ports (zéro IO)
-│   ├── adapter-odre/         # impl Eco2mixSource (HTTP → ODRÉ)          ✅
-│   ├── adapter-postgres/     # impl IntensityRepository (sqlx/Postgres)  ✅
-│   └── adapter-http/         # API axum (adapter entrant, /v1)           ✅
+│   ├── adapter-odre/         # impl Eco2mixSource/Eco2mixArchive (ODRÉ)         ✅
+│   ├── adapter-postgres/     # impl repositories (sqlx/Postgres)               ✅
+│   ├── adapter-http/         # API axum (adapter entrant, /v1) + auth/SSE       ✅
+│   ├── adapter-forecast/     # impl ForecastModel (climatology@1, acv-ademe@2)  ✅
+│   ├── adapter-meteo/        # impl WeatherForecastSource (Open-Meteo)          ✅
+│   ├── adapter-entsoe/       # impl CrossBorderSource (ENTSO-E, acv-ademe@2)    ✅
+│   ├── adapter-webhook/      # impl Notifier (livraison signée, anti-SSRF)      ✅
+│   └── adapter-gbdt/         # impl ForecastModel ML (GBDT, gardé par backtest) ✅
 └── bin/
-    └── server/               # composition root : câble adapters + poller ✅
+    └── server/               # composition root : câble adapters + poller       ✅
 ```
 
 ## Règle d'or de l'architecture

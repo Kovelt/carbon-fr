@@ -19,11 +19,11 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0007](0007-topologie-deploiement.md) | Topologie de déploiement (API VPS, site statique, sous-domaine Kovelt) | Accepté |
 | [0008](0008-methodologie-acv-ademe-et-regional.md) | Méthodologie cycle de vie (`acv-ademe`) & intensité régionale | Accepté |
 | [0009](0009-modele-prevision-climatologie.md) | Modèle de prévision d'intensité (`climatology@1`) | Accepté |
-| [0010](0010-methodologie-acv-ademe-consumption.md) | `acv-ademe` *consumption-based* (imports ENTSO-E) — fait évoluer ADR-0008 | Proposé |
+| [0010](0010-methodologie-acv-ademe-consumption.md) | `acv-ademe` *consumption-based* (imports ENTSO-E) — fait évoluer ADR-0008 | Accepté (engagé) |
 | [0011](0011-contrat-prevision-forecastpoint.md) | Contrat de prévision `ForecastPoint` (intervalles) — raffine ADR-0009 | Accepté (contrat) |
 | [0012](0012-modele-prevision-ml-gbdt.md) | Modèle de prévision ML (`GbdtForecaster` tout-Rust + météo) | Accepté (engagé) |
-| [0013](0013-prevision-acv-ademe.md) | Prévision `acv-ademe` (prévoir les entrées → calculateur) | Proposé |
-| [0014](0014-usage-scheduling-streaming.md) | Usage : primitives carbon-aware + livraison live (SSE) | Proposé |
+| [0013](0013-prevision-acv-ademe.md) | Prévision `acv-ademe` (prévoir les entrées → calculateur) | Accepté (engagé) |
+| [0014](0014-usage-scheduling-streaming.md) | Usage : primitives carbon-aware + livraison live (SSE) | Accepté |
 | [0015](0015-tier-heberge-cles-api.md) | Tier hébergé : clés API en couche de bord, anonyme par défaut | Accepté (engagé) |
 | [0016](0016-webhooks.md) | Webhooks : notification sortante signée, gardée par l'ownership de clé | Accepté (engagé) |
 

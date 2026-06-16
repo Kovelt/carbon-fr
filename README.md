@@ -8,7 +8,7 @@ L'équivalent français de [carbonintensity.org.uk](https://carbonintensity.org.
 
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#licence)
 [![Rust](https://img.shields.io/badge/rust-edition%202024-orange.svg)](https://www.rust-lang.org/)
-[![Statut](https://img.shields.io/badge/statut-phase%201%20(socle)-yellow.svg)](#feuille-de-route)
+[![Statut](https://img.shields.io/badge/statut-phases%201--4%20livr%C3%A9es-brightgreen.svg)](#feuille-de-route)
 [![Architecture](https://img.shields.io/badge/architecture-hexagonale-6f42c1.svg)](docs/ARCHITECTURE.md)
 
 </div>
@@ -22,12 +22,13 @@ L'intensité carbone du réseau électrique français (en **gCO₂eq/kWh**) est 
 `carbon-fr` la rend **directement consommable par des développeurs et des machines** :
 
 - 🇫🇷 **Souverain & auto-hébergeable** — aucune dépendance propriétaire obligatoire, licences OSI.
-- 🚀 **Dev-first** — API REST lisible et versionnée (`/v1`), index humainement interprétable, OpenAPI et SDK prévus.
+- 🚀 **Dev-first** — API REST lisible et versionnée (`/v1`), **OpenAPI 3.1** + Swagger UI servis, collection Bruno ; SDK prévus.
 - 🛡️ **Résilient au quota** — un poller unique alimente la base ; l'API sert tous les clients depuis ce read-model, à **moins de 8 % du quota** RTE.
-- 🔬 **Méthodologie versionnée** — chaque mesure porte sa méthode de calcul (`rte-direct` aujourd'hui, `acv-ademe` à venir), jamais de changement silencieux.
-- 🔮 **Prévision comme valeur ajoutée** — l'intensité prévisionnelle n'existe pas à la source : `carbon-fr` la modélise derrière un port dédié.
+- 🔬 **Méthodologie versionnée** — chaque mesure porte sa méthode de calcul (`rte-direct` et `acv-ademe` — cycle de vie production **et** consommation), jamais de changement silencieux.
+- 🔮 **Prévision comme valeur ajoutée** — l'intensité prévisionnelle n'existe pas à la source : `carbon-fr` la modélise derrière un port dédié (`climatology@1`, gardée par backtest).
+- ⏱️ **Carbon-aware & live** — primitives de scheduling (créneau sous échéance, *lowest-k*, seuil, économie), flux **SSE**, et **webhooks** signés (sur clé API).
 
-## Fonctionnalités (cibles)
+## Fonctionnalités
 
 | Endpoint | Nature | Statut |
 | --- | --- | --- |
@@ -35,8 +36,12 @@ L'intensité carbone du réseau électrique français (en **gCO₂eq/kWh**) est 
 | `GET /v1/mix` | Mix de production par filière | ✅ |
 | `GET /v1/intensity/date?from=&to=` | Historique sur un intervalle (révisé/consolidé/définitif) | ✅ |
 | `GET /v1/intensity/stats?from=&to=[&interval=hour\|day]` | Résumé (moyenne/min/max) + série agrégée | ✅ |
-| `GET /v1/intensity/forecast` | Prévision d'intensité | 📅 Phase 3 |
-| `GET /v1/greenest-window` | Créneau le plus bas-carbone | 📅 Phase 3 |
+| `GET /v1/intensity/forecast` | Prévision d'intensité (`climatology@1`) | ✅ |
+| `GET /v1/intensity/greenest-window` | Créneau le plus bas-carbone | ✅ |
+| `GET /v1/schedule` · `/schedule/slots` · `/intensity/below` | Scheduling carbon-aware (échéance, *lowest-k*, seuil + économie) | ✅ |
+| `GET /v1/intensity/stream` | Flux **live** (Server-Sent Events) | ✅ |
+| `GET /v1/methodologies` · `/factors` | Catalogue des méthodes + table des facteurs (vérifiabilité) | ✅ |
+| `POST`/`GET`/`DELETE /v1/webhooks` | Abonnements webhook signés (clé API requise) | ✅ |
 
 Tous les endpoints `/v1` acceptent `?region=<slug>` (national par défaut) et `?methodology=<id>` : **`rte-direct`** (estimation RTE, combustion directe — défaut) ou **`acv-ademe`** (cycle de vie ADEME, ADR-0008).
 
@@ -44,7 +49,7 @@ La spécification **OpenAPI 3.1** (dérivée du code via `utoipa`) est servie so
 
 Un compteur de consultation sobre est exposé (**`GET /v1/stats`**, **`POST /v1/stats/visit`**) : l'IP n'est **jamais** stockée — seule une empreinte **SHA-256 salée** sert à dédupliquer (unique par IP/jour), RGPD-friendly.
 
-> Couverture **National + 12 régions métropolitaines**. Le `taux_co2` publié par RTE (`rte-direct`) n'existe qu'au national ; l'intensité **régionale** est dérivée via `acv-ademe` (cycle de vie appliqué au mix régional, ADR-0008). `acv-ademe@1` est **basée production** (l'intensité régionale reflète la production locale, pas les imports — version consommation à venir).
+> Couverture **National + 12 régions métropolitaines**. Le `taux_co2` publié par RTE (`rte-direct`) n'existe qu'au national ; l'intensité **régionale** est dérivée via `acv-ademe` (cycle de vie appliqué au mix régional, ADR-0008). `acv-ademe@1` est **basée production** ; `acv-ademe@2` **consumption-based** (imports valorisés à l'intensité du voisin via ENTSO-E + pertes T&D, ADR-0010) est servie au national via `?methodology=acv-ademe&version=2`.
 
 ## Architecture
 
@@ -74,8 +79,13 @@ carbon-fr/
 ├── crates/
 │   ├── core/                   # ✅ domaine + cas d'usage + ports (lib PURE, zéro IO)
 │   ├── adapter-odre/           # ✅ impl Eco2mixSource/Eco2mixArchive (ODRÉ)
-│   ├── adapter-postgres/       # ✅ impl IntensityRepository + VisitCounter (sqlx)
-│   └── adapter-http/           # ✅ API axum + OpenAPI (adapter entrant)
+│   ├── adapter-postgres/       # ✅ impl repositories (sqlx/Postgres)
+│   ├── adapter-http/           # ✅ API axum + OpenAPI + auth + SSE (adapter entrant)
+│   ├── adapter-forecast/       # ✅ impl ForecastModel (climatology@1, acv-ademe@2)
+│   ├── adapter-meteo/          # ✅ impl WeatherForecastSource (Open-Meteo)
+│   ├── adapter-entsoe/         # ✅ impl CrossBorderSource (ENTSO-E)
+│   ├── adapter-webhook/        # ✅ impl Notifier (livraison signée, anti-SSRF)
+│   └── adapter-gbdt/           # ✅ impl ForecastModel ML (GBDT)
 ├── bin/
 │   └── server/                 # ✅ composition root : adapters + poller
 ├── bruno/                      # collection Bruno (requêtes .bru versionnées)
@@ -114,9 +124,10 @@ Le crate `core` se teste **entièrement en mémoire**, avec des _fakes_ impléme
 
 - [x] **Cadrage** — ADR, architecture, modèle de domaine.
 - [x] **Phase 1 — Socle** : `core` · adapters ODRÉ / Postgres / HTTP · poller · `/intensity/now` + `/mix` (national).
-- [x] **Phase 2 — Historique & régional** : backfill par export de masse · `/intensity/date` · rollups + `/intensity/stats` · régional via `acv-ademe` (12 régions).
-- [ ] **Phase 3 — Prévision** : `ForecastModel` → `/forecast` + `/greenest-window`.
-- [ ] **Phase 4 — DX** : SDK (Rust + TS), OpenAPI, conteneur Docker.
+- [x] **Phase 2 — Historique & régional** : backfill par export de masse · `/intensity/date` · rollups + `/intensity/stats` · régional via `acv-ademe` (12 régions) · OpenAPI 3.1 + Bruno.
+- [x] **Phase 3 — Prévision** : `climatology@1` (backtest, calibration des intervalles) → `/forecast` + `/greenest-window`.
+- [x] **Phase 4 — Enrichissement & usage** : `acv-ademe@2` consumption-based (ENTSO-E) · prévision `acv-ademe` · scheduling carbon-aware + SSE · clés API + quota · webhooks signés. *(ML GBDT exploré, gardé par backtest ; raffinements ouverts.)*
+- [ ] **Déploiement** (ADR-0007) : conteneur, VPS FR/EU + PostgreSQL, sous-domaine Kovelt ; SDK (Rust + TS).
 
 ## Contribuer
 

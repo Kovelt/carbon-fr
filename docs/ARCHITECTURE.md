@@ -144,7 +144,7 @@ Conséquence : le type `Measurement` du domaine porte un champ `methodology` dè
 2. **Historique + régional** — backfill consolidé, `/intensity/date`, 12 régions, vues matérialisées de rollup.
 3. **Prévision** — `StatForecaster` derrière `ForecastModel` → `/forecast` + `/greenest-window` ; ML ultérieurement.
 4. **DX** — SDK (crate + client TS), OpenAPI, conteneur Docker, éventuel tier hébergé.
-5. **Méthodologie enrichie** — méthode additionnelle `acv-ademe` (cycle de vie Base Carbone ADEME + imports interconnexions), coexistant avec `rte-direct` (ADR dédié à venir).
+5. **Méthodologie enrichie** — méthode additionnelle `acv-ademe` (cycle de vie Base Carbone ADEME + imports interconnexions), coexistant avec `rte-direct` (livrée : production `@1` et consommation `@2`, ADR-0008/0010).
 
 ## 9. Déploiement
 

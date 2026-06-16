@@ -175,10 +175,13 @@ pub async fn enforce(State(state): State<AuthState>, request: Request, next: Nex
         Principal::Keyed { id, tier } => (limit_for(*tier, &state.config), format!("key:{id}")),
     };
     let minute = current_minute();
+    // Section critique triviale (incrément d'un compteur) : un verrou empoisonné
+    // ne peut venir que d'un panic improbable ; on récupère le garde plutôt que
+    // de propager le panic (convention : pas d'`expect` hors tests/bootstrap).
     let remaining = state
         .limiter
         .lock()
-        .expect("limiter")
+        .unwrap_or_else(|poison| poison.into_inner())
         .check(&id, limit, minute);
 
     match remaining {

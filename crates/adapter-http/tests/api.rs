@@ -385,6 +385,38 @@ async fn exchanges_without_data_is_404() {
 }
 
 #[tokio::test]
+async fn exchanges_date_returns_series() {
+    // Snapshot daté dans la fenêtre demandée (2023-11-14T22:13:20Z).
+    let at = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap();
+    let snapshot = CrossBorderSnapshot {
+        at,
+        flows: CrossBorderFlows::new(vec![CrossBorderFlow {
+            neighbor: Neighbor::Germany,
+            flow_mw: -2000.0,
+            neighbor_intensity: CarbonIntensity::new(240.0).unwrap(),
+        }]),
+    };
+    let repo = FakeRepo {
+        flows: Some(snapshot),
+        ..Default::default()
+    };
+    let uri = "/v1/exchanges/date?from=2023-11-01T00:00:00Z&to=2023-12-01T00:00:00Z";
+    let response = get(build(repo), uri).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = json_body(response).await;
+    assert_eq!(body["count"], 1);
+    assert_eq!(body["snapshots"][0]["exchanges"][0]["country"], "de-lu");
+    assert_eq!(body["snapshots"][0]["direction"], "export");
+}
+
+#[tokio::test]
+async fn exchanges_date_requires_bounds() {
+    let response = get(build(FakeRepo::default()), "/v1/exchanges/date").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn methodology_param_selects_series() {
     // La mesure stockée est en `acv-ademe`.
     let mut m = national_measurement();

@@ -23,8 +23,8 @@ use time::{Duration, OffsetDateTime};
 use utoipa::IntoParams;
 
 use crate::dto::{
-    CreateWebhookRequest, CreatedWebhookResponse, ExchangesResponse, FactorsResponse,
-    ForecastResponse, GreenestWindowResponse, HistoryResponse, IntensityResponse,
+    CreateWebhookRequest, CreatedWebhookResponse, ExchangesHistoryResponse, ExchangesResponse,
+    FactorsResponse, ForecastResponse, GreenestWindowResponse, HistoryResponse, IntensityResponse,
     MethodologiesResponse, MixResponse, ScheduleResponse, SlotsResponse, StatsResponse,
     StreamEventBody, VisitStatsResponse, WebhookListResponse,
 };
@@ -203,6 +203,50 @@ where
     let use_case = GetCrossBorderExchanges::new(state.repo.clone(), state.repo.clone());
     let snapshot = use_case.latest().await?;
     Ok(Json(ExchangesResponse::from_snapshot(&snapshot)?))
+}
+
+/// `GET /v1/exchanges/date?from=&to=` — série historique des échanges
+/// transfrontaliers sur un intervalle RFC 3339 (fenêtre ≤ 366 jours), au pas
+/// quart d'heure (ADR-0017).
+#[utoipa::path(
+    get,
+    path = "/v1/exchanges/date",
+    params(HistoryQuery),
+    responses(
+        (status = 200, description = "Série historique des échanges", body = ExchangesHistoryResponse),
+        (status = 400, description = "Bornes manquantes ou invalides", body = ErrorBody),
+    ),
+    tag = "échanges"
+)]
+pub(crate) async fn exchanges_date<R>(
+    State(state): State<AppState<R>>,
+    Query(query): Query<HistoryQuery>,
+) -> Result<Json<ExchangesHistoryResponse>, ApiError>
+where
+    R: IntensityRepository + CrossBorderRepository + Clone + Send + Sync + 'static,
+{
+    let from_raw = query
+        .from
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("paramètre `from` requis (RFC 3339)"))?;
+    let to_raw = query
+        .to
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("paramètre `to` requis (RFC 3339)"))?;
+    let from = parse_timestamp("from", from_raw)?;
+    let to = parse_timestamp("to", to_raw)?;
+
+    if to - from > MAX_HISTORY_SPAN {
+        return Err(ApiError::bad_request(
+            "fenêtre trop large (maximum 366 jours)",
+        ));
+    }
+    let range = TimeRange::new(from, to)
+        .ok_or_else(|| ApiError::bad_request("`to` doit être strictement postérieur à `from`"))?;
+
+    let use_case = GetCrossBorderExchanges::new(state.repo.clone(), state.repo.clone());
+    let snapshots = use_case.range(range).await?;
+    Ok(Json(ExchangesHistoryResponse::new(from, to, &snapshots)?))
 }
 
 /// Paramètres de `GET /v1/intensity/date`.

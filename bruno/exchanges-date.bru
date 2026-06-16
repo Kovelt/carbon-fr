@@ -1,0 +1,28 @@
+meta {
+  name: Échanges transfrontaliers — historique
+  type: http
+  seq: 13
+}
+
+get {
+  url: {{baseUrl}}/v1/exchanges/date?from=2026-06-16T00:00:00Z&to=2026-06-17T00:00:00Z
+  body: none
+  auth: none
+}
+
+params:query {
+  from: 2026-06-16T00:00:00Z
+  to: 2026-06-17T00:00:00Z
+}
+
+assert {
+  res.status: eq 200
+  res.body.count: isNumber
+  res.body.snapshots: isArray
+}
+
+docs {
+  Série historique des échanges transfrontaliers (ADR-0017), pas quart d'heure,
+  fenêtre ≤ 366 jours. Le contexte d'import n'est alimenté que depuis la mise en
+  service du poller — adapter les bornes à une période réellement couverte.
+}

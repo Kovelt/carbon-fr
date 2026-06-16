@@ -1,6 +1,6 @@
 # ADR-0017 — Endpoint public des échanges transfrontaliers
 
-- **Statut** : Accepté (**implémenté** — `GET /v1/exchanges`)
+- **Statut** : Accepté (**implémenté** — `GET /v1/exchanges` + `GET /v1/exchanges/date`)
 - **Date** : 2026-06-16
 - **S'appuie sur** : ADR-0002 (hexagonal), ADR-0007 (API versionnée `/v1`), ADR-0010 (contexte d'import ENTSO-E déjà ingéré)
 
@@ -25,4 +25,4 @@ Le domaine et l'ingestion sont **inchangés** : c'est strictement une projection
 - **Pas de coût d'ingestion** : la donnée existe déjà ; l'endpoint est une exposition.
 - **Honnêteté** : `gb` (Royaume-Uni) est indisponible côté ENTSO-E depuis le Brexit → simplement absent des frontières servies (pas d'entrée fictive).
 - **Périmètre** : limité aux **6 frontières de la France** (ce qu'ENTSO-E fournit proprement pour RTE). Une éventuelle **matrice européenne pays↔pays** (toutes frontières) serait un chantier distinct (ingestion élargie + quota + ADR dédié).
-- **Évolution** : une série historique (`GET /v1/exchanges/date?from=&to=`) est triviale à ajouter derrière le même DTO (`flows_range` existe déjà) — non livrée ici, faute de besoin immédiat.
+- **Série historique** : `GET /v1/exchanges/date?from=&to=` (fenêtre ≤ 366 j) sert la série derrière le même DTO par snapshot (`flows_range`), pour des courbes/animations dans le temps.

@@ -17,6 +17,8 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   sans nouvelle ingestion (cas d'usage pur `GetCrossBorderExchanges`, projection
   de lecture). Solde net + totaux import/export + détail par pays. `gb`
   indisponible côté ENTSO-E (Brexit) → absent. OpenAPI + collection Bruno.
+- **`GET /v1/exchanges/date?from=&to=`** : série historique des échanges
+  (fenêtre ≤ 366 j, pas quart d'heure), même DTO par snapshot.
 
 ### Sécurité & robustesse (durcissement pré-déploiement, audit)
 

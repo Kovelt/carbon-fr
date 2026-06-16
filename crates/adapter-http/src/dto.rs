@@ -136,6 +136,36 @@ fn neighbor_name(n: Neighbor) -> &'static str {
     }
 }
 
+/// Réponse de `GET /v1/exchanges/date` — série historique des échanges (ADR-0017).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ExchangesHistoryResponse {
+    from: String,
+    to: String,
+    /// Nombre de snapshots renvoyés (pas quart d'heure).
+    count: usize,
+    /// Snapshots triés par horodatage croissant.
+    snapshots: Vec<ExchangesResponse>,
+}
+
+impl ExchangesHistoryResponse {
+    pub(crate) fn new(
+        from: OffsetDateTime,
+        to: OffsetDateTime,
+        snapshots: &[CrossBorderSnapshot],
+    ) -> Result<Self, time::error::Format> {
+        let snapshots = snapshots
+            .iter()
+            .map(ExchangesResponse::from_snapshot)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            from: to_rfc3339(from)?,
+            to: to_rfc3339(to)?,
+            count: snapshots.len(),
+            snapshots,
+        })
+    }
+}
+
 /// Réponse de `GET /v1/intensity/forecast` : la série **prévue** sur l'horizon.
 ///
 /// Le champ `model` (identité versionnée du modèle, ex. `climatology@1`) marque

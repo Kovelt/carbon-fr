@@ -1155,17 +1155,28 @@ impl ServerConfig {
             .context("CARBONFR_POLL_SECS : durée invalide")?
             .unwrap_or(900);
 
+        let trust_proxy = matches!(
+            std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
+            Ok("1") | Ok("true")
+        );
+
         let visit_salt = std::env::var("CARBONFR_VISIT_SALT").ok();
         if visit_salt.is_none() {
+            // `trust_proxy=1` = derrière un reverse proxy = **production** : un sel
+            // par défaut public rendrait les empreintes d'IP réversibles → refus de
+            // démarrer. En dev/self-hosting direct (trust_proxy=0), simple
+            // avertissement (parité, aucun blocage).
+            anyhow::ensure!(
+                !trust_proxy,
+                "CARBONFR_VISIT_SALT est requis en production (CARBONFR_TRUST_PROXY=1) : \
+                 sans sel secret à haute entropie, les empreintes d'IP des visiteurs \
+                 seraient réversibles (RGPD). Définir CARBONFR_VISIT_SALT."
+            );
             warn!(
                 "CARBONFR_VISIT_SALT non défini : sel de hachage des visiteurs PAR DÉFAUT \
                  (public) — les empreintes d'IP seraient réversibles. À définir en production."
             );
         }
-        let trust_proxy = matches!(
-            std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
-            Ok("1") | Ok("true")
-        );
 
         Ok(Self {
             database_url,

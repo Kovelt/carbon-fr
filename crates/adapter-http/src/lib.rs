@@ -234,4 +234,23 @@ where
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
         // Trace HTTP (méthode, chemin, statut, latence) — observabilité prod.
         .layer(tower_http::trace::TraceLayer::new_for_http())
+        // CORS **permissif** : l'API sert de la donnée publique en lecture et se
+        // veut dev-first (cf. carbonintensity.org.uk). Toute origine peut donc lire
+        // les réponses depuis un navigateur — nécessaire pour qu'un site tiers (dont
+        // carbon-fr.kovelt.fr) consomme l'API. Pas de cookies : `Any` est sûr (les
+        // clés API passent par l'en-tête `Authorization`, pas par `credentials`).
+        // Couche la plus externe : gère le préflight `OPTIONS` avant le routage.
+        .layer(cors_layer())
+}
+
+/// Politique CORS de l'API : ouverte en lecture (origine/méthodes/en-têtes `Any`),
+/// expose les en-têtes de quota (`RateLimit-*`) au client navigateur. À restreindre
+/// (origines explicites) seulement si une instance veut cloisonner son API.
+fn cors_layer() -> tower_http::cors::CorsLayer {
+    use tower_http::cors::{Any, CorsLayer};
+    CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any)
+        .expose_headers(Any)
 }

@@ -316,6 +316,29 @@ async fn intensity_now_returns_latest() {
 }
 
 #[tokio::test]
+async fn cors_allows_cross_origin_reads() {
+    // L'API publique doit autoriser un navigateur d'une autre origine (le site
+    // carbon-fr.kovelt.fr) à lire les réponses : en-tête CORS permissif.
+    let response = app(Some(national_measurement()))
+        .oneshot(
+            Request::get("/v1/intensity/now")
+                .header("origin", "https://carbon-fr.kovelt.fr")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .expect("en-tête CORS présent"),
+        "*"
+    );
+}
+
+#[tokio::test]
 async fn methodology_param_selects_series() {
     // La mesure stockée est en `acv-ademe`.
     let mut m = national_measurement();

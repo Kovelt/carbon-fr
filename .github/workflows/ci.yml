@@ -106,7 +106,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Install
-        run: npm install
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - name: Install (lockfile)
+        run: npm ci
       - name: Typecheck + build
         run: npm run build

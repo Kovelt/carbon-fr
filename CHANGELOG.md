@@ -8,6 +8,17 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté — météo nationale (ADR-0012/0018)
+
+- **`GET /v1/weather`** (courante) et **`GET /v1/weather/date?from=&to=`**
+  (historique depuis 2016) : vent à 100 m (km/h) + irradiance (W/m²), moyenne
+  nationale 7 points. Donnée déjà ingérée (substrat de la dérivation
+  renouvelable), exposée telle quelle. **Attribution Open-Meteo (CC-BY 4.0)**
+  portée dans le champ `source` (crédit + lien + mention de transformation),
+  comme l'exige la licence. OpenAPI + Bruno. *(Note gouvernance : l'API gratuite
+  Open-Meteo est non-commerciale ; un tier hébergé payant nécessitera un
+  abonnement Open-Meteo pour l'ingestion.)*
+
 ### Ajouté — dérivation renouvelable, fondation (ADR-0018)
 
 - **Calculateur de domaine pur `RenewableModel`** : météo (vent à 100 m,

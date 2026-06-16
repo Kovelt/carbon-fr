@@ -1,0 +1,28 @@
+meta {
+  name: Météo nationale — historique
+  type: http
+  seq: 15
+}
+
+get {
+  url: {{baseUrl}}/v1/weather/date?from=2024-01-01T00:00:00Z&to=2024-01-08T00:00:00Z
+  body: none
+  auth: none
+}
+
+params:query {
+  from: 2024-01-01T00:00:00Z
+  to: 2024-01-08T00:00:00Z
+}
+
+assert {
+  res.status: eq 200
+  res.body.count: isNumber
+  res.body.points: isArray
+  res.body.source: isDefined
+}
+
+docs {
+  Série météo historique (vent + irradiance), une valeur par créneau (dernier
+  run), fenêtre ≤ 366 jours. Archive depuis 2016 (couverture Open-Meteo).
+}

@@ -6,7 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use carbonfr_core::application::{
     CarbonAwareScheduler, FindGreenestWindow, GetConsumptionIntensity, GetCrossBorderExchanges,
-    GetCurrentIntensity, GetIntensityHistory, GetIntensityStats,
+    GetCurrentIntensity, GetIntensityHistory, GetIntensityStats, GetWeather,
 };
 use carbonfr_core::domain::{
     Granularity, Region, Subscription, ThresholdDirection, TimeRange, WindowEstimator,
@@ -14,7 +14,7 @@ use carbonfr_core::domain::{
 };
 use carbonfr_core::ports::{
     ApiKeyRepository, CrossBorderRepository, ForecastModel, IntensityRepository,
-    SubscriptionRepository, VisitCounter,
+    SubscriptionRepository, VisitCounter, WeatherRepository,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -26,7 +26,8 @@ use crate::dto::{
     CreateWebhookRequest, CreatedWebhookResponse, ExchangesHistoryResponse, ExchangesResponse,
     FactorsResponse, ForecastResponse, GreenestWindowResponse, HistoryResponse, IntensityResponse,
     MethodologiesResponse, MixResponse, ScheduleResponse, SlotsResponse, StatsResponse,
-    StreamEventBody, VisitStatsResponse, WebhookListResponse,
+    StreamEventBody, VisitStatsResponse, WeatherHistoryResponse, WeatherResponse,
+    WebhookListResponse,
 };
 use crate::error::{ApiError, ErrorBody};
 use crate::{AppState, ForecastState};
@@ -247,6 +248,71 @@ where
     let use_case = GetCrossBorderExchanges::new(state.repo.clone(), state.repo.clone());
     let snapshots = use_case.range(range).await?;
     Ok(Json(ExchangesHistoryResponse::new(from, to, &snapshots)?))
+}
+
+/// `GET /v1/weather` — météo nationale courante (vent à 100 m, irradiance ;
+/// moyenne 7 points), ADR-0012/0018. Données Open-Meteo (CC-BY 4.0, attribuées).
+#[utoipa::path(
+    get,
+    path = "/v1/weather",
+    responses(
+        (status = 200, description = "Météo nationale courante", body = WeatherResponse),
+        (status = 404, description = "Aucune donnée météo disponible", body = ErrorBody),
+    ),
+    tag = "météo"
+)]
+pub(crate) async fn weather<R>(
+    State(state): State<AppState<R>>,
+) -> Result<Json<WeatherResponse>, ApiError>
+where
+    R: WeatherRepository + Clone + Send + Sync + 'static,
+{
+    let use_case = GetWeather::new(state.repo.clone());
+    let forecast = use_case.latest(OffsetDateTime::now_utc()).await?;
+    Ok(Json(WeatherResponse::from_forecast(&forecast)?))
+}
+
+/// `GET /v1/weather/date?from=&to=` — série météo historique (vent + irradiance)
+/// sur un intervalle RFC 3339 (fenêtre ≤ 366 jours), ADR-0012/0018.
+#[utoipa::path(
+    get,
+    path = "/v1/weather/date",
+    params(HistoryQuery),
+    responses(
+        (status = 200, description = "Série météo historique", body = WeatherHistoryResponse),
+        (status = 400, description = "Bornes manquantes ou invalides", body = ErrorBody),
+    ),
+    tag = "météo"
+)]
+pub(crate) async fn weather_date<R>(
+    State(state): State<AppState<R>>,
+    Query(query): Query<HistoryQuery>,
+) -> Result<Json<WeatherHistoryResponse>, ApiError>
+where
+    R: WeatherRepository + Clone + Send + Sync + 'static,
+{
+    let from_raw = query
+        .from
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("paramètre `from` requis (RFC 3339)"))?;
+    let to_raw = query
+        .to
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("paramètre `to` requis (RFC 3339)"))?;
+    let from = parse_timestamp("from", from_raw)?;
+    let to = parse_timestamp("to", to_raw)?;
+
+    if to - from > MAX_HISTORY_SPAN {
+        return Err(ApiError::bad_request(
+            "fenêtre trop large (maximum 366 jours)",
+        ));
+    }
+    let range = TimeRange::new(from, to)
+        .ok_or_else(|| ApiError::bad_request("`to` doit être strictement postérieur à `from`"))?;
+
+    let use_case = GetWeather::new(state.repo.clone());
+    let forecasts = use_case.series(range).await?;
+    Ok(Json(WeatherHistoryResponse::new(from, to, &forecasts)?))
 }
 
 /// Paramètres de `GET /v1/intensity/date`.

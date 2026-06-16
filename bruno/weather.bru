@@ -1,0 +1,23 @@
+meta {
+  name: Météo nationale
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{baseUrl}}/v1/weather
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.wind_kmh: isNumber
+  res.body.irradiance_wm2: isNumber
+  res.body.source: isDefined
+}
+
+docs {
+  Météo nationale courante (vent à 100 m en km/h, irradiance en W/m², moyenne de
+  7 points FR). Source Open-Meteo (CC-BY 4.0), attribuée dans le champ `source`.
+}

@@ -3,7 +3,7 @@
 
 use carbonfr_core::domain::{
     CrossBorderSnapshot, ForecastPoint, GenerationMix, GreenWindow, IntensityStats, Measurement,
-    Neighbor, RollupBucket, VisitStats,
+    Neighbor, RollupBucket, VisitStats, WeatherForecast,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -43,6 +43,87 @@ impl IntensityResponse {
             methodology: m.methodology.id.clone(),
             methodology_version: m.methodology.version,
             vintage: m.vintage.code(),
+        })
+    }
+}
+
+/// Attribution Open-Meteo (licence CC-BY 4.0) : crédit + lien + mention de
+/// transformation (moyenne nationale), comme l'exige la licence.
+const WEATHER_ATTRIBUTION: &str = "Open-Meteo (CC-BY 4.0, https://open-meteo.com) — moyenne nationale 7 points, donnée transformée";
+
+/// Un créneau météo (vent à 100 m, irradiance), moyenne nationale.
+#[derive(Serialize, ToSchema)]
+struct WeatherPoint {
+    /// Instant prévu (RFC 3339, UTC).
+    valid_at: String,
+    /// Instant de production de la prévision (run).
+    run_at: String,
+    /// Vent à 100 m (km/h), moyenne nationale.
+    wind_kmh: f64,
+    /// Rayonnement solaire incident (W/m²), moyenne nationale.
+    irradiance_wm2: f64,
+}
+
+impl WeatherPoint {
+    fn from_forecast(f: &WeatherForecast) -> Result<Self, time::error::Format> {
+        Ok(Self {
+            valid_at: to_rfc3339(f.valid_at)?,
+            run_at: to_rfc3339(f.run_at)?,
+            wind_kmh: f.wind,
+            irradiance_wm2: f.irradiance,
+        })
+    }
+}
+
+/// Réponse de `GET /v1/weather` — météo nationale courante (ADR-0012/0018).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct WeatherResponse {
+    /// Attribution de la source (licence CC-BY 4.0).
+    source: &'static str,
+    valid_at: String,
+    run_at: String,
+    wind_kmh: f64,
+    irradiance_wm2: f64,
+}
+
+impl WeatherResponse {
+    pub(crate) fn from_forecast(f: &WeatherForecast) -> Result<Self, time::error::Format> {
+        Ok(Self {
+            source: WEATHER_ATTRIBUTION,
+            valid_at: to_rfc3339(f.valid_at)?,
+            run_at: to_rfc3339(f.run_at)?,
+            wind_kmh: f.wind,
+            irradiance_wm2: f.irradiance,
+        })
+    }
+}
+
+/// Réponse de `GET /v1/weather/date` — série météo historique.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct WeatherHistoryResponse {
+    source: &'static str,
+    from: String,
+    to: String,
+    count: usize,
+    points: Vec<WeatherPoint>,
+}
+
+impl WeatherHistoryResponse {
+    pub(crate) fn new(
+        from: OffsetDateTime,
+        to: OffsetDateTime,
+        forecasts: &[WeatherForecast],
+    ) -> Result<Self, time::error::Format> {
+        let points = forecasts
+            .iter()
+            .map(WeatherPoint::from_forecast)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            source: WEATHER_ATTRIBUTION,
+            from: to_rfc3339(from)?,
+            to: to_rfc3339(to)?,
+            count: points.len(),
+            points,
         })
     }
 }

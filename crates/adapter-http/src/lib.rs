@@ -46,7 +46,7 @@ use axum::Router;
 use axum::routing::{get, post};
 use carbonfr_core::ports::{
     ApiKeyRepository, CrossBorderRepository, ForecastModel, IntensityRepository,
-    SubscriptionRepository, VisitCounter,
+    SubscriptionRepository, VisitCounter, WeatherRepository,
 };
 
 pub use error::ApiError;
@@ -181,6 +181,7 @@ where
     R: IntensityRepository
         + VisitCounter
         + CrossBorderRepository
+        + WeatherRepository
         + ApiKeyRepository
         + SubscriptionRepository
         + Clone
@@ -196,6 +197,8 @@ where
         .route("/v1/mix", get(handlers::mix::<R>))
         .route("/v1/exchanges", get(handlers::exchanges::<R>))
         .route("/v1/exchanges/date", get(handlers::exchanges_date::<R>))
+        .route("/v1/weather", get(handlers::weather::<R>))
+        .route("/v1/weather/date", get(handlers::weather_date::<R>))
         .route("/v1/methodologies", get(handlers::methodologies))
         .route("/v1/factors", get(handlers::factors))
         .route("/v1/stats", get(handlers::visit_stats::<R>))

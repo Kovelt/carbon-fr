@@ -12,10 +12,10 @@ use carbonfr_adapter_http::{AppState, ForecastState, StreamState, router};
 use carbonfr_core::domain::{
     CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, GenerationMix,
     Granularity, IntensityStats, Measurement, Methodology, Neighbor, Region, RollupBucket,
-    TimeRange, Vintage, VisitStats,
+    TimeRange, Vintage, VisitStats, WeatherForecast,
 };
 use carbonfr_core::ports::{
-    CrossBorderRepository, IntensityRepository, RepositoryError, VisitCounter,
+    CrossBorderRepository, IntensityRepository, RepositoryError, VisitCounter, WeatherRepository,
 };
 use time::{Date, Duration, OffsetDateTime};
 use tower::ServiceExt;
@@ -29,6 +29,7 @@ struct FakeRepo {
     visits: Arc<Mutex<HashSet<(String, Date)>>>,
     flows: Option<CrossBorderSnapshot>,
     flow_series: Vec<CrossBorderSnapshot>,
+    weather: Vec<WeatherForecast>,
     /// Empreintes de clés API valides (auth webhooks).
     api_keys: std::collections::HashSet<String>,
     /// Abonnements webhook en mémoire.
@@ -148,6 +149,27 @@ impl CrossBorderRepository for FakeRepo {
             .into_iter()
             .filter(|s| range.contains(s.at))
             .collect())
+    }
+}
+
+#[async_trait]
+impl WeatherRepository for FakeRepo {
+    async fn upsert_weather(&self, _: &[WeatherForecast]) -> Result<usize, RepositoryError> {
+        Ok(0)
+    }
+
+    async fn weather_range(
+        &self,
+        valid: TimeRange,
+    ) -> Result<Vec<WeatherForecast>, RepositoryError> {
+        let mut out: Vec<WeatherForecast> = self
+            .weather
+            .iter()
+            .filter(|w| valid.contains(w.valid_at))
+            .cloned()
+            .collect();
+        out.sort_by_key(|w| (w.valid_at, w.run_at));
+        Ok(out)
     }
 }
 
@@ -414,6 +436,39 @@ async fn exchanges_date_returns_series() {
 async fn exchanges_date_requires_bounds() {
     let response = get(build(FakeRepo::default()), "/v1/exchanges/date").await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn weather_returns_current_conditions_with_attribution() {
+    let now = OffsetDateTime::now_utc();
+    let repo = FakeRepo {
+        weather: vec![WeatherForecast {
+            run_at: now - Duration::hours(1),
+            valid_at: now,
+            wind: 25.0,
+            irradiance: 300.0,
+        }],
+        ..Default::default()
+    };
+    let response = get(build(repo), "/v1/weather").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = json_body(response).await;
+    assert_eq!(body["wind_kmh"], 25.0);
+    assert_eq!(body["irradiance_wm2"], 300.0);
+    // Attribution CC-BY exigée par la licence Open-Meteo.
+    assert!(
+        body["source"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Open-Meteo")
+    );
+}
+
+#[tokio::test]
+async fn weather_without_data_is_404() {
+    let response = get(build(FakeRepo::default()), "/v1/weather").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

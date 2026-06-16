@@ -1,14 +1,19 @@
 name: Publier le SDK TypeScript
 
 # Publie @carbon-fr/sdk sur npm quand un tag `sdk-v*` est poussé.
-# Exemple : git tag sdk-v0.1.0 && git push origin sdk-v0.1.0
+# Exemple : git tag sdk-v0.2.0 && git push origin sdk-v0.2.0
 #
-# Prérequis (une seule fois) :
-#   1. Créer l'organisation gratuite « carbon-fr » sur https://www.npmjs.com/org/create
-#      (le scope @carbon-fr doit exister, sinon `npm publish` échoue).
-#   2. Générer un jeton npm « Automation » (Account → Access Tokens → Generate New Token).
-#   3. L'ajouter en secret du dépôt GitHub : Settings → Secrets and variables → Actions
-#      → New repository secret → nom `NPM_TOKEN`.
+# Authentification = Trusted Publishing (OIDC) : AUCUN jeton npm. npm échange
+# l'identité OIDC de ce workflow (id-token: write) contre un droit de publication,
+# et la provenance est générée automatiquement.
+#
+# Prérequis (une seule fois, côté npmjs.com) :
+#   Page du paquet → Settings → Trusted Publisher → Add → GitHub Actions :
+#     - Organization or user : Kovelt
+#     - Repository           : carbon-fr
+#     - Workflow filename     : release-sdk.yml
+#     - Environment           : (laisser vide)
+#   → le secret NPM_TOKEN n'est alors plus utilisé (peut être supprimé).
 
 on:
   push:
@@ -17,7 +22,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write # provenance npm (chaîne d'approvisionnement vérifiable)
+  id-token: write # OIDC : trusted publishing + provenance vérifiable
 
 jobs:
   publish:
@@ -35,6 +40,10 @@ jobs:
           cache: npm
           cache-dependency-path: sdk/typescript/package-lock.json
 
+      # Trusted Publishing exige npm >= 11.5.1 (le node 20 embarque npm 10).
+      - name: Mettre npm à jour (OIDC)
+        run: npm install -g npm@latest
+
       - name: Install (lockfile)
         run: npm ci
 
@@ -51,13 +60,6 @@ jobs:
             exit 1
           fi
 
+      # Pas de NODE_AUTH_TOKEN : l'auth se fait via OIDC (trusted publisher npm).
       - name: Publish
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN}" ]; then
-            echo "::warning::NPM_TOKEN is not configured; skipping npm publish."
-            echo "::warning::Configure repository secret NPM_TOKEN to enable package publishing."
-            exit 0
-          fi
-          npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public

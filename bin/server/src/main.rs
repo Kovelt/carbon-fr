@@ -36,6 +36,7 @@
 //! | `CARBONFR_BACKTEST_HORIZON_HOURS` | `24`      | `backtest-bands` : horizon calibré |
 //! | `CARBONFR_BACKTEST_BAND_QUANTILE` | `0.1`     | `backtest-bands` : quantile de bord |
 //! | `CARBONFR_FORECAST_CALIBRATE_WEEKS` | `8`     | auto-calibration au démarrage (0 = off) |
+//! | `CARBONFR_RENEWABLE_CALIBRATE_WEEKS` | `52`   | calibration `/v1/renewable` au démarrage (0 = off) |
 //! | `CARBONFR_TRAIN_FROM`/`_TO`  | 120 j av. test | `train` : période d'entraînement   |
 //! | `CARBONFR_TRAIN_ORIGIN_STEP_HOURS` | `6`      | `train` : espacement des origines  |
 //! | `CARBONFR_GBDT_MODEL`        | `gbdt.model`   | `train` : chemin de l'artefact GBDT |
@@ -65,7 +66,7 @@ use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_adapter_webhook::HttpNotifier;
 use carbonfr_core::application::{
     BackfillHistory, BacktestConsumptionForecast, BacktestForecast, BacktestRenewable,
-    BacktestReport, IngestLatest,
+    BacktestReport, CalibrateRenewable, IngestLatest,
 };
 use carbonfr_core::domain::{
     ACV_FORECAST_ID, ACV_FORECAST_VERSION, CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams,
@@ -159,7 +160,10 @@ async fn run_server() -> anyhow::Result<()> {
     let forecast_state = ForecastState::new(forecaster, model)
         .with_consumption(std::sync::Arc::new(acv_forecaster), acv_model);
 
-    let mut state = AppState::new(repo.clone()).with_trust_proxy(config.trust_proxy);
+    let renewable_model = build_calibrated_renewable_model(repo.clone()).await;
+    let mut state = AppState::new(repo.clone())
+        .with_trust_proxy(config.trust_proxy)
+        .with_renewable_model(renewable_model);
     if let Some(salt) = config.visit_salt {
         state = state.with_visit_salt(salt);
     }
@@ -738,6 +742,43 @@ fn print_metrics_row(label: &str, metrics: Option<ErrorMetrics>) {
 /// calibration des quantiles de résidus par horizon (ADR-0011) sur l'historique
 /// récent. Repli silencieux sur les bandes par créneau si l'historique est
 /// insuffisant ou si `CARBONFR_FORECAST_CALIBRATE_WEEKS=0`.
+/// Calibre le modèle de dérivation renouvelable (ADR-0018) sur l'historique
+/// récent au démarrage, pour servir `/v1/renewable`. Fenêtre large par défaut
+/// (52 sem.) car le `rte-direct` récent est creux (le `def` accuse du retard ;
+/// le poller n'alimente que depuis peu) → on capte l'historique dense. `None`
+/// (endpoint `503`) si l'assise est trop maigre ou `…_WEEKS=0`.
+async fn build_calibrated_renewable_model(
+    repo: PgIntensityRepository,
+) -> Option<carbonfr_core::domain::RenewableModel> {
+    let weeks = std::env::var("CARBONFR_RENEWABLE_CALIBRATE_WEEKS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(52);
+    if weeks <= 0 {
+        return None;
+    }
+    let now = OffsetDateTime::now_utc();
+    let range = TimeRange::new(now - Duration::weeks(weeks), now)?;
+    match CalibrateRenewable::new(repo.clone(), repo)
+        .execute(range)
+        .await
+    {
+        Ok(model) => {
+            info!(
+                wind_capacity_mw = model.wind_capacity_mw.round(),
+                solar_capacity_mw = model.solar_capacity_mw.round(),
+                weeks,
+                "modèle renouvelable calibré (/v1/renewable)"
+            );
+            Some(model)
+        }
+        Err(err) => {
+            warn!(error = %err, "calibration renouvelable impossible — /v1/renewable répondra 503");
+            None
+        }
+    }
+}
+
 async fn build_calibrated_forecaster(
     repo: PgIntensityRepository,
 ) -> ClimatologyForecaster<PgIntensityRepository> {

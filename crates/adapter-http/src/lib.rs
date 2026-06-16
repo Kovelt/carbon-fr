@@ -66,6 +66,10 @@ pub struct AppState<R> {
     /// un reverse proxy de confiance, ADR-0007). Faux par défaut : sans proxy,
     /// l'en-tête est spoofable.
     pub(crate) trust_proxy: bool,
+    /// Modèle de dérivation renouvelable **calibré au démarrage** (ADR-0018),
+    /// servi par `/v1/renewable`. `None` si la calibration a échoué (historique
+    /// insuffisant) → l'endpoint répond `503`.
+    pub(crate) renewable_model: Option<carbonfr_core::domain::RenewableModel>,
 }
 
 impl<R> AppState<R> {
@@ -76,7 +80,17 @@ impl<R> AppState<R> {
             methodology: "rte-direct".to_string(),
             visit_salt: DEFAULT_VISIT_SALT.to_string(),
             trust_proxy: false,
+            renewable_model: None,
         }
+    }
+
+    /// Injecte le modèle de dérivation renouvelable calibré (composition root).
+    pub fn with_renewable_model(
+        mut self,
+        model: Option<carbonfr_core::domain::RenewableModel>,
+    ) -> Self {
+        self.renewable_model = model;
+        self
     }
 
     /// Active la confiance dans `X-Forwarded-For`/`X-Real-IP` (derrière un proxy).
@@ -199,6 +213,7 @@ where
         .route("/v1/exchanges/date", get(handlers::exchanges_date::<R>))
         .route("/v1/weather", get(handlers::weather::<R>))
         .route("/v1/weather/date", get(handlers::weather_date::<R>))
+        .route("/v1/renewable", get(handlers::renewable::<R>))
         .route("/v1/methodologies", get(handlers::methodologies))
         .route("/v1/factors", get(handlers::factors))
         .route("/v1/stats", get(handlers::visit_stats::<R>))

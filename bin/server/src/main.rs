@@ -45,7 +45,7 @@
 //! | `CARBONFR_RATELIMIT_FREE_PER_MIN` | `600`     | quota clé gratuite (req/min)        |
 //! | `CARBONFR_KEY_LABEL`         | `` (vide)      | `mint-key` : libellé de la clé      |
 //! | `CARBONFR_TRUST_PROXY`       | `0` (off)      | faire confiance à `X-Forwarded-For` (derrière un reverse proxy) |
-//! | `CARBONFR_DB_MAX_CONNECTIONS` | `10`         | taille du pool PostgreSQL           |
+//! | `CARBONFR_DB_MAX_CONNECTIONS` | `20`         | taille du pool PostgreSQL           |
 //! | `CARBONFR_VISIT_SALT`        | `carbon-fr` (⚠ à surcharger) | sel du hachage des IP visiteurs |
 //! | `RUST_LOG`                   | `info`         | filtre de logs (`tracing`)        |
 
@@ -609,27 +609,29 @@ async fn build_calibrated_acv_forecaster(
         repo.clone(),
         repo,
     );
-    match calibrator
-        .calibrate_bands(
-            Region::National,
-            window,
-            Duration::days(1),
-            Duration::minutes(15),
-            Duration::hours(24),
-            0.1,
-        )
-        .await
-    {
-        Ok(bands) if !bands.is_empty() => {
+    let calibration = calibrator.calibrate_bands(
+        Region::National,
+        window,
+        Duration::days(1),
+        Duration::minutes(15),
+        Duration::hours(24),
+        0.1,
+    );
+    match tokio::time::timeout(CALIBRATION_TIMEOUT, calibration).await {
+        Ok(Ok(bands)) if !bands.is_empty() => {
             info!(
                 horizons = bands.len(),
                 "intervalles acv-ademe@2 calibrés (résidus par horizon)"
             );
             base.with_bands(bands)
         }
-        Ok(_) => base,
-        Err(err) => {
+        Ok(Ok(_)) => base,
+        Ok(Err(err)) => {
             warn!(error = %err, "calibration acv-ademe@2 impossible — bandes par créneau");
+            base
+        }
+        Err(_) => {
+            warn!("calibration acv-ademe@2 : timeout au démarrage — bandes par créneau");
             base
         }
     }
@@ -775,15 +777,16 @@ fn print_metrics_row(label: &str, metrics: Option<ErrorMetrics>) {
     }
 }
 
-/// Construit le modèle de prévision avec **intervalles calibrés** : auto-
-/// calibration des quantiles de résidus par horizon (ADR-0011) sur l'historique
-/// récent. Repli silencieux sur les bandes par créneau si l'historique est
-/// insuffisant ou si `CARBONFR_FORECAST_CALIBRATE_WEEKS=0`.
+/// Délai maximum d'une calibration au démarrage : borne le temps de boot si la
+/// base est lente (gros historique, REFRESH concurrent, pool saturé) ; au-delà,
+/// on démarre quand même en mode non-calibré plutôt que de pendre indéfiniment.
+const CALIBRATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Calibre le modèle de dérivation renouvelable (ADR-0018) sur l'historique
 /// récent au démarrage, pour servir `/v1/renewable`. Fenêtre large par défaut
 /// (52 sem.) car le `rte-direct` récent est creux (le `def` accuse du retard ;
 /// le poller n'alimente que depuis peu) → on capte l'historique dense. `None`
-/// (endpoint `503`) si l'assise est trop maigre ou `…_WEEKS=0`.
+/// (endpoint `503`) si l'assise est trop maigre, `…_WEEKS=0`, ou timeout.
 async fn build_calibrated_renewable_model(
     repo: PgIntensityRepository,
 ) -> Option<carbonfr_core::domain::RenewableModel> {
@@ -796,11 +799,10 @@ async fn build_calibrated_renewable_model(
     }
     let now = OffsetDateTime::now_utc();
     let range = TimeRange::new(now - Duration::weeks(weeks), now)?;
-    match CalibrateRenewable::new(repo.clone(), repo)
-        .execute(range)
-        .await
-    {
-        Ok(model) => {
+    let use_case = CalibrateRenewable::new(repo.clone(), repo);
+    let calibration = use_case.execute(range);
+    match tokio::time::timeout(CALIBRATION_TIMEOUT, calibration).await {
+        Ok(Ok(model)) => {
             info!(
                 wind_capacity_mw = model.wind_capacity_mw.round(),
                 solar_capacity_mw = model.solar_capacity_mw.round(),
@@ -809,13 +811,21 @@ async fn build_calibrated_renewable_model(
             );
             Some(model)
         }
-        Err(err) => {
+        Ok(Err(err)) => {
             warn!(error = %err, "calibration renouvelable impossible — /v1/renewable répondra 503");
+            None
+        }
+        Err(_) => {
+            warn!("calibration renouvelable : timeout au démarrage — /v1/renewable répondra 503");
             None
         }
     }
 }
 
+/// Construit le modèle de prévision avec **intervalles calibrés** : auto-
+/// calibration des quantiles de résidus par horizon (ADR-0011) sur l'historique
+/// récent. Repli silencieux sur les bandes par créneau si l'historique est
+/// insuffisant, si `CARBONFR_FORECAST_CALIBRATE_WEEKS=0`, ou en cas de timeout.
 async fn build_calibrated_forecaster(
     repo: PgIntensityRepository,
 ) -> ClimatologyForecaster<PgIntensityRepository> {
@@ -837,32 +847,34 @@ async fn build_calibrated_forecaster(
 
     let calibrator =
         BacktestForecast::new(ClimatologyForecaster::new(repo.clone()), repo, "rte-direct");
-    match calibrator
-        .calibrate_bands(
-            Region::National,
-            window,
-            Duration::days(1),
-            Duration::minutes(15),
-            Duration::hours(24),
-            0.1,
-        )
-        .await
-    {
-        Ok(bands) if !bands.is_empty() => {
+    let calibration = calibrator.calibrate_bands(
+        Region::National,
+        window,
+        Duration::days(1),
+        Duration::minutes(15),
+        Duration::hours(24),
+        0.1,
+    );
+    match tokio::time::timeout(CALIBRATION_TIMEOUT, calibration).await {
+        Ok(Ok(bands)) if !bands.is_empty() => {
             info!(
                 horizons = bands.len(),
                 "intervalles de prévision calibrés (quantiles de résidus par horizon)"
             );
             base.with_bands(bands)
         }
-        Ok(_) => {
+        Ok(Ok(_)) => {
             info!(
                 "historique récent insuffisant pour calibrer les intervalles — bandes par créneau"
             );
             base
         }
-        Err(err) => {
+        Ok(Err(err)) => {
             warn!(error = %err, "calibration des intervalles impossible — bandes par créneau");
+            base
+        }
+        Err(_) => {
+            warn!("calibration des intervalles : timeout au démarrage — bandes par créneau");
             base
         }
     }

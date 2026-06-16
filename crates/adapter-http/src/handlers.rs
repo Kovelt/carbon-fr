@@ -37,6 +37,12 @@ use std::convert::Infallible;
 /// extraction démesurée). Au-delà → 400.
 const MAX_HISTORY_SPAN: Duration = Duration::days(366);
 
+/// Fenêtre maximale des **séries denses** au pas quart d'heure (échanges, météo) :
+/// plus serrée que l'historique d'intensité, car ~576 lignes/jour (échanges, 6
+/// frontières) ou multi-runs horaires (météo) gonflent vite une réponse non
+/// paginée. 92 jours suffisent aux usages (courbes/animations du dashboard).
+const MAX_DENSE_SERIES_SPAN: Duration = Duration::days(92);
+
 /// Horizon de prévision par défaut et maximum (ADR-0009 : usage « dans la
 /// journée » ; au-delà de 72 h la correction de persistance n'apporte plus rien).
 const DEFAULT_HORIZON_HOURS: u32 = 24;
@@ -237,9 +243,9 @@ where
     let from = parse_timestamp("from", from_raw)?;
     let to = parse_timestamp("to", to_raw)?;
 
-    if to - from > MAX_HISTORY_SPAN {
+    if to - from > MAX_DENSE_SERIES_SPAN {
         return Err(ApiError::bad_request(
-            "fenêtre trop large (maximum 366 jours)",
+            "fenêtre trop large (maximum 92 jours pour les échanges)",
         ));
     }
     let range = TimeRange::new(from, to)
@@ -302,9 +308,9 @@ where
     let from = parse_timestamp("from", from_raw)?;
     let to = parse_timestamp("to", to_raw)?;
 
-    if to - from > MAX_HISTORY_SPAN {
+    if to - from > MAX_DENSE_SERIES_SPAN {
         return Err(ApiError::bad_request(
-            "fenêtre trop large (maximum 366 jours)",
+            "fenêtre trop large (maximum 92 jours pour la météo)",
         ));
     }
     let range = TimeRange::new(from, to)

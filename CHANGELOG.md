@@ -8,6 +8,19 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Mesuré & écarté — prévision météo-pilotée (ADR-0018 étape A)
+
+- **`AnalyzeRenewableSignal`** + sous-commande **`analyze-renewable-signal`** :
+  mesure (borne supérieure, renouvelable réel, hors échantillon) si l'anomalie de
+  renouvelable améliore la climatologie d'intensité. **Mesuré (2024, national)** :
+  gain **0,48 gCO₂eq/kWh (~4 %)**, β ≈ 0. L'outil est validé par tests (détecte un
+  signal synthétique, donne β≈0 sans lien). **Conclusion** : le réseau FR
+  (nucléaire-dominé, déjà bas carbone) ne tire **pas** de gain notable d'une
+  prévision d'intensité météo-pilotée → `forecast@N` **non construit** (même
+  discipline que l'ajustement de charge ADR-0011 §4 et le GBDT ADR-0012). La
+  dérivation reste précieuse comme **produit** (`/v1/renewable`), pas comme levier
+  de précision de prévision.
+
 ### Ajouté — exposition de la dérivation renouvelable (ADR-0018)
 
 - **`GET /v1/renewable`** : production renouvelable **estimée** depuis la météo

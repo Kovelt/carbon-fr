@@ -8,6 +8,14 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté — SDK TypeScript (`@carbon-fr/sdk`)
+
+- Client **TypeScript** ([`sdk/typescript/`](sdk/typescript/)) couvrant tous les
+  endpoints `/v1` : typé de bout en bout (une méthode + un type par endpoint),
+  **zéro dépendance runtime** (`fetch` natif — navigateur, Node ≥ 18, Deno, Bun),
+  flux **SSE** exposé en `AsyncGenerator`, erreurs `CarbonFrError` (`status`/`code`).
+  Job CI `sdk-typescript` (typecheck + build) ajouté.
+
 ### Mesuré & écarté — prévision météo-pilotée (ADR-0018 étape A)
 
 - **`AnalyzeRenewableSignal`** + sous-commande **`analyze-renewable-signal`** :

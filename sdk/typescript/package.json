@@ -1,0 +1,36 @@
+{
+  "name": "@carbon-fr/sdk",
+  "version": "0.1.0",
+  "description": "Client TypeScript de l'API carbon-fr — intensité carbone de l'électricité française (gCO₂eq/kWh).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src", "README.md"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": ["carbon", "electricity", "france", "co2", "rte", "eco2mix", "api", "sdk"],
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Kovelt/carbon-fr",
+    "directory": "sdk/typescript"
+  },
+  "homepage": "https://github.com/Kovelt/carbon-fr",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

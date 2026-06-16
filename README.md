@@ -22,7 +22,7 @@ L'intensité carbone du réseau électrique français (en **gCO₂eq/kWh**) est 
 `carbon-fr` la rend **directement consommable par des développeurs et des machines** :
 
 - 🇫🇷 **Souverain & auto-hébergeable** — aucune dépendance propriétaire obligatoire, licences OSI.
-- 🚀 **Dev-first** — API REST lisible et versionnée (`/v1`), **OpenAPI 3.1** + Swagger UI servis, collection Bruno ; SDK prévus.
+- 🚀 **Dev-first** — API REST lisible et versionnée (`/v1`), **OpenAPI 3.1** + Swagger UI servis, collection Bruno, **SDK TypeScript** ([`sdk/typescript/`](sdk/typescript/)).
 - 🛡️ **Résilient au quota** — un poller unique alimente la base ; l'API sert tous les clients depuis ce read-model, à **moins de 8 % du quota** RTE.
 - 🔬 **Méthodologie versionnée** — chaque mesure porte sa méthode de calcul (`rte-direct` et `acv-ademe` — cycle de vie production **et** consommation), jamais de changement silencieux.
 - 🔮 **Prévision comme valeur ajoutée** — l'intensité prévisionnelle n'existe pas à la source : `carbon-fr` la modélise derrière un port dédié (`climatology@1`, gardée par backtest).
@@ -93,6 +93,7 @@ carbon-fr/
 ├── bin/
 │   └── server/                 # ✅ composition root : adapters + poller
 ├── bruno/                      # collection Bruno (requêtes .bru versionnées)
+├── sdk/typescript/             # SDK client TypeScript (@carbon-fr/sdk)
 ├── deploy/                     # Caddyfile (reverse proxy TLS) + unité systemd
 ├── Dockerfile                  # image de prod multi-stage
 ├── .env.example                # variables d'environnement documentées

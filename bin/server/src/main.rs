@@ -300,10 +300,24 @@ async fn run_backfill() -> anyhow::Result<()> {
     // Backfill de la **charge réalisée** historique (consommation) — store de
     // charge réutilisable (features du futur modèle ML, ADR-0012). Les prévisions
     // de charge, elles, sont ingérées en continu par le poller.
-    let loads = archive
-        .export_national_loads(range)
-        .await
-        .context("backfill de la charge")?;
+    //
+    // **Fenêtré** comme le national (un export de masse par tranche) : un export
+    // unique sur tout l'historique dépasse le timeout du client HTTP → corps
+    // tronqué (« error decoding response body »).
+    let mut loads = Vec::new();
+    let mut win_start = range.start();
+    while win_start < range.end() {
+        let win_end = (win_start + window).min(range.end());
+        let Some(slice) = TimeRange::new(win_start, win_end) else {
+            break;
+        };
+        let mut part = archive
+            .export_national_loads(slice)
+            .await
+            .context("backfill de la charge")?;
+        loads.append(&mut part);
+        win_start = win_end;
+    }
     let loads_written = repo
         .upsert_loads(&loads)
         .await

@@ -8,6 +8,19 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Robustesse runtime & données (audit, lot 2)
+
+- **Démarrage borné en temps** : les 3 calibrations au démarrage (prévision,
+  acv-ademe@2, renouvelable) sont désormais sous **timeout** (120 s) → repli sur
+  non-calibré plutôt que de pendre si la base est lente (gros historique, REFRESH
+  concurrent, pool saturé).
+- **Séries denses bornées** : `/v1/exchanges/date` et `/v1/weather/date` plafonnés
+  à **92 jours** (au lieu de 366) — ~576 lignes/jour (échanges) ou multi-runs
+  horaires (météo) gonflaient une réponse non paginée.
+- **Migration `0002` idempotente** (`CREATE MATERIALIZED VIEW/INDEX IF NOT EXISTS`).
+- **Pool PostgreSQL** : défaut 10 → **20** (partagé API + poller + watcher ; un
+  `REFRESH … CONCURRENTLY` monopolise une connexion).
+
 ### Ajouté — SDK TypeScript (`@carbon-fr/sdk`)
 
 - Client **TypeScript** ([`sdk/typescript/`](sdk/typescript/)) couvrant tous les

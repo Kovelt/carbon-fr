@@ -472,6 +472,41 @@ async fn weather_without_data_is_404() {
 }
 
 #[tokio::test]
+async fn weather_date_returns_series() {
+    let at = OffsetDateTime::from_unix_timestamp(1_700_000_000).unwrap(); // 2023-11-14
+    let repo = FakeRepo {
+        weather: vec![WeatherForecast {
+            run_at: at - Duration::hours(24),
+            valid_at: at,
+            wind: 30.0,
+            irradiance: 100.0,
+        }],
+        ..Default::default()
+    };
+    let uri = "/v1/weather/date?from=2023-11-01T00:00:00Z&to=2023-11-20T00:00:00Z";
+    let response = get(build(repo), uri).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = json_body(response).await;
+    assert_eq!(body["count"], 1);
+    assert_eq!(body["points"][0]["wind_kmh"], 30.0);
+    assert!(
+        body["source"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Open-Meteo")
+    );
+}
+
+#[tokio::test]
+async fn dense_series_window_too_large_is_400() {
+    // > 92 jours sur une série dense (échanges) → 400 (réponses bornées, audit).
+    let uri = "/v1/exchanges/date?from=2024-01-01T00:00:00Z&to=2024-06-01T00:00:00Z";
+    let response = get(build(FakeRepo::default()), uri).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn renewable_estimates_from_weather() {
     let now = OffsetDateTime::now_utc();
     let repo = FakeRepo {

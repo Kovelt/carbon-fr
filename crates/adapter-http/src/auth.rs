@@ -112,22 +112,40 @@ pub(crate) fn bearer_token(headers: &HeaderMap) -> Option<String> {
     (!token.is_empty()).then(|| token.to_string())
 }
 
-/// IP client. Sans `trust_proxy`, `X-Forwarded-For` est ignoré (spoofable) →
-/// `unknown` (seau anonyme unique). Derrière un proxy de confiance, l'en-tête
-/// donne l'IP réelle.
+/// IP client. Sans `trust_proxy`, tout en-tête de transfert est ignoré
+/// (spoofable) → `unknown` (seau anonyme unique). Derrière un proxy de confiance,
+/// on lit l'IP réelle via [`forwarded_client_ip`].
 fn client_ip(headers: &HeaderMap, trust_proxy: bool) -> String {
     if !trust_proxy {
         return "unknown".to_string();
     }
-    for name in ["x-forwarded-for", "x-real-ip"] {
-        if let Some(value) = headers.get(name).and_then(|v| v.to_str().ok()) {
-            let first = value.split(',').next().unwrap_or("").trim();
-            if !first.is_empty() {
-                return first.to_string();
-            }
+    forwarded_client_ip(headers).unwrap_or_else(|| "unknown".to_string())
+}
+
+/// IP réelle telle que vue par le **reverse proxy de confiance**. Priorité à
+/// `X-Real-Ip` (posé par le proxy avec l'IP du client → non spoofable). À défaut,
+/// le **dernier** segment de `X-Forwarded-For` : le proxy **ajoute** l'IP réelle à
+/// droite, les segments de gauche sont fournis par le client (spoofables) — d'où
+/// le dernier, pas le premier (corrige le contournement de quota / la pollution
+/// du compteur). `None` si aucun en-tête exploitable.
+pub(crate) fn forwarded_client_ip(headers: &HeaderMap) -> Option<String> {
+    if let Some(ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        let ip = ip.trim();
+        if !ip.is_empty() {
+            return Some(ip.to_string());
         }
     }
-    "unknown".to_string()
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .rev()
+                .find(|s| !s.is_empty())
+                .map(str::to_string)
+        })
 }
 
 fn limit_for(tier: ApiTier, config: &AuthConfig) -> u32 {
@@ -262,5 +280,27 @@ mod tests {
         let mut empty = HeaderMap::new();
         empty.insert(header::AUTHORIZATION, "Basic xyz".parse().unwrap());
         assert_eq!(bearer_token(&empty), None);
+    }
+
+    #[test]
+    fn forwarded_ip_prefers_x_real_ip() {
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", "1.1.1.1, 2.2.2.2".parse().unwrap());
+        h.insert("x-real-ip", "9.9.9.9".parse().unwrap());
+        assert_eq!(forwarded_client_ip(&h), Some("9.9.9.9".to_string()));
+    }
+
+    #[test]
+    fn forwarded_ip_takes_last_xff_segment_not_spoofable_first() {
+        // Le client peut pré-remplir XFF ; le proxy de confiance AJOUTE l'IP réelle
+        // à droite → on prend le dernier segment (1.1.1.1 = spoofé, ignoré).
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", "1.1.1.1, 203.0.113.7".parse().unwrap());
+        assert_eq!(forwarded_client_ip(&h), Some("203.0.113.7".to_string()));
+    }
+
+    #[test]
+    fn forwarded_ip_none_without_headers() {
+        assert_eq!(forwarded_client_ip(&HeaderMap::new()), None);
     }
 }

@@ -8,6 +8,20 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Sécurité (audit, lot 3)
+
+- **IP client non spoofable derrière proxy** : on lit désormais `X-Real-Ip` (posé
+  par le reverse proxy de confiance), sinon le **dernier** segment de
+  `X-Forwarded-For` (le proxy ajoute l'IP réelle à droite ; les segments de gauche
+  sont fournis par le client). Corrige le contournement du quota anonyme et la
+  pollution du compteur de visiteurs via un XFF forgé.
+- **Sel visiteur obligatoire en production** : le serveur **refuse de démarrer**
+  si `CARBONFR_VISIT_SALT` est absent **et** `CARBONFR_TRUST_PROXY=1` (= derrière
+  un proxy = prod) — un sel public rendrait les empreintes d'IP réversibles. En
+  dev/self-hosting direct, simple avertissement (parité préservée).
+- **Quota d'abonnements webhook par clé** (max 50) : borne le stockage et
+  l'amplification de livraisons sortantes.
+
 ### Robustesse runtime & données (audit, lot 2)
 
 - **Démarrage borné en temps** : les 3 calibrations au démarrage (prévision,

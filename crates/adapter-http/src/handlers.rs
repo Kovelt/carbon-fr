@@ -43,6 +43,10 @@ const MAX_HISTORY_SPAN: Duration = Duration::days(366);
 /// paginée. 92 jours suffisent aux usages (courbes/animations du dashboard).
 const MAX_DENSE_SERIES_SPAN: Duration = Duration::days(92);
 
+/// Plafond d'abonnements webhook par clé API : borne le stockage et
+/// l'amplification de livraisons sortantes (ADR-0016).
+const MAX_WEBHOOKS_PER_KEY: usize = 50;
+
 /// Horizon de prévision par défaut et maximum (ADR-0009 : usage « dans la
 /// journée » ; au-delà de 72 h la correction de persistance n'apporte plus rien).
 const DEFAULT_HORIZON_HOURS: u32 = 24;
@@ -1047,6 +1051,12 @@ where
     R: ApiKeyRepository + SubscriptionRepository + Clone + Send + Sync + 'static,
 {
     let owner = authenticate_owner(&state.repo, &headers).await?;
+    // Quota par clé : borne le stockage et l'amplification de livraisons sortantes.
+    if state.repo.list_for_owner(&owner).await?.len() >= MAX_WEBHOOKS_PER_KEY {
+        return Err(ApiError::bad_request(format!(
+            "quota d'abonnements atteint (maximum {MAX_WEBHOOKS_PER_KEY} par clé)"
+        )));
+    }
     let region = resolve_region(&request.region)?;
     let direction = ThresholdDirection::from_code(&request.direction)
         .ok_or_else(|| ApiError::bad_request("`direction` doit valoir `below` ou `above`"))?;
@@ -1131,8 +1141,9 @@ where
 }
 
 /// Adresse IP du client, lue des en-têtes posés par le reverse proxy
-/// (`X-Forwarded-For` puis `X-Real-IP`, ADR-0007). `unknown` à défaut (accès
-/// direct sans proxy) — toutes ces visites tombent alors dans un même seau.
+/// (`X-Real-Ip`, sinon **dernier** segment de `X-Forwarded-For` ; ADR-0007).
+/// `unknown` à défaut (accès direct sans proxy) — toutes ces visites tombent alors
+/// dans un même seau.
 /// `unknown` si `trust_proxy` est faux : sans proxy de confiance, `X-Forwarded-For`
 /// est **fourni par le client** donc spoofable — on ne s'y fie pas (sinon
 /// contournement du quota anonyme et pollution du compteur). Derrière le reverse
@@ -1141,15 +1152,10 @@ fn client_ip(headers: &HeaderMap, trust_proxy: bool) -> String {
     if !trust_proxy {
         return "unknown".to_string();
     }
-    for header in ["x-forwarded-for", "x-real-ip"] {
-        if let Some(value) = headers.get(header).and_then(|v| v.to_str().ok()) {
-            let first = value.split(',').next().unwrap_or("").trim();
-            if !first.is_empty() {
-                return first.to_string();
-            }
-        }
-    }
-    "unknown".to_string()
+    // X-Real-Ip (posé par le proxy) en priorité, sinon DERNIER segment de XFF —
+    // les segments de gauche sont fournis par le client (spoofables). Logique
+    // partagée avec le middleware d'auth pour cohérence.
+    crate::auth::forwarded_client_ip(headers).unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Clé visiteur anonyme : `SHA-256(sel | ip)`. L'IP n'est jamais stockée.

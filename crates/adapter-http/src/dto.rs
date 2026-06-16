@@ -607,3 +607,29 @@ impl ScheduleResponse {
         })
     }
 }
+
+/// Données d'un événement SSE `intensity` (`GET /v1/intensity/stream`, ADR-0014).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct StreamEventBody {
+    region: String,
+    timestamp: String,
+    intensity: f64,
+    methodology: String,
+    methodology_version: u32,
+    unit: &'static str,
+}
+
+impl StreamEventBody {
+    pub(crate) fn from_update(
+        u: &carbonfr_core::domain::IntensityUpdate,
+    ) -> Result<Self, time::error::Format> {
+        Ok(Self {
+            region: u.region.slug().to_string(),
+            timestamp: to_rfc3339(u.at)?,
+            intensity: u.intensity.value(),
+            methodology: u.methodology.id.clone(),
+            methodology_version: u.methodology.version,
+            unit: "gCO2eq/kWh",
+        })
+    }
+}

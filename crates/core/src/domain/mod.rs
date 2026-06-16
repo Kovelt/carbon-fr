@@ -20,6 +20,7 @@ mod region;
 mod schedule;
 mod stats;
 mod time_range;
+mod update;
 mod visit;
 mod weather;
 mod window;
@@ -46,6 +47,7 @@ pub use schedule::{
 };
 pub use stats::{Granularity, IntensityStats, RollupBucket};
 pub use time_range::TimeRange;
+pub use update::IntensityUpdate;
 pub use visit::VisitStats;
 pub use weather::WeatherForecast;
 pub use window::{GreenWindow, WindowEstimator, greenest_window};

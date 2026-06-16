@@ -47,13 +47,14 @@ use carbonfr_adapter_forecast::ClimatologyForecaster;
 use carbonfr_adapter_gbdt::{
     GbdtForecaster, GbdtHyperParams, build_training_examples, train_model,
 };
-use carbonfr_adapter_http::{AppState, ForecastState, router};
+use carbonfr_adapter_http::{AppState, ForecastState, StreamState, router};
 use carbonfr_adapter_meteo::OpenMeteoClient;
 use carbonfr_adapter_odre::OdreClient;
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_core::application::{BackfillHistory, BacktestForecast, BacktestReport, IngestLatest};
 use carbonfr_core::domain::{
-    CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, ErrorMetrics, Region, TimeRange,
+    CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, ErrorMetrics, IntensityUpdate, Region,
+    TimeRange,
 };
 use carbonfr_core::ports::{
     ConsumptionRepository, ConsumptionSource, CrossBorderRepository, CrossBorderSource,
@@ -107,11 +108,16 @@ async fn run_server() -> anyhow::Result<()> {
             None
         }
     };
+    // Canal de diffusion live (ADR-0014 §2) : le poller publie chaque mise à jour
+    // nationale, les connexions SSE s'y abonnent. Canal mémoire (poller intégré) ;
+    // pour un bin/poller séparé (ADR-0007), basculer sur LISTEN/NOTIFY.
+    let (updates_tx, _) = tokio::sync::broadcast::channel(64);
     let poller = spawn_poller(
         source,
         weather,
         cross_border,
         repo.clone(),
+        updates_tx.clone(),
         config.poll_interval,
     );
 
@@ -127,7 +133,8 @@ async fn run_server() -> anyhow::Result<()> {
     if let Some(salt) = config.visit_salt {
         state = state.with_visit_salt(salt);
     }
-    let app = router(state, forecast_state);
+    let stream_state = StreamState::new(updates_tx);
+    let app = router(state, forecast_state, stream_state);
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("écoute sur {}", config.bind))?;
@@ -824,11 +831,13 @@ fn parse_rfc3339_env(name: &str) -> anyhow::Result<Option<OffsetDateTime>> {
 /// Démarre la tâche d'ingestion périodique. La première itération s'exécute
 /// immédiatement. Une erreur d'ingestion est journalisée sans interrompre la
 /// boucle (la donnée sera rattrapée à la prochaine itération ou au backfill).
+#[allow(clippy::too_many_arguments)]
 fn spawn_poller<S, W, C, R>(
     source: S,
     weather: W,
     cross_border: Option<C>,
     repo: R,
+    updates: tokio::sync::broadcast::Sender<IntensityUpdate>,
     interval: std::time::Duration,
 ) -> JoinHandle<()>
 where
@@ -860,6 +869,13 @@ where
                 }
             }
             info!(written, "ingestion ODRÉ (national + régions)");
+
+            // Diffusion live (ADR-0014 §2) : on pousse la dernière mesure
+            // nationale `rte-direct` aux abonnés SSE. `send` échoue sans abonné —
+            // sans conséquence (canal sans rétention forte).
+            if let Ok(Some(m)) = repo.latest(Region::National, "rte-direct").await {
+                let _ = updates.send(IntensityUpdate::from_measurement(&m));
+            }
 
             // Charge nationale : consommation récente + prévisions RTE — entrée
             // du futur modèle ML (ADR-0012).

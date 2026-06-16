@@ -22,6 +22,9 @@
 //!   sur l'horizon (modèle `climatology@1`, ADR-0009).
 //! - `GET /v1/intensity/greenest-window?from=&horizon_hours=&window_minutes=` —
 //!   créneau le plus bas-carbone à venir.
+//! - `GET /v1/schedule`, `GET /v1/schedule/slots`, `GET /v1/intensity/below` —
+//!   scheduling carbon-aware (ADR-0014).
+//! - `GET /v1/intensity/stream` — flux **live** SSE des mises à jour (ADR-0014).
 //! - `GET /v1/openapi.json` — spécification OpenAPI 3.1 ; `GET /docs` — Swagger UI.
 //! - `GET /health` — sonde de disponibilité.
 //!
@@ -109,13 +112,33 @@ impl<F> ForecastState<F> {
     }
 }
 
+/// État des endpoints de **streaming** (ADR-0014 §2) : un canal de diffusion
+/// (`broadcast`) alimenté par le poller. Chaque connexion SSE s'y abonne. Pas de
+/// repository ni d'état par-client — la posture anonyme/sans état est préservée.
+///
+/// Mécanisme **canal mémoire** (poller intégré au même process). Pour un
+/// `bin/poller` séparé (ADR-0007), remplacer la source du canal par
+/// `LISTEN`/`NOTIFY` Postgres — l'abonnement SSE et le fan-out restent identiques.
+#[derive(Clone)]
+pub struct StreamState {
+    pub(crate) updates: tokio::sync::broadcast::Sender<carbonfr_core::domain::IntensityUpdate>,
+}
+
+impl StreamState {
+    pub fn new(
+        updates: tokio::sync::broadcast::Sender<carbonfr_core::domain::IntensityUpdate>,
+    ) -> Self {
+        Self { updates }
+    }
+}
+
 /// Construit le routeur de l'API, prêt à être servi par `axum::serve`.
 ///
 /// Les routes de lecture/écriture partagent [`AppState`] (le repository) ; les
 /// routes de **prévision** ont leur propre [`ForecastState`] (un
 /// [`ForecastModel`]). Deux sous-routeurs, chacun avec son état, **fusionnés**
 /// (`merge`) — ce qui évite d'imposer le type du modèle aux handlers existants.
-pub fn router<R, F>(state: AppState<R>, forecast: ForecastState<F>) -> Router
+pub fn router<R, F>(state: AppState<R>, forecast: ForecastState<F>, stream: StreamState) -> Router
 where
     R: IntensityRepository + VisitCounter + CrossBorderRepository + Clone + Send + Sync + 'static,
     F: ForecastModel + Clone + Send + Sync + 'static,
@@ -145,5 +168,9 @@ where
         .route("/v1/intensity/below", get(handlers::intensity_below::<F>))
         .with_state(forecast);
 
-    core.merge(forecasting)
+    let streaming = Router::new()
+        .route("/v1/intensity/stream", get(handlers::intensity_stream))
+        .with_state(stream);
+
+    core.merge(forecasting).merge(streaming)
 }

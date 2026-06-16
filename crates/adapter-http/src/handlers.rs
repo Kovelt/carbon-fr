@@ -21,10 +21,11 @@ use utoipa::IntoParams;
 use crate::dto::{
     FactorsResponse, ForecastResponse, GreenestWindowResponse, HistoryResponse, IntensityResponse,
     MethodologiesResponse, MixResponse, ScheduleResponse, SlotsResponse, StatsResponse,
-    VisitStatsResponse,
+    StreamEventBody, VisitStatsResponse,
 };
 use crate::error::{ApiError, ErrorBody};
 use crate::{AppState, ForecastState};
+use std::convert::Infallible;
 
 /// Fenêtre maximale d'une requête d'historique (protège le serveur d'une
 /// extraction démesurée). Au-delà → 400.
@@ -675,6 +676,75 @@ where
         estimator_label(estimator),
         &slots,
     )?))
+}
+
+/// Paramètres de `GET /v1/intensity/stream`.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct StreamQuery {
+    /// Slug de région à suivre. Sans filtre, toutes les régions sont poussées.
+    region: Option<String>,
+    /// Ne pousser que les mises à jour d'intensité **strictement sous** ce seuil
+    /// (gCO₂eq/kWh) — pour un événement « créneau vert imminent ».
+    below: Option<f64>,
+}
+
+/// `GET /v1/intensity/stream` — flux **live** (Server-Sent Events) des mises à
+/// jour du read-model, poussées à la cadence du poller (ADR-0014 §2).
+///
+/// Le client ouvre la connexion (`text/event-stream`) ; le serveur émet un
+/// événement `intensity` à chaque nouvelle mesure. Filtres optionnels `region`
+/// et `below`. Sans état par-client : la posture anonyme est préservée.
+#[utoipa::path(
+    get,
+    path = "/v1/intensity/stream",
+    params(StreamQuery),
+    responses(
+        (status = 200, description = "Flux SSE d'événements `intensity` (text/event-stream)"),
+        (status = 400, description = "Région invalide", body = ErrorBody),
+    ),
+    tag = "usage"
+)]
+pub(crate) async fn intensity_stream(
+    State(state): State<crate::StreamState>,
+    Query(query): Query<StreamQuery>,
+) -> Result<
+    axum::response::Sse<
+        impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, Infallible>>,
+    >,
+    ApiError,
+> {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use tokio_stream::StreamExt;
+    use tokio_stream::wrappers::BroadcastStream;
+
+    // Filtre région résolu une fois (400 si slug inconnu).
+    let region_filter = match &query.region {
+        Some(_) => Some(resolve_region(&query.region)?),
+        None => None,
+    };
+    let below = query.below;
+
+    let rx = state.updates.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(move |result| {
+        // Un abonné en retard (`Lagged`) saute les événements manqués.
+        let update = result.ok()?;
+        if let Some(region) = region_filter
+            && update.region != region
+        {
+            return None;
+        }
+        if let Some(threshold) = below
+            && update.intensity.value() >= threshold
+        {
+            return None;
+        }
+        let body = StreamEventBody::from_update(&update).ok()?;
+        let json = serde_json::to_string(&body).ok()?;
+        Some(Ok(Event::default().event("intensity").data(json)))
+    });
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 /// Adresse IP du client, lue des en-têtes posés par le reverse proxy

@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use carbonfr_adapter_forecast::ClimatologyForecaster;
-use carbonfr_adapter_http::{AppState, ForecastState, router};
+use carbonfr_adapter_http::{AppState, ForecastState, StreamState, router};
 use carbonfr_core::domain::{
     CarbonIntensity, CrossBorderSnapshot, GenerationMix, Granularity, IntensityStats, Measurement,
     Methodology, Region, RollupBucket, TimeRange, Vintage, VisitStats,
@@ -199,7 +199,8 @@ async fn json_body(response: axum::response::Response) -> serde_json::Value {
 /// handler → cas d'usage/port → forecaster → repo → fonction pure).
 fn build(repo: FakeRepo) -> axum::Router {
     let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1");
-    router(AppState::new(repo), forecast)
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    router(AppState::new(repo), forecast, StreamState::new(updates))
 }
 
 fn app(measurement: Option<Measurement>) -> axum::Router {
@@ -720,5 +721,27 @@ async fn intensity_below_filters_threshold() {
 #[tokio::test]
 async fn intensity_below_without_threshold_is_400() {
     let response = get(app_with_series(day_night_series()), "/v1/intensity/below").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn stream_opens_event_stream() {
+    let response = get(app(None), "/v1/intensity/stream").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.starts_with("text/event-stream"),
+        "content-type = {content_type}"
+    );
+    // On ne consomme pas le corps : c'est un flux sans fin (keep-alive).
+}
+
+#[tokio::test]
+async fn stream_rejects_unknown_region() {
+    let response = get(app(None), "/v1/intensity/stream?region=pas-une-region").await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }

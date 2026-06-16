@@ -123,7 +123,14 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   l'énergie du job est fournie). Cas d'usage `CarbonAwareScheduler` + endpoints
   `GET /v1/schedule`, `GET /v1/schedule/slots`, `GET /v1/intensity/below`. Posture
   **anonyme/sans état** préservée ; ce sont des conseils sur prévision, **pas du
-  pilotage**. Livraison live **SSE** à venir (tranche B).
+  pilotage**.
+- **Flux live SSE** (ADR-0014, tranche B) : `GET /v1/intensity/stream`
+  (`text/event-stream`) pousse un événement `intensity` à chaque mise à jour
+  nationale du read-model (cadence du poller), avec filtres optionnels `region`
+  et `below=X` et heartbeat keep-alive. Type domaine léger `IntensityUpdate`,
+  diffusion par **canal mémoire `tokio::broadcast`** (poller intégré ; migration
+  `LISTEN`/`NOTIFY` documentée pour un futur `bin/poller`). **Sans état
+  par-client**, anonyme, auto-hébergeable.
 - **Compteur de consultation** : `GET /v1/stats` + `POST /v1/stats/visit`
   (port `VisitCounter`). IP **jamais stockée** — empreinte SHA-256 salée
   (`CARBONFR_VISIT_SALT`), déduplication unique par IP/jour ; IP lue via

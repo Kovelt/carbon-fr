@@ -37,6 +37,7 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::handlers::schedule,
         crate::handlers::schedule_slots,
         crate::handlers::intensity_below,
+        crate::handlers::intensity_stream,
         crate::handlers::visit_stats,
         crate::handlers::record_visit,
         crate::handlers::health,

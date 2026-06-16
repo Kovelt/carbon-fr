@@ -1,6 +1,6 @@
 # ADR-0014 — Usage : primitives carbon-aware + livraison live par SSE
 
-- **Statut** : Accepté (mise en œuvre **engagée** — primitives de scheduling livrées ; SSE à venir)
+- **Statut** : Accepté (mis en œuvre — primitives de scheduling **et** SSE livrés ; webhooks reportés)
 - **Date** : 2026-06-15
 - **S'appuie sur** : ADR-0011 (contrat `ForecastPoint`, sélecteur `expected`/`upper`) ; ADR-0004 (Postgres natif) ; ADR-0007 (déploiement / tier hébergé)
 
@@ -23,9 +23,22 @@ Cas d'usage `CarbonAwareScheduler` (façade sur `ForecastModel`) + endpoints
 **`GET /v1/schedule/slots`** (lowest-k), **`GET /v1/intensity/below`** (seuil).
 OpenAPI + collection Bruno à jour. Posture **anonyme/sans état** préservée.
 
-**À venir (tranche B) :** livraison live **SSE** (`GET /v1/intensity/stream`,
-Postgres `LISTEN`/`NOTIFY`, §2). Webhooks toujours **reportés** (§3, gated
-ADR-0015).
+**Tranche B — livraison live SSE (§2) : livrée.** `GET /v1/intensity/stream`
+(`text/event-stream`) : le client ouvre la connexion, le serveur pousse un
+événement `intensity` à chaque mise à jour nationale du read-model (cadence du
+poller). Filtres optionnels `region` et `below=X`. Heartbeat keep-alive. **Sans
+état par-client**, anonyme.
+
+**Choix de mécanisme (question ouverte §73 tranchée) : canal mémoire
+`tokio::broadcast`.** Le poller est **intégré** au même process que l'API ; il
+publie chaque mise à jour sur un canal de diffusion, les connexions SSE s'y
+abonnent (un seul producteur, fan-out à N abonnés). Pour un **`bin/poller`
+séparé** (ADR-0007), basculer la source du canal sur Postgres `LISTEN`/`NOTIFY`
+(le poller `NOTIFY`, une tâche de l'API `LISTEN` et réinjecte dans le même canal
+de fan-out) — **l'abonnement SSE et les filtres restent identiques**. La frontière
+est posée pour rendre ce remplacement local.
+
+Webhooks toujours **reportés** (§3, gated ADR-0015).
 
 ## Contexte
 

@@ -1,0 +1,20 @@
+meta {
+  name: Intensité — créneaux sous un seuil
+  type: http
+  seq: 22
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/below?threshold=50&horizon_hours=24
+  body: none
+  auth: none
+  query {
+    threshold: 50
+    horizon_hours: 24
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.unit: eq gCO2eq/kWh
+}

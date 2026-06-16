@@ -1,0 +1,22 @@
+meta {
+  name: Schedule — créneau + économie
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{baseUrl}}/v1/schedule?duration_minutes=60&horizon_hours=24&energy_kwh=10
+  body: none
+  auth: none
+  query {
+    duration_minutes: 60
+    horizon_hours: 24
+    energy_kwh: 10
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.unit: eq gCO2eq/kWh
+  res.body.savings.now: isNumber
+}

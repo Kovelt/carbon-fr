@@ -1,0 +1,20 @@
+meta {
+  name: Schedule — créneaux divisibles (lowest-k)
+  type: http
+  seq: 21
+}
+
+get {
+  url: {{baseUrl}}/v1/schedule/slots?count=4&horizon_hours=24
+  body: none
+  auth: none
+  query {
+    count: 4
+    horizon_hours: 24
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.count: eq 4
+}

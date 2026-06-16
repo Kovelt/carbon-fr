@@ -1,8 +1,31 @@
 # ADR-0014 — Usage : primitives carbon-aware + livraison live par SSE
 
-- **Statut** : Proposé
+- **Statut** : Accepté (mise en œuvre **engagée** — primitives de scheduling livrées ; SSE à venir)
 - **Date** : 2026-06-15
 - **S'appuie sur** : ADR-0011 (contrat `ForecastPoint`, sélecteur `expected`/`upper`) ; ADR-0004 (Postgres natif) ; ADR-0007 (déploiement / tier hébergé)
+
+## État d'implémentation (2026-06-15)
+
+**Tranche A — primitives de scheduling (§1) : livrée.** Fonctions **pures** du
+domaine (`crates/core/src/domain/schedule.rs`), zéro nouveau port, réutilisant le
+sélecteur `central`/`prudent` :
+
+- `greenest_window_before` — créneau contigu le plus bas-carbone **avant une
+  échéance** (généralise `greenest_window`) ;
+- `lowest_slots` — les `k` créneaux les moins intenses (job **divisible**,
+  interruptibilité parfaite supposée — hypothèse documentée) ;
+- `slots_below` — tous les créneaux sous un seuil d'intensité ;
+- `savings_vs_now` / `Savings` — Δ vs « maintenant » : delta + %, et économie
+  **absolue** (gCO₂eq) si l'énergie du job (`kWh`) est fournie.
+
+Cas d'usage `CarbonAwareScheduler` (façade sur `ForecastModel`) + endpoints
+`/v1` : **`GET /v1/schedule`** (créneau sous échéance + économie),
+**`GET /v1/schedule/slots`** (lowest-k), **`GET /v1/intensity/below`** (seuil).
+OpenAPI + collection Bruno à jour. Posture **anonyme/sans état** préservée.
+
+**À venir (tranche B) :** livraison live **SSE** (`GET /v1/intensity/stream`,
+Postgres `LISTEN`/`NOTIFY`, §2). Webhooks toujours **reportés** (§3, gated
+ADR-0015).
 
 ## Contexte
 

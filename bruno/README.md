@@ -39,6 +39,9 @@ bru run --env Local
 | Intensité stats — résumé / série journalière | `200`, `intervals` |
 | Prévision — série (climatology@1) | `200`, `model`, unité |
 | Prévision — créneau le plus bas-carbone | `200`, `average_intensity` |
+| Schedule — créneau + économie | `200`, `savings` |
+| Schedule — créneaux divisibles (lowest-k) | `200`, `count` |
+| Intensité — créneaux sous un seuil | `200`, `slots` |
 | OpenAPI — spec | `200`, `openapi: 3.1.0` |
 | Erreur — région en rte-direct | `404 no_data` |
 | Erreur — région inconnue | `400 bad_request` |

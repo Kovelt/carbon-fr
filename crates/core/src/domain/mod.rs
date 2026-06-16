@@ -17,6 +17,7 @@ mod measurement;
 mod methodology;
 mod metrics;
 mod region;
+mod schedule;
 mod stats;
 mod time_range;
 mod visit;
@@ -40,6 +41,9 @@ pub use measurement::{GenerationMix, Measurement, MeasurementKey};
 pub use methodology::{Methodology, Vintage};
 pub use metrics::{ErrorAccumulator, ErrorMetrics};
 pub use region::Region;
+pub use schedule::{
+    Savings, ScheduleSlot, greenest_window_before, lowest_slots, savings_vs_now, slots_below,
+};
 pub use stats::{Granularity, IntensityStats, RollupBucket};
 pub use time_range::TimeRange;
 pub use visit::VisitStats;

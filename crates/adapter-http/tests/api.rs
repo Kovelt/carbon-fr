@@ -639,3 +639,86 @@ async fn consumption_intensity_v2_rejects_regional() {
     .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
+
+/// Série jour/nuit (creux 20 la nuit, pointe 80 le jour) sur 14 jours avant `from`.
+fn day_night_series() -> Vec<Measurement> {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    (1..=14 * 96)
+        .map(|i: i32| {
+            let at = from - step * i;
+            let g = if (0..=5).contains(&at.hour()) {
+                20.0
+            } else {
+                80.0
+            };
+            point(at, g)
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn schedule_returns_window_and_savings() {
+    // Job d'1 h lancé « à midi » : le créneau vert tombe la nuit → économie.
+    let response = get(
+        app_with_series(day_night_series()),
+        "/v1/schedule?from=1970-03-02T12:00:00Z&horizon_hours=24&duration_minutes=60&energy_kwh=10",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["model"], "climatology@1");
+    assert_eq!(body["estimator"], "central");
+    assert!(body["start"].is_string() && body["end"].is_string());
+    // « maintenant » (midi, ≈80) au-dessus du créneau planifié (nuit, ≈20).
+    let now = body["savings"]["now"].as_f64().unwrap();
+    let scheduled = body["savings"]["scheduled"].as_f64().unwrap();
+    assert!(now > scheduled);
+    assert!(body["savings"]["reduction_percent"].as_f64().unwrap() > 0.0);
+    // énergie fournie → économie absolue présente.
+    assert!(body["savings"]["absolute_saved_g"].as_f64().unwrap() > 0.0);
+}
+
+#[tokio::test]
+async fn schedule_slots_returns_k_cheapest() {
+    let response = get(
+        app_with_series(day_night_series()),
+        "/v1/schedule/slots?from=1970-03-02T00:00:00Z&horizon_hours=24&count=4",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["count"], 4);
+    assert_eq!(body["slots"].as_array().unwrap().len(), 4);
+    // Les moins intenses → tous côté creux nocturne.
+    for slot in body["slots"].as_array().unwrap() {
+        assert!(slot["intensity"].as_f64().unwrap() < 50.0);
+    }
+}
+
+#[tokio::test]
+async fn schedule_slots_without_count_is_400() {
+    let response = get(app_with_series(day_night_series()), "/v1/schedule/slots").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn intensity_below_filters_threshold() {
+    let response = get(
+        app_with_series(day_night_series()),
+        "/v1/intensity/below?from=1970-03-02T00:00:00Z&horizon_hours=24&threshold=50",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert!(body["count"].as_u64().unwrap() > 0);
+    for slot in body["slots"].as_array().unwrap() {
+        assert!(slot["intensity"].as_f64().unwrap() < 50.0);
+    }
+}
+
+#[tokio::test]
+async fn intensity_below_without_threshold_is_400() {
+    let response = get(app_with_series(day_night_series()), "/v1/intensity/below").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}

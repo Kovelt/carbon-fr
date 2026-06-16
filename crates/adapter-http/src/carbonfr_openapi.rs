@@ -34,6 +34,9 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::handlers::factors,
         crate::handlers::forecast,
         crate::handlers::greenest_window,
+        crate::handlers::schedule,
+        crate::handlers::schedule_slots,
+        crate::handlers::intensity_below,
         crate::handlers::visit_stats,
         crate::handlers::record_visit,
         crate::handlers::health,
@@ -49,6 +52,10 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::dto::FactorEntry,
         crate::dto::ForecastResponse,
         crate::dto::GreenestWindowResponse,
+        crate::dto::ScheduleResponse,
+        crate::dto::SavingsBody,
+        crate::dto::SlotsResponse,
+        crate::dto::SlotBody,
         crate::dto::VisitStatsResponse,
         crate::error::ErrorBody,
     )),
@@ -57,6 +64,7 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         (name = "mix", description = "Mix de production"),
         (name = "méthodologie", description = "Méthodes de calcul & facteurs (ADR-0010)"),
         (name = "prévision", description = "Prévision d'intensité (ADR-0009)"),
+        (name = "usage", description = "Scheduling carbon-aware (ADR-0014)"),
         (name = "opérations", description = "Exploitation & statistiques"),
     ),
 )]
@@ -111,6 +119,9 @@ mod tests {
             "/v1/factors",
             "/v1/intensity/forecast",
             "/v1/intensity/greenest-window",
+            "/v1/schedule",
+            "/v1/schedule/slots",
+            "/v1/intensity/below",
             "/health",
         ] {
             assert!(

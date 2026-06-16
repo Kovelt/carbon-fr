@@ -494,3 +494,116 @@ impl FactorsResponse {
         }
     }
 }
+
+/// Un créneau de scheduling (résultat de `lowest-k` ou `below`).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SlotBody {
+    timestamp: String,
+    /// Intensité prévue du créneau (gCO₂eq/kWh), selon l'estimateur.
+    intensity: f64,
+}
+
+/// Réponse d'une liste de créneaux (`/v1/schedule/slots`, `/v1/intensity/below`).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SlotsResponse {
+    region: String,
+    methodology: String,
+    /// Identité versionnée du modèle de prévision (ex. `climatology@1`).
+    model: String,
+    /// Estimateur appliqué : `central` ou `prudent`.
+    estimator: &'static str,
+    unit: &'static str,
+    count: usize,
+    slots: Vec<SlotBody>,
+}
+
+impl SlotsResponse {
+    pub(crate) fn new(
+        region: &str,
+        methodology: &str,
+        model: &str,
+        estimator: &'static str,
+        slots: &[carbonfr_core::domain::ScheduleSlot],
+    ) -> Result<Self, time::error::Format> {
+        let slots = slots
+            .iter()
+            .map(|s| {
+                Ok(SlotBody {
+                    timestamp: to_rfc3339(s.at)?,
+                    intensity: s.intensity.value(),
+                })
+            })
+            .collect::<Result<Vec<_>, time::error::Format>>()?;
+        Ok(Self {
+            region: region.to_string(),
+            methodology: methodology.to_string(),
+            model: model.to_string(),
+            estimator,
+            unit: "gCO2eq/kWh",
+            count: slots.len(),
+            slots,
+        })
+    }
+}
+
+/// Économie carbone d'un créneau planifié vs « maintenant » (ADR-0014).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SavingsBody {
+    /// Intensité « maintenant » (gCO₂eq/kWh).
+    now: f64,
+    /// Intensité du créneau planifié (gCO₂eq/kWh).
+    scheduled: f64,
+    /// Réduction d'intensité (gCO₂eq/kWh) : `now − scheduled`.
+    intensity_delta: f64,
+    /// Réduction relative en pourcentage.
+    reduction_percent: f64,
+    /// Économie absolue (gCO₂eq) si l'énergie du job (`energy_kwh`) est fournie.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    absolute_saved_g: Option<f64>,
+}
+
+/// Réponse de `GET /v1/schedule` : créneau retenu + économie vs maintenant.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ScheduleResponse {
+    region: String,
+    methodology: String,
+    model: String,
+    estimator: &'static str,
+    unit: &'static str,
+    /// Début du créneau planifié (RFC 3339).
+    start: String,
+    /// Fin du créneau planifié (RFC 3339, exclue).
+    end: String,
+    /// Intensité moyenne prévue sur le créneau.
+    average_intensity: f64,
+    savings: SavingsBody,
+}
+
+impl ScheduleResponse {
+    pub(crate) fn new(
+        region: &str,
+        methodology: &str,
+        model: &str,
+        estimator: &'static str,
+        scheduled: &carbonfr_core::application::ScheduledWindow,
+    ) -> Result<Self, time::error::Format> {
+        let s = &scheduled.savings;
+        Ok(Self {
+            region: region.to_string(),
+            methodology: methodology.to_string(),
+            model: model.to_string(),
+            estimator,
+            unit: "gCO2eq/kWh",
+            start: to_rfc3339(scheduled.window.start)?,
+            end: to_rfc3339(scheduled.window.end)?,
+            average_intensity: scheduled.window.average.value(),
+            savings: SavingsBody {
+                now: s.now.value(),
+                scheduled: s.scheduled.value(),
+                intensity_delta: s.intensity_delta,
+                reduction_percent: s.fraction * 100.0,
+                absolute_saved_g: s.absolute_g,
+            },
+        })
+    }
+}

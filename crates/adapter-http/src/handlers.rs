@@ -5,8 +5,8 @@ use axum::Json;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use carbonfr_core::application::{
-    FindGreenestWindow, GetConsumptionIntensity, GetCurrentIntensity, GetIntensityHistory,
-    GetIntensityStats,
+    CarbonAwareScheduler, FindGreenestWindow, GetConsumptionIntensity, GetCurrentIntensity,
+    GetIntensityHistory, GetIntensityStats,
 };
 use carbonfr_core::domain::{Granularity, Region, TimeRange, WindowEstimator};
 use carbonfr_core::ports::{
@@ -20,7 +20,8 @@ use utoipa::IntoParams;
 
 use crate::dto::{
     FactorsResponse, ForecastResponse, GreenestWindowResponse, HistoryResponse, IntensityResponse,
-    MethodologiesResponse, MixResponse, StatsResponse, VisitStatsResponse,
+    MethodologiesResponse, MixResponse, ScheduleResponse, SlotsResponse, StatsResponse,
+    VisitStatsResponse,
 };
 use crate::error::{ApiError, ErrorBody};
 use crate::{AppState, ForecastState};
@@ -458,6 +459,221 @@ where
         &methodology,
         &state.model,
         &window,
+    )?))
+}
+
+/// Libellé stable de l'estimateur pour les réponses.
+fn estimator_label(estimator: WindowEstimator) -> &'static str {
+    match estimator {
+        WindowEstimator::Central => "central",
+        WindowEstimator::Prudent => "prudent",
+    }
+}
+
+/// Paramètres de `GET /v1/schedule`.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct ScheduleQuery {
+    region: Option<String>,
+    methodology: Option<String>,
+    /// Début de l'horizon (RFC 3339). Défaut : maintenant.
+    from: Option<String>,
+    /// Profondeur de l'horizon en heures (1..=72). Défaut 24.
+    horizon_hours: Option<u32>,
+    /// Durée du job à planifier, en minutes. Défaut 60.
+    duration_minutes: Option<u32>,
+    /// Échéance de livraison (RFC 3339). Optionnelle : sans elle, tout l'horizon.
+    deadline: Option<String>,
+    /// Énergie du job (kWh) : si fournie, l'économie absolue (gCO₂eq) est calculée.
+    energy_kwh: Option<f64>,
+    /// Estimateur : `central` (défaut) ou `prudent`.
+    estimator: Option<String>,
+}
+
+/// `GET /v1/schedule` — planifie un job : créneau contigu le plus bas-carbone
+/// (avant une échéance optionnelle) + économie carbone vs « maintenant »
+/// (ADR-0014).
+#[utoipa::path(
+    get,
+    path = "/v1/schedule",
+    params(ScheduleQuery),
+    responses(
+        (status = 200, description = "Créneau planifié + économie", body = ScheduleResponse),
+        (status = 400, description = "Paramètre invalide", body = ErrorBody),
+        (status = 404, description = "Série insuffisante", body = ErrorBody),
+    ),
+    tag = "usage"
+)]
+pub(crate) async fn schedule<F>(
+    State(state): State<ForecastState<F>>,
+    Query(query): Query<ScheduleQuery>,
+) -> Result<Json<ScheduleResponse>, ApiError>
+where
+    F: ForecastModel + Clone + Send + Sync + 'static,
+{
+    let region = resolve_region(&query.region)?;
+    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
+    let duration_minutes = query.duration_minutes.unwrap_or(DEFAULT_WINDOW_MINUTES);
+    if duration_minutes == 0 || duration_minutes as u64 > horizon_hours as u64 * 60 {
+        return Err(ApiError::bad_request(
+            "`duration_minutes` doit être > 0 et tenir dans l'horizon",
+        ));
+    }
+    let deadline = match query.deadline.as_deref() {
+        Some(raw) => Some(parse_timestamp("deadline", raw)?),
+        None => None,
+    };
+    if let Some(kwh) = query.energy_kwh
+        && kwh < 0.0
+    {
+        return Err(ApiError::bad_request("`energy_kwh` doit être positif"));
+    }
+    let estimator = resolve_estimator(&query.estimator)?;
+
+    let scheduler = CarbonAwareScheduler::new(state.forecaster.clone());
+    let scheduled = scheduler
+        .schedule_window(
+            region,
+            &methodology,
+            from,
+            Duration::hours(horizon_hours as i64),
+            Duration::minutes(duration_minutes as i64),
+            deadline,
+            query.energy_kwh,
+            estimator,
+        )
+        .await?;
+
+    Ok(Json(ScheduleResponse::new(
+        region.slug(),
+        &methodology,
+        &state.model,
+        estimator_label(estimator),
+        &scheduled,
+    )?))
+}
+
+/// Paramètres de `GET /v1/schedule/slots`.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct SlotsQuery {
+    region: Option<String>,
+    methodology: Option<String>,
+    from: Option<String>,
+    horizon_hours: Option<u32>,
+    /// Nombre de créneaux les moins intenses à retourner. Requis (1..=horizon).
+    count: Option<u32>,
+    estimator: Option<String>,
+}
+
+/// `GET /v1/schedule/slots` — les `count` créneaux les moins intenses sur
+/// l'horizon (job **divisible**, interruptibilité supposée parfaite, ADR-0014).
+#[utoipa::path(
+    get,
+    path = "/v1/schedule/slots",
+    params(SlotsQuery),
+    responses(
+        (status = 200, description = "Créneaux les moins intenses", body = SlotsResponse),
+        (status = 400, description = "Paramètre invalide", body = ErrorBody),
+    ),
+    tag = "usage"
+)]
+pub(crate) async fn schedule_slots<F>(
+    State(state): State<ForecastState<F>>,
+    Query(query): Query<SlotsQuery>,
+) -> Result<Json<SlotsResponse>, ApiError>
+where
+    F: ForecastModel + Clone + Send + Sync + 'static,
+{
+    let region = resolve_region(&query.region)?;
+    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
+    let count = query
+        .count
+        .filter(|&c| c > 0)
+        .ok_or_else(|| ApiError::bad_request("`count` requis et > 0"))?;
+    let estimator = resolve_estimator(&query.estimator)?;
+
+    let scheduler = CarbonAwareScheduler::new(state.forecaster.clone());
+    let slots = scheduler
+        .lowest_slots(
+            region,
+            &methodology,
+            from,
+            Duration::hours(horizon_hours as i64),
+            count as usize,
+            estimator,
+        )
+        .await?;
+
+    Ok(Json(SlotsResponse::new(
+        region.slug(),
+        &methodology,
+        &state.model,
+        estimator_label(estimator),
+        &slots,
+    )?))
+}
+
+/// Paramètres de `GET /v1/intensity/below`.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct BelowQuery {
+    region: Option<String>,
+    methodology: Option<String>,
+    from: Option<String>,
+    horizon_hours: Option<u32>,
+    /// Seuil d'intensité (gCO₂eq/kWh). Requis. Renvoie les créneaux sous ce seuil.
+    threshold: Option<f64>,
+    estimator: Option<String>,
+}
+
+/// `GET /v1/intensity/below` — tous les créneaux prévus d'intensité sous
+/// `threshold` (gCO₂eq/kWh) sur l'horizon (ADR-0014).
+#[utoipa::path(
+    get,
+    path = "/v1/intensity/below",
+    params(BelowQuery),
+    responses(
+        (status = 200, description = "Créneaux sous le seuil", body = SlotsResponse),
+        (status = 400, description = "Paramètre invalide", body = ErrorBody),
+    ),
+    tag = "usage"
+)]
+pub(crate) async fn intensity_below<F>(
+    State(state): State<ForecastState<F>>,
+    Query(query): Query<BelowQuery>,
+) -> Result<Json<SlotsResponse>, ApiError>
+where
+    F: ForecastModel + Clone + Send + Sync + 'static,
+{
+    let region = resolve_region(&query.region)?;
+    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
+    let threshold = query
+        .threshold
+        .ok_or_else(|| ApiError::bad_request("`threshold` requis (gCO2eq/kWh)"))?;
+    let estimator = resolve_estimator(&query.estimator)?;
+
+    let scheduler = CarbonAwareScheduler::new(state.forecaster.clone());
+    let slots = scheduler
+        .slots_below(
+            region,
+            &methodology,
+            from,
+            Duration::hours(horizon_hours as i64),
+            threshold,
+            estimator,
+        )
+        .await?;
+
+    Ok(Json(SlotsResponse::new(
+        region.slug(),
+        &methodology,
+        &state.model,
+        estimator_label(estimator),
+        &slots,
     )?))
 }
 

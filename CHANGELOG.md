@@ -115,6 +115,15 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   **`GET /v1/intensity/now?methodology=acv-ademe&version=2`** (national).
   `acv-ademe@2` passe `served` dans `/v1/methodologies`. Défaut de l'API inchangé
   (`rte-direct`) ; sans token, le calcul renvoie `404` faute de contexte d'import.
+- **Primitives de scheduling carbon-aware** (ADR-0014, tranche A) : fonctions
+  **pures** du domaine (zéro nouveau port) sur la prévision, réutilisant le
+  sélecteur `central`/`prudent` — créneau contigu le plus bas-carbone **avant une
+  échéance**, **lowest-k** créneaux (job divisible), créneaux **sous un seuil**, et
+  **annotation d'économie** vs « maintenant » (delta + %, et gCO₂eq absolus si
+  l'énergie du job est fournie). Cas d'usage `CarbonAwareScheduler` + endpoints
+  `GET /v1/schedule`, `GET /v1/schedule/slots`, `GET /v1/intensity/below`. Posture
+  **anonyme/sans état** préservée ; ce sont des conseils sur prévision, **pas du
+  pilotage**. Livraison live **SSE** à venir (tranche B).
 - **Compteur de consultation** : `GET /v1/stats` + `POST /v1/stats/visit`
   (port `VisitCounter`). IP **jamais stockée** — empreinte SHA-256 salée
   (`CARBONFR_VISIT_SALT`), déduplication unique par IP/jour ; IP lue via

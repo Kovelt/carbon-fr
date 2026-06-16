@@ -140,6 +140,9 @@ where
             "/v1/intensity/greenest-window",
             get(handlers::greenest_window::<F>),
         )
+        .route("/v1/schedule", get(handlers::schedule::<F>))
+        .route("/v1/schedule/slots", get(handlers::schedule_slots::<F>))
+        .route("/v1/intensity/below", get(handlers::intensity_below::<F>))
         .with_state(forecast);
 
     core.merge(forecasting)

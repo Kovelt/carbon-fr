@@ -11,8 +11,8 @@ use carbonfr_adapter_forecast::ClimatologyForecaster;
 use carbonfr_adapter_http::{AppState, ForecastState, StreamState, router};
 use carbonfr_core::domain::{
     CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, GenerationMix,
-    Granularity, IntensityStats, Measurement, Methodology, Neighbor, Region, RollupBucket,
-    TimeRange, Vintage, VisitStats, WeatherForecast,
+    Granularity, IntensityStats, Measurement, Methodology, Neighbor, Region, RenewableModel,
+    RollupBucket, TimeRange, Vintage, VisitStats, WeatherForecast,
 };
 use carbonfr_core::ports::{
     CrossBorderRepository, IntensityRepository, RepositoryError, VisitCounter, WeatherRepository,
@@ -469,6 +469,59 @@ async fn weather_returns_current_conditions_with_attribution() {
 async fn weather_without_data_is_404() {
     let response = get(build(FakeRepo::default()), "/v1/weather").await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn renewable_estimates_from_weather() {
+    let now = OffsetDateTime::now_utc();
+    let repo = FakeRepo {
+        weather: vec![WeatherForecast {
+            run_at: now - Duration::hours(1),
+            valid_at: now,
+            wind: 50.0,
+            irradiance: 500.0,
+        }],
+        ..Default::default()
+    };
+    let model = RenewableModel {
+        wind_capacity_mw: 20_000.0,
+        solar_capacity_mw: 15_000.0,
+        ..RenewableModel::v1_uncalibrated()
+    };
+    // Routeur avec un modèle injecté en état (comme la composition root au boot).
+    let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1");
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    let app = router(
+        AppState::new(repo).with_renewable_model(Some(model)),
+        forecast,
+        StreamState::new(updates),
+    );
+    let response = get(app, "/v1/renewable").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = json_body(response).await;
+    assert!(body["wind_mw"].as_f64().unwrap() > 0.0);
+    assert!(body["solar_mw"].as_f64().unwrap() > 0.0);
+    let wcf = body["wind_capacity_factor"].as_f64().unwrap();
+    assert!((0.0..=1.0).contains(&wcf));
+    assert_eq!(body["model"]["wind_capacity_mw"], 20_000.0);
+}
+
+#[tokio::test]
+async fn renewable_without_calibrated_model_is_503() {
+    let now = OffsetDateTime::now_utc();
+    let repo = FakeRepo {
+        weather: vec![WeatherForecast {
+            run_at: now,
+            valid_at: now,
+            wind: 10.0,
+            irradiance: 0.0,
+        }],
+        ..Default::default()
+    };
+    // build() n'injecte pas de modèle → AppState.renewable_model = None.
+    let response = get(build(repo), "/v1/renewable").await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]

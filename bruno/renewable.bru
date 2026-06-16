@@ -1,0 +1,25 @@
+meta {
+  name: Renouvelable — production estimée
+  type: http
+  seq: 16
+}
+
+get {
+  url: {{baseUrl}}/v1/renewable
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.wind_mw: isNumber
+  res.body.solar_mw: isNumber
+  res.body.wind_capacity_factor: isNumber
+  res.body.source: isDefined
+}
+
+docs {
+  Production renouvelable ESTIMÉE depuis la météo courante (modèle calibré au
+  démarrage, ADR-0018) : éolien/solaire en MW + facteur de charge (0–1). Valeurs
+  modélisées, non mesurées (cf. champ `source`). 503 si le modèle n'est pas calibré.
+}

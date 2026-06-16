@@ -8,6 +8,17 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté — exposition de la dérivation renouvelable (ADR-0018)
+
+- **`GET /v1/renewable`** : production renouvelable **estimée** depuis la météo
+  courante (éolien/solaire en MW) + **facteur de charge** (0–1, part de la
+  capacité installée réalisée), avec les capacités effectives calibrées
+  (transparence). Le *moat* rendu visible : « given le vent/soleil actuels, voici
+  la production attendue ». Modèle **auto-calibré au démarrage** sur l'historique
+  récent (`CARBONFR_RENEWABLE_CALIBRATE_WEEKS`, défaut 52) ; `503` si non calibré.
+  Valeurs **modélisées, non mesurées** (champ `source`, attribution Open-Meteo
+  CC-BY 4.0). Cas d'usage pur `CalibrateRenewable`. OpenAPI + Bruno.
+
 ### Ajouté — météo nationale (ADR-0012/0018)
 
 - **`GET /v1/weather`** (courante) et **`GET /v1/weather/date?from=&to=`**

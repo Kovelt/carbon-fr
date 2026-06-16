@@ -14,6 +14,7 @@ mod get_current;
 mod get_history;
 mod get_stats;
 mod ingest_latest;
+mod renewable;
 mod schedule;
 mod weather;
 
@@ -27,6 +28,7 @@ pub use get_current::GetCurrentIntensity;
 pub use get_history::GetIntensityHistory;
 pub use get_stats::GetIntensityStats;
 pub use ingest_latest::IngestLatest;
+pub use renewable::CalibrateRenewable;
 pub use schedule::{CarbonAwareScheduler, ScheduledWindow};
 pub use weather::GetWeather;
 

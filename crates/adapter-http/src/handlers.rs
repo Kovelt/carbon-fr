@@ -25,8 +25,8 @@ use utoipa::IntoParams;
 use crate::dto::{
     CreateWebhookRequest, CreatedWebhookResponse, ExchangesHistoryResponse, ExchangesResponse,
     FactorsResponse, ForecastResponse, GreenestWindowResponse, HistoryResponse, IntensityResponse,
-    MethodologiesResponse, MixResponse, ScheduleResponse, SlotsResponse, StatsResponse,
-    StreamEventBody, VisitStatsResponse, WeatherHistoryResponse, WeatherResponse,
+    MethodologiesResponse, MixResponse, RenewableResponse, ScheduleResponse, SlotsResponse,
+    StatsResponse, StreamEventBody, VisitStatsResponse, WeatherHistoryResponse, WeatherResponse,
     WebhookListResponse,
 };
 use crate::error::{ApiError, ErrorBody};
@@ -313,6 +313,35 @@ where
     let use_case = GetWeather::new(state.repo.clone());
     let forecasts = use_case.series(range).await?;
     Ok(Json(WeatherHistoryResponse::new(from, to, &forecasts)?))
+}
+
+/// `GET /v1/renewable` — production renouvelable **estimée** depuis la météo
+/// courante (modèle calibré au démarrage, ADR-0018) + facteur de charge. Le moat
+/// rendu visible : « given le vent/soleil actuels, voici la production attendue ».
+/// `503` si le modèle n'a pas pu être calibré (historique insuffisant).
+#[utoipa::path(
+    get,
+    path = "/v1/renewable",
+    responses(
+        (status = 200, description = "Production renouvelable estimée + facteur de charge", body = RenewableResponse),
+        (status = 404, description = "Aucune météo disponible", body = ErrorBody),
+        (status = 503, description = "Modèle renouvelable non calibré", body = ErrorBody),
+    ),
+    tag = "renouvelable"
+)]
+pub(crate) async fn renewable<R>(
+    State(state): State<AppState<R>>,
+) -> Result<Json<RenewableResponse>, ApiError>
+where
+    R: WeatherRepository + Clone + Send + Sync + 'static,
+{
+    let model = state.renewable_model.ok_or_else(|| {
+        ApiError::unavailable("modèle renouvelable non calibré (historique insuffisant)")
+    })?;
+    let forecast = GetWeather::new(state.repo.clone())
+        .latest(OffsetDateTime::now_utc())
+        .await?;
+    Ok(Json(RenewableResponse::build(&model, &forecast)?))
 }
 
 /// Paramètres de `GET /v1/intensity/date`.

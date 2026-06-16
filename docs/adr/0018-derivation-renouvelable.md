@@ -1,6 +1,6 @@
 # ADR-0018 — Dérivation renouvelable : météo → production éolien/solaire
 
-- **Statut** : Accepté, **engagé** (fondation livrée : calculateur + backtest ; exposition à suivre)
+- **Statut** : Accepté, **engagé** (calculateur + backtest + **exposition `/v1/renewable`** livrés ; prévision météo-pilotée à suivre)
 - **Date** : 2026-06-16
 - **S'appuie sur** : ADR-0002 (hexagonal), ADR-0009 (gardé par backtest), ADR-0012 (store météo)
 
@@ -40,5 +40,5 @@ Le modèle bat le baseline d'un facteur **2,4× (éolien)** et **3,4× (solaire)
 - **À suivre** (engagé, derrière le même contrat versionné) :
   1. **Prévision** : météo *prévue* (anti-fuite `run_at ≤ valid_at − h`) → production prévue → intensité prévue (`forecast@N`, gardé par backtest face à `climatology@1`).
   2. **Attribution carbone** : part renouvelable estimée → contribution à l'intensité (le produit final).
-  3. **Exposition** : `/v1/weather` (substrat, **attribution Open-Meteo + vérification de licence avant publication**) puis un endpoint de potentiel renouvelable.
+  3. **Exposition** : `/v1/weather` (substrat, attribution Open-Meteo CC-BY 4.0 vérifiée) **et `/v1/renewable`** (production estimée + facteur de charge, modèle auto-calibré au démarrage) — **livrés**.
   4. **Raffinement** : paramètres de courbe (médiane/raideur) calés par balayage ; capacité variable dans le temps (parc croissant) plutôt que constante par fenêtre.

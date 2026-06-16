@@ -3,7 +3,7 @@
 
 use carbonfr_core::domain::{
     CrossBorderSnapshot, ForecastPoint, GenerationMix, GreenWindow, IntensityStats, Measurement,
-    Neighbor, RollupBucket, VisitStats, WeatherForecast,
+    Neighbor, RenewableModel, RollupBucket, VisitStats, WeatherForecast,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -124,6 +124,64 @@ impl WeatherHistoryResponse {
             to: to_rfc3339(to)?,
             count: points.len(),
             points,
+        })
+    }
+}
+
+/// Attribution de la dérivation renouvelable : production **estimée** (notre
+/// modèle, ADR-0018) à partir de la météo Open-Meteo (CC-BY 4.0).
+const RENEWABLE_ATTRIBUTION: &str = "Production estimée par carbon-fr (modèle ADR-0018) à partir de la météo Open-Meteo (CC-BY 4.0) — valeurs modélisées, non mesurées";
+
+/// Capacités effectives calibrées (transparence du modèle).
+#[derive(Serialize, ToSchema)]
+struct RenewableModelInfo {
+    wind_capacity_mw: f64,
+    solar_capacity_mw: f64,
+}
+
+/// Réponse de `GET /v1/renewable` — production renouvelable **estimée** depuis la
+/// météo courante (modèle calibré, ADR-0018) + facteur de charge.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct RenewableResponse {
+    /// Attribution (météo Open-Meteo CC-BY 4.0 ; valeurs modélisées).
+    source: &'static str,
+    /// Instant de la météo utilisée (RFC 3339, UTC).
+    at: String,
+    /// Éolien estimé (MW).
+    wind_mw: f64,
+    /// Solaire estimé (MW).
+    solar_mw: f64,
+    /// Facteur de charge éolien (0–1) : part de la capacité installée réalisée.
+    wind_capacity_factor: f64,
+    /// Facteur de charge solaire (0–1).
+    solar_capacity_factor: f64,
+    /// Capacités effectives calibrées (transparence).
+    model: RenewableModelInfo,
+}
+
+impl RenewableResponse {
+    pub(crate) fn build(
+        model: &RenewableModel,
+        w: &WeatherForecast,
+    ) -> Result<Self, time::error::Format> {
+        let wind_mw = model.estimate_wind_mw(w.wind);
+        let solar_mw = model.estimate_solar_mw(w.irradiance);
+        let solar_cf = if model.solar_capacity_mw > 0.0 {
+            solar_mw / model.solar_capacity_mw
+        } else {
+            0.0
+        };
+        Ok(Self {
+            source: RENEWABLE_ATTRIBUTION,
+            at: to_rfc3339(w.valid_at)?,
+            wind_mw,
+            solar_mw,
+            wind_capacity_factor: model.wind_capacity_factor(w.wind),
+            solar_capacity_factor: solar_cf,
+            model: RenewableModelInfo {
+                wind_capacity_mw: model.wind_capacity_mw,
+                solar_capacity_mw: model.solar_capacity_mw,
+            },
         })
     }
 }

@@ -94,3 +94,19 @@ jobs:
       # le lockfile est cohérent (`--locked`).
       - name: Build du serveur (release)
         run: cargo build --release --locked -p server --bin carbonfr-server
+
+  sdk-typescript:
+    name: SDK TypeScript (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install
+        run: npm install
+      - name: Typecheck + build
+        run: npm run build

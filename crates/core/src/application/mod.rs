@@ -15,7 +15,7 @@ mod ingest_latest;
 mod schedule;
 
 pub use backfill::{BackfillHistory, BackfillReport};
-pub use backtest::{BacktestForecast, BacktestReport, HorizonError};
+pub use backtest::{BacktestConsumptionForecast, BacktestForecast, BacktestReport, HorizonError};
 pub use find_greenest_window::FindGreenestWindow;
 pub use get_consumption::GetConsumptionIntensity;
 pub use get_current::GetCurrentIntensity;

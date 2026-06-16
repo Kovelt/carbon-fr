@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use time::{Duration, OffsetDateTime};
 
 use carbonfr_core::application::{
-    BackfillHistory, FindGreenestWindow, GetCurrentIntensity, GetIntensityHistory,
-    GetIntensityStats, IngestLatest,
+    BackfillHistory, BacktestConsumptionForecast, FindGreenestWindow, GetCurrentIntensity,
+    GetIntensityHistory, GetIntensityStats, IngestLatest,
 };
 use carbonfr_core::domain::{
     CarbonIntensity, ForecastPoint, GenerationMix, Granularity, IntensityStats, Measurement,
@@ -754,4 +754,153 @@ async fn backtest_calibrate_bands_captures_residual() {
     let (low, high) = bands.at(Duration::ZERO).unwrap();
     assert!((low + 5.0).abs() < 1e-9, "low = {low}");
     assert!((high + 5.0).abs() < 1e-9, "high = {high}");
+}
+
+// ── Backtest acv-ademe@2 (vérité dérivée, ADR-0013) ───────────────────────────
+
+use carbonfr_core::domain::{
+    CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, EmissionFactors, Neighbor,
+    TD_LOSS_FACTOR_V1, acv_ademe_consumption_intensity,
+};
+use carbonfr_core::ports::CrossBorderRepository;
+
+#[derive(Clone, Default)]
+struct InMemoryFlows {
+    snapshots: Vec<CrossBorderSnapshot>,
+}
+
+#[async_trait]
+impl CrossBorderRepository for InMemoryFlows {
+    async fn upsert_flows(&self, _: &[CrossBorderSnapshot]) -> Result<usize, RepositoryError> {
+        Ok(0)
+    }
+    async fn flows_at(
+        &self,
+        at: OffsetDateTime,
+    ) -> Result<Option<CrossBorderSnapshot>, RepositoryError> {
+        Ok(self
+            .snapshots
+            .iter()
+            .filter(|s| s.at <= at)
+            .max_by_key(|s| s.at)
+            .cloned())
+    }
+    async fn flows_range(
+        &self,
+        range: TimeRange,
+    ) -> Result<Vec<CrossBorderSnapshot>, RepositoryError> {
+        Ok(self
+            .snapshots
+            .iter()
+            .filter(|s| range.contains(s.at))
+            .cloned()
+            .collect())
+    }
+}
+
+/// Prévisionniste `acv-ademe@2` *fake* : renvoie une intensité constante sur tout
+/// l'horizon (au pas `step`).
+struct ConstantAcvForecast {
+    value: f64,
+    step: Duration,
+}
+
+#[async_trait]
+impl ForecastModel for ConstantAcvForecast {
+    async fn forecast(
+        &self,
+        region: Region,
+        _methodology_id: &str,
+        from: OffsetDateTime,
+        horizon: Duration,
+    ) -> Result<Vec<ForecastPoint>, ForecastError> {
+        let mut points = Vec::new();
+        let mut t = from;
+        while t < from + horizon {
+            points.push(ForecastPoint::new(
+                t,
+                region,
+                CarbonIntensity::new(self.value).unwrap(),
+                CarbonIntensity::new(self.value).unwrap(),
+                CarbonIntensity::new(self.value).unwrap(),
+                Methodology::acv_ademe_consumption(),
+                ModelVersion::new("acv-clim", 1),
+            ));
+            t += self.step;
+        }
+        Ok(points)
+    }
+}
+
+fn const_mix() -> GenerationMix {
+    GenerationMix {
+        nucleaire: 40000.0,
+        gaz: 1000.0,
+        charbon: 0.0,
+        fioul: 0.0,
+        hydraulique: 5000.0,
+        eolien: 3000.0,
+        solaire: 500.0,
+        bioenergies: 800.0,
+        pompage: 0.0,
+        echanges: 0.0,
+        thermique: None,
+    }
+}
+
+#[tokio::test]
+async fn backtest_consumption_derives_truth_and_scores_zero_for_perfect_model() {
+    let step = Duration::hours(1);
+    let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(30);
+
+    // Entrées constantes → vérité @2 constante = V.
+    let flows = CrossBorderFlows::new(vec![CrossBorderFlow {
+        neighbor: Neighbor::Germany,
+        flow_mw: 3000.0,
+        neighbor_intensity: CarbonIntensity::new(400.0).unwrap(),
+    }]);
+    let v = acv_ademe_consumption_intensity(
+        &const_mix(),
+        &flows,
+        &EmissionFactors::acv_ademe_v1(),
+        TD_LOSS_FACTOR_V1,
+    )
+    .unwrap()
+    .value();
+
+    // Historique : mix acv-ademe@1 + contexte d'import, sur ~2 jours.
+    let repo = InMemoryRepo::default();
+    let mut snapshots = Vec::new();
+    let mut measures = Vec::new();
+    for i in 0..48 {
+        let at = t0 + step * i;
+        measures.push(Measurement {
+            at,
+            region: Region::National,
+            intensity: CarbonIntensity::new(12.0).unwrap(),
+            methodology: Methodology::acv_ademe(),
+            vintage: Vintage::Consolidated,
+            mix: Some(const_mix()),
+        });
+        snapshots.push(CrossBorderSnapshot {
+            at,
+            flows: flows.clone(),
+        });
+    }
+    repo.upsert_many(&measures).await.unwrap();
+    let cross = InMemoryFlows { snapshots };
+
+    // Fenêtre de test après un peu d'historique.
+    let test = TimeRange::new(t0 + step * 24, t0 + step * 40).unwrap();
+    let backtest =
+        BacktestConsumptionForecast::new(ConstantAcvForecast { value: v, step }, repo, cross);
+    let report = backtest
+        .execute(Region::National, test, step, step, &[Duration::hours(1)])
+        .await
+        .unwrap();
+
+    assert!(report.origins > 0, "aucune origine évaluée");
+    let model = report.model.expect("métriques modèle");
+    // Modèle parfait (= vérité dérivée constante) → erreur ~0.
+    assert!(model.rmse < 1e-6, "rmse = {}", model.rmse);
 }

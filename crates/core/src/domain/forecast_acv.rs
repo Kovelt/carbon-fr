@@ -21,8 +21,9 @@ use time::{Duration, OffsetDateTime};
 use super::forecast::{band_offsets, week_slot};
 use crate::domain::{
     AcvAdemeConsumption, CarbonIntensity, ClimatologyParams, CrossBorderFlow, CrossBorderFlows,
-    CrossBorderSnapshot, EmissionFactors, ForecastPoint, GenerationMix, Measurement, Methodology,
-    MethodologyCalculator, MethodologyContext, ModelVersion, Neighbor, derive_consumption_series,
+    CrossBorderSnapshot, EmissionFactors, ForecastPoint, GenerationMix, HorizonBands, Measurement,
+    Methodology, MethodologyCalculator, MethodologyContext, ModelVersion, Neighbor,
+    derive_consumption_series,
 };
 
 /// Identité versionnée du modèle de prévision `acv-ademe` (ADR-0013).
@@ -111,6 +112,7 @@ fn mix_channel(
 /// la calibration par quantiles de résidus par horizon (ADR-0011 §5) la
 /// raffinera derrière le même contrat. `None` si un historique est vide ou les
 /// paramètres/horizon invalides.
+#[allow(clippy::too_many_arguments)]
 pub fn acv_ademe_forecast(
     mix_history: &[Measurement],
     flow_history: &[CrossBorderSnapshot],
@@ -119,6 +121,7 @@ pub fn acv_ademe_forecast(
     params: ClimatologyParams,
     factors: &EmissionFactors,
     td_loss: f64,
+    bands: Option<&HorizonBands>,
 ) -> Option<Vec<ForecastPoint>> {
     let step_secs = params.step.whole_seconds();
     let tau_secs = params.tau.whole_seconds() as f64;
@@ -240,22 +243,31 @@ pub fn acv_ademe_forecast(
         };
         if let Some(expected) = AcvAdemeConsumption.intensity(&ctx) {
             let ev = expected.value();
-            let (low_off, high_off) = match acv_slots.get(&week_slot(t, step_secs)) {
-                Some(s) if s.len() >= 2 => {
-                    let mean = s.iter().sum::<f64>() / s.len() as f64;
-                    band_offsets(s, mean)
+            // Intervalle : quantiles de résidus par horizon si calibrés
+            // (ADR-0011 §5), sinon dispersion empirique par créneau de la série
+            // `@2` historique (repli sur la dispersion globale).
+            let (lower_value, upper_value) = match bands.and_then(|b| b.at(t - from)) {
+                Some((q_low, q_high)) => ((ev + q_low).max(0.0), (ev + q_high).max(ev)),
+                None => {
+                    let (low_off, high_off) = match acv_slots.get(&week_slot(t, step_secs)) {
+                        Some(s) if s.len() >= 2 => {
+                            let mean = s.iter().sum::<f64>() / s.len() as f64;
+                            band_offsets(s, mean)
+                        }
+                        _ if acv_all.len() >= 2 => {
+                            let mut sorted = acv_all.clone();
+                            sorted.sort_by(|a, b| a.total_cmp(b));
+                            let mean = acv_all.iter().sum::<f64>() / acv_all.len() as f64;
+                            band_offsets(&sorted, mean)
+                        }
+                        _ => (0.0, 0.0),
+                    };
+                    ((ev - low_off).max(0.0), ev + high_off)
                 }
-                _ if acv_all.len() >= 2 => {
-                    let mut sorted = acv_all.clone();
-                    sorted.sort_by(|a, b| a.total_cmp(b));
-                    let mean = acv_all.iter().sum::<f64>() / acv_all.len() as f64;
-                    band_offsets(&sorted, mean)
-                }
-                _ => (0.0, 0.0),
             };
             if let (Some(lower), Some(upper)) = (
-                CarbonIntensity::new((ev - low_off).max(0.0)),
-                CarbonIntensity::new(ev + high_off),
+                CarbonIntensity::new(lower_value),
+                CarbonIntensity::new(upper_value),
             ) {
                 points.push(ForecastPoint::new(
                     t,
@@ -351,6 +363,7 @@ mod tests {
                 ClimatologyParams::default(),
                 &EmissionFactors::acv_ademe_v1(),
                 0.072,
+                None,
             )
             .is_none()
         );
@@ -372,6 +385,7 @@ mod tests {
             },
             &EmissionFactors::acv_ademe_v1(),
             0.072,
+            None,
         )
         .unwrap();
         assert_eq!(out.len(), 24);
@@ -423,6 +437,7 @@ mod tests {
             },
             &factors,
             td,
+            None,
         )
         .unwrap();
         // mut pour neutraliser un warning si jamais inutilisé.
@@ -455,6 +470,7 @@ mod tests {
             },
             &EmissionFactors::acv_ademe_v1(),
             0.072,
+            None,
         )
         .unwrap();
         let day = out

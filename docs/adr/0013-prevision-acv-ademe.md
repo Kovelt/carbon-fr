@@ -28,12 +28,21 @@ saisonnier + imports climatologiques), et la **preuve du pipeline** §1-2.
   modèle `@2` optionnel (dispatch dynamique) ; servi via
   **`GET /v1/intensity/forecast?methodology=acv-ademe&version=2`** (national).
 
+**Tranche B — backtest & calibration `acv-ademe@2` (§6-7) : livrée.** Cas d'usage
+`BacktestConsumptionForecast` : la vérité `@2` **n'étant pas stockée**, elle est
+**dérivée** de l'observé (mix `@1` + contexte d'import via
+`derive_consumption_series`) une fois sur toute la fenêtre, puis comparée à la
+prévision (walk-forward, anti-fuite, vs persistance). Sous-commande
+**`carbonfr-server backtest-acv`** (MAE/RMSE global + par horizon). Intervalles
+**calibrés par quantiles de résidus par horizon** (`calibrate_bands`) et
+**auto-calibrés au démarrage** (`AcvAdemeForecaster::with_bands`,
+`CARBONFR_FORECAST_CALIBRATE_WEEKS`, repli dispersion par créneau).
+
 **À venir :** `MixForecaster` **GBDT multi-sorties** (§2) et
 `CrossBorderForecastSource` **ENTSO-E day-ahead ⊕ proxy** (§3-4) — la tranche A
 tient lieu de proxy (climatologie du contexte d'import stocké), pas encore de
-day-ahead ; **backtest `acv-ademe`** (§7) et **calibration des intervalles** (§6).
-Le GBDT n'est livré que s'il bat ce baseline (garde de promotion, cohérent
-ADR-0012).
+day-ahead. Le GBDT n'est livré que s'il bat ce baseline **au `backtest-acv`**
+(garde de promotion, cohérent ADR-0012).
 
 ## Contexte
 

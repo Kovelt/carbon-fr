@@ -11,8 +11,11 @@ use std::collections::HashMap;
 
 use time::{Duration, OffsetDateTime};
 
-use crate::domain::{ErrorAccumulator, ErrorMetrics, HorizonBands, Region, TimeRange};
-use crate::ports::{ForecastError, ForecastModel, IntensityRepository};
+use crate::domain::{
+    EmissionFactors, ErrorAccumulator, ErrorMetrics, HorizonBands, Measurement, Region,
+    TD_LOSS_FACTOR_V1, TimeRange, derive_consumption_series,
+};
+use crate::ports::{CrossBorderRepository, ForecastError, ForecastModel, IntensityRepository};
 
 use super::ApplicationError;
 
@@ -240,6 +243,202 @@ impl<F: ForecastModel, R: IntensityRepository> BacktestForecast<F, R> {
             cursor += origin_step;
         }
 
+        Ok(HorizonBands::from_residuals(step, &residuals, q))
+    }
+}
+
+/// Backtest *walk-forward* de la prévision **`acv-ademe@2`** (ADR-0013).
+///
+/// La vérité `@2` **n'est pas stockée** : on la **dérive** de l'observé (mix FR
+/// `acv-ademe@1` + contexte d'import) par [`derive_consumption_series`], une fois
+/// pour toute la fenêtre, puis on compare la prévision `@2` à cette vérité. Même
+/// principe anti-fuite et même garde (vs persistance) que [`BacktestForecast`].
+pub struct BacktestConsumptionForecast<F, R, C> {
+    forecast: F,
+    repository: R,
+    cross_border: C,
+}
+
+impl<F, R, C> BacktestConsumptionForecast<F, R, C>
+where
+    F: ForecastModel,
+    R: IntensityRepository,
+    C: CrossBorderRepository,
+{
+    pub fn new(forecast: F, repository: R, cross_border: C) -> Self {
+        Self {
+            forecast,
+            repository,
+            cross_border,
+        }
+    }
+
+    /// Série `@2` **observée** (dérivée) sur `range`, triée par horodatage.
+    async fn observed_truth(
+        &self,
+        region: Region,
+        range: TimeRange,
+    ) -> Result<Vec<Measurement>, ApplicationError> {
+        let mix = self.repository.range(region, "acv-ademe", range).await?;
+        let flows = self.cross_border.flows_range(range).await?;
+        Ok(derive_consumption_series(
+            &mix,
+            &flows,
+            &EmissionFactors::acv_ademe_v1(),
+            TD_LOSS_FACTOR_V1,
+        ))
+    }
+
+    /// Évalue la prévision `@2` sur `[test.start, test.end)` (mêmes paramètres que
+    /// [`BacktestForecast::execute`]).
+    pub async fn execute(
+        &self,
+        region: Region,
+        test: TimeRange,
+        origin_step: Duration,
+        step: Duration,
+        checkpoints: &[Duration],
+    ) -> Result<BacktestReport, ApplicationError> {
+        let max_checkpoint = checkpoints
+            .iter()
+            .copied()
+            .max()
+            .unwrap_or_else(|| Duration::hours(24));
+        let horizon = max_checkpoint + step;
+
+        // Vérité `@2` dérivée une fois, sur toute la fenêtre (+ marge ancre/horizon).
+        let truth_window = TimeRange::new(test.start() - Duration::days(1), test.end() + horizon)
+            .ok_or(ApplicationError::InsufficientSeries)?;
+        let truth_series = self.observed_truth(region, truth_window).await?;
+        let truth: HashMap<OffsetDateTime, f64> = truth_series
+            .iter()
+            .map(|m| (m.at, m.intensity.value()))
+            .collect();
+
+        let mut model = ErrorAccumulator::default();
+        let mut persistence = ErrorAccumulator::default();
+        let mut h_model = vec![ErrorAccumulator::default(); checkpoints.len()];
+        let mut h_persistence = vec![ErrorAccumulator::default(); checkpoints.len()];
+        let mut origins = 0usize;
+        let step_secs = step.whole_seconds();
+
+        let mut cursor = test.start();
+        while cursor < test.end() {
+            let origin = align_down(cursor, step_secs);
+            let predicted = match self
+                .forecast
+                .forecast(region, "acv-ademe", origin, horizon)
+                .await
+            {
+                Ok(points) => points,
+                Err(ForecastError::NotEnoughData) => {
+                    cursor += origin_step;
+                    continue;
+                }
+                Err(other) => return Err(other.into()),
+            };
+
+            if !predicted.is_empty() {
+                origins += 1;
+                // Ancre de persistance : dernière vérité `@2` avant l'origine.
+                let anchor = truth_series
+                    .iter()
+                    .filter(|m| m.at < origin)
+                    .max_by_key(|m| m.at)
+                    .map(|m| m.intensity.value());
+
+                for point in &predicted {
+                    let Some(&t) = truth.get(&point.at) else {
+                        continue;
+                    };
+                    let forecast_value = point.expected.value();
+                    model.observe(forecast_value, t);
+                    if let Some(anchor) = anchor {
+                        persistence.observe(anchor, t);
+                    }
+                    let offset = point.at - origin;
+                    for (index, &checkpoint) in checkpoints.iter().enumerate() {
+                        if offset == checkpoint {
+                            h_model[index].observe(forecast_value, t);
+                            if let Some(anchor) = anchor {
+                                h_persistence[index].observe(anchor, t);
+                            }
+                        }
+                    }
+                }
+            }
+
+            cursor += origin_step;
+        }
+
+        let by_horizon = checkpoints
+            .iter()
+            .enumerate()
+            .map(|(index, &horizon)| HorizonError {
+                horizon,
+                model: h_model[index].metrics(),
+                persistence: h_persistence[index].metrics(),
+            })
+            .collect();
+
+        Ok(BacktestReport {
+            origins,
+            model: model.metrics(),
+            persistence: persistence.metrics(),
+            by_horizon,
+        })
+    }
+
+    /// Calibre les bandes d'incertitude `@2` par horizon (résidus vérité − prévu).
+    pub async fn calibrate_bands(
+        &self,
+        region: Region,
+        test: TimeRange,
+        origin_step: Duration,
+        step: Duration,
+        horizon: Duration,
+        q: f64,
+    ) -> Result<HorizonBands, ApplicationError> {
+        let step_secs = step.whole_seconds();
+        if step_secs <= 0 || horizon <= Duration::ZERO {
+            return Ok(HorizonBands::from_residuals(step, &[], q));
+        }
+        let truth_window = TimeRange::new(test.start(), test.end() + horizon)
+            .ok_or(ApplicationError::InsufficientSeries)?;
+        let truth: HashMap<OffsetDateTime, f64> = self
+            .observed_truth(region, truth_window)
+            .await?
+            .iter()
+            .map(|m| (m.at, m.intensity.value()))
+            .collect();
+
+        let mut residuals: Vec<Vec<f64>> = Vec::new();
+        let mut cursor = test.start();
+        while cursor < test.end() {
+            let origin = align_down(cursor, step_secs);
+            let predicted = match self
+                .forecast
+                .forecast(region, "acv-ademe", origin, horizon)
+                .await
+            {
+                Ok(points) => points,
+                Err(ForecastError::NotEnoughData) => {
+                    cursor += origin_step;
+                    continue;
+                }
+                Err(other) => return Err(other.into()),
+            };
+            for point in &predicted {
+                if let Some(&t) = truth.get(&point.at) {
+                    let idx = ((point.at - origin).whole_seconds() / step_secs).max(0) as usize;
+                    if residuals.len() <= idx {
+                        residuals.resize(idx + 1, Vec::new());
+                    }
+                    residuals[idx].push(t - point.expected.value());
+                }
+            }
+            cursor += origin_step;
+        }
         Ok(HorizonBands::from_residuals(step, &residuals, q))
     }
 }

@@ -51,7 +51,9 @@ use carbonfr_adapter_http::{AppState, ForecastState, StreamState, router};
 use carbonfr_adapter_meteo::OpenMeteoClient;
 use carbonfr_adapter_odre::OdreClient;
 use carbonfr_adapter_postgres::PgIntensityRepository;
-use carbonfr_core::application::{BackfillHistory, BacktestForecast, BacktestReport, IngestLatest};
+use carbonfr_core::application::{
+    BackfillHistory, BacktestConsumptionForecast, BacktestForecast, BacktestReport, IngestLatest,
+};
 use carbonfr_core::domain::{
     ACV_FORECAST_ID, ACV_FORECAST_VERSION, CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams,
     ErrorMetrics, IntensityUpdate, Region, TimeRange,
@@ -75,12 +77,13 @@ async fn main() -> anyhow::Result<()> {
         None => run_server().await,
         Some("backfill") => run_backfill().await,
         Some("backtest") => run_backtest().await,
+        Some("backtest-acv") => run_backtest_acv().await,
         Some("backtest-sweep") => run_backtest_sweep().await,
         Some("backtest-bands") => run_backtest_bands().await,
         Some("train") => run_train().await,
         Some(other) => {
             anyhow::bail!(
-                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-sweep`, `backtest-bands`, `train`, ou aucune pour servir l'API)"
+                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `train`, ou aucune pour servir l'API)"
             )
         }
     }
@@ -129,7 +132,7 @@ async fn run_server() -> anyhow::Result<()> {
     let model = format!("{CLIMATOLOGY_ID}@{CLIMATOLOGY_VERSION}");
     // Prévision `acv-ademe@2` (ADR-0013) : climatologie des entrées (mix + import)
     // + calculateur. Servie via `?methodology=acv-ademe&version=2`.
-    let acv_forecaster = AcvAdemeForecaster::new(repo.clone(), repo.clone());
+    let acv_forecaster = build_calibrated_acv_forecaster(repo.clone()).await;
     let acv_model = format!("{ACV_FORECAST_ID}@{ACV_FORECAST_VERSION}");
     let forecast_state = ForecastState::new(forecaster, model)
         .with_consumption(std::sync::Arc::new(acv_forecaster), acv_model);
@@ -328,6 +331,85 @@ async fn run_backtest() -> anyhow::Result<()> {
 
     print_backtest_report(&model, params.region.slug(), &params.methodology, &report);
     Ok(())
+}
+
+/// Mode backtest **`acv-ademe@2`** (ADR-0013) : la vérité est dérivée de l'observé
+/// (mix + contexte d'import), national uniquement.
+async fn run_backtest_acv() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let params = BacktestParams::from_env()?;
+    let model = format!("{ACV_FORECAST_ID}@{ACV_FORECAST_VERSION}");
+
+    info!(model = %model, from = %params.test.start(), to = %params.test.end(), "backtest acv-ademe@2 démarré (vérité dérivée)");
+
+    let forecaster = AcvAdemeForecaster::new(repo.clone(), repo.clone());
+    let backtest = BacktestConsumptionForecast::new(forecaster, repo.clone(), repo);
+    let report = backtest
+        .execute(
+            Region::National,
+            params.test,
+            params.origin_step,
+            params.step,
+            &BACKTEST_CHECKPOINTS,
+        )
+        .await
+        .context("backtest acv-ademe")?;
+
+    print_backtest_report(&model, "national", "acv-ademe@2", &report);
+    Ok(())
+}
+
+/// Construit le prévisionniste `acv-ademe@2` avec ses intervalles **auto-calibrés**
+/// au démarrage (résidus de backtest, ADR-0013 §6), repli sur la dispersion par
+/// créneau si l'historique récent (ou le contexte d'import) est insuffisant.
+async fn build_calibrated_acv_forecaster(
+    repo: PgIntensityRepository,
+) -> AcvAdemeForecaster<PgIntensityRepository, PgIntensityRepository> {
+    let base = AcvAdemeForecaster::new(repo.clone(), repo.clone());
+
+    let weeks = std::env::var("CARBONFR_FORECAST_CALIBRATE_WEEKS")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(8);
+    if weeks <= 0 {
+        return base;
+    }
+    let now = OffsetDateTime::now_utc();
+    let Some(window) = TimeRange::new(now - Duration::weeks(weeks), now) else {
+        return base;
+    };
+
+    let calibrator = BacktestConsumptionForecast::new(
+        AcvAdemeForecaster::new(repo.clone(), repo.clone()),
+        repo.clone(),
+        repo,
+    );
+    match calibrator
+        .calibrate_bands(
+            Region::National,
+            window,
+            Duration::days(1),
+            Duration::minutes(15),
+            Duration::hours(24),
+            0.1,
+        )
+        .await
+    {
+        Ok(bands) if !bands.is_empty() => {
+            info!(
+                horizons = bands.len(),
+                "intervalles acv-ademe@2 calibrés (résidus par horizon)"
+            );
+            base.with_bands(bands)
+        }
+        Ok(_) => base,
+        Err(err) => {
+            warn!(error = %err, "calibration acv-ademe@2 impossible — bandes par créneau");
+            base
+        }
+    }
 }
 
 /// Mode *sweep* : balaie une grille de paramètres (N semaines × τ heures),

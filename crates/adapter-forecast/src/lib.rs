@@ -116,6 +116,9 @@ pub struct AcvAdemeForecaster<R, C> {
     cross_border: C,
     weeks: i64,
     params: ClimatologyParams,
+    /// Bandes d'incertitude par horizon (ADR-0011 §5), calibrées par backtest
+    /// `acv-ademe` ; `None` → repli sur la dispersion par créneau.
+    bands: Option<HorizonBands>,
 }
 
 impl<R, C> AcvAdemeForecaster<R, C> {
@@ -126,7 +129,15 @@ impl<R, C> AcvAdemeForecaster<R, C> {
             cross_border,
             weeks: DEFAULT_WEEKS,
             params: ClimatologyParams::default(),
+            bands: None,
         }
+    }
+
+    /// Injecte les bandes d'incertitude par horizon (ADR-0013 §6) : les
+    /// intervalles `@2` s'élargiront alors avec l'horizon.
+    pub fn with_bands(mut self, bands: HorizonBands) -> Self {
+        self.bands = Some(bands);
+        self
     }
 }
 
@@ -173,6 +184,7 @@ where
             self.params,
             &EmissionFactors::acv_ademe_v1(),
             TD_LOSS_FACTOR_V1,
+            self.bands.as_ref(),
         )
         .filter(|points| !points.is_empty())
         .ok_or(ForecastError::NotEnoughData)

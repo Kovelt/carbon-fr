@@ -85,6 +85,8 @@ DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backfill
 
 # Backtest du modèle de prévision climatology@1 (walk-forward, MAE/RMSE) :
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest
+# Backtest de la prévision acv-ademe@2 (vérité dérivée, national) :
+DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-acv
 # Calage des paramètres (balayage N × τ, classé par RMSE) :
 DATABASE_URL=postgres://localhost/carbonfr cargo run -p server backtest-sweep
 # Calibration des intervalles (quantiles de résidus par horizon) :
@@ -153,7 +155,8 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
     - [x] **tranche 2b** : backfill historique météo (API archive Open-Meteo, anti-fuite `run_at=valid_at−24h`) + features météo (vent/irradiance *as-of*) + climatologie de créneau (apprentissage résiduel), calcul **identique** train/inférence. **Mesuré : `gbdt@1` ne bat toujours pas `climatology@1`** (~2× pire, RMSE ≈15 vs 7,5), y compris entraîné sur l'année entière (les arbres n'extrapolent pas) → la climatologie calibrée est une baseline difficile. `@1` reste servi ; faire gagner le GBDT = itération ML ouverte (tuning/features), non engagée. Correctif : dédup `(region,at)` dans `upsert_loads`.
   - [~] **prévision `acv-ademe`** (prévoir les entrées → calculateur ; ADR-0013) :
     - [x] **tranche A** — pipeline + baseline climatologique : `acv_ademe_forecast` (domaine pur : climatologie par canal des entrées → calculateur `AcvAdemeConsumption`, **converge au nowcast**), adapter `AcvAdemeForecaster<R,C>`, routage par méthode au composition root (`ForecastState` + modèle `@2` dynamique `Arc<dyn ForecastModel>`), servi via `GET /v1/intensity/forecast?methodology=acv-ademe&version=2` (national).
-    - [ ] **à venir** : `MixForecaster` GBDT multi-sorties + `CrossBorderForecastSource` ENTSO-E day-ahead (proxy actuel = climatologie du contexte stocké) + backtest `acv-ademe` + calibration des intervalles. GBDT gardé par promotion (doit battre ce baseline).
+    - [x] **tranche B** — backtest & calibration `@2` : cas d'usage `BacktestConsumptionForecast` (vérité **dérivée** de l'observé mix+import via `derive_consumption_series`, walk-forward anti-fuite vs persistance), sous-commande `backtest-acv`, intervalles calibrés par quantiles de résidus (`calibrate_bands`) + auto-calibrés au démarrage (`AcvAdemeForecaster::with_bands`).
+    - [ ] **à venir** : `MixForecaster` GBDT multi-sorties + `CrossBorderForecastSource` ENTSO-E day-ahead (proxy actuel = climatologie du contexte stocké). GBDT gardé par promotion (doit battre ce baseline au `backtest-acv`).
   - [x] **usage** : primitives de scheduling carbon-aware + streaming **SSE** (ADR-0014) ; webhooks reportés (tier hébergé) :
     - [x] **tranche A** — primitives **pures** (`schedule.rs` : `greenest_window_before` sous échéance, `lowest_slots` divisible, `slots_below` seuil, `savings_vs_now`/`Savings` Δ vs maintenant + absolu si `energy_kwh`), cas d'usage `CarbonAwareScheduler`, endpoints `GET /v1/schedule`, `/v1/schedule/slots`, `/v1/intensity/below`. Zéro nouveau port, anonyme/sans état.
     - [x] **tranche B** — livraison live **SSE** : `GET /v1/intensity/stream` (`text/event-stream`, événement `intensity`, filtres `region`/`below`, keep-alive). Type domaine `IntensityUpdate` + `StreamState` (canal `tokio::broadcast`). **Mécanisme = canal mémoire** (poller intégré) ; migration `LISTEN`/`NOTIFY` documentée pour un futur `bin/poller` séparé. Le poller publie chaque mesure nationale `rte-direct`. Webhooks toujours reportés (gated ADR-0015).

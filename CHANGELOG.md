@@ -134,6 +134,13 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   via `GET /v1/intensity/forecast?methodology=acv-ademe&version=2` (national).
   *Modèle `acv-clim@1`* ; baseline que le futur `MixForecaster` GBDT + ENTSO-E
   day-ahead devront battre (garde de promotion).
+- **Backtest & calibration `acv-ademe@2`** (ADR-0013 §6-7) : cas d'usage
+  `BacktestConsumptionForecast` — la vérité `@2` n'étant pas stockée, elle est
+  **dérivée** de l'observé (mix + contexte d'import) puis comparée à la prévision
+  en *walk-forward* (anti-fuite, vs persistance). Sous-commande
+  `carbonfr-server backtest-acv` (MAE/RMSE global + par horizon). Intervalles
+  `@2` **calibrés par quantiles de résidus par horizon** et **auto-calibrés au
+  démarrage** du serveur (repli sur la dispersion par créneau).
 - **Primitives de scheduling carbon-aware** (ADR-0014, tranche A) : fonctions
   **pures** du domaine (zéro nouveau port) sur la prévision, réutilisant le
   sélecteur `central`/`prudent` — créneau contigu le plus bas-carbone **avant une

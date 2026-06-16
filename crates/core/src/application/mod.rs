@@ -4,6 +4,7 @@
 //! statique, zéro coût) et orchestre le domaine. Aucune IO concrète ici : les
 //! adapters fournissent les implémentations des ports (ADR-0002).
 
+mod analyze_renewable_signal;
 mod backfill;
 mod backtest;
 mod backtest_renewable;
@@ -18,6 +19,7 @@ mod renewable;
 mod schedule;
 mod weather;
 
+pub use analyze_renewable_signal::{AnalyzeRenewableSignal, RenewableSignalReport};
 pub use backfill::{BackfillHistory, BackfillReport};
 pub use backtest::{BacktestConsumptionForecast, BacktestForecast, BacktestReport, HorizonError};
 pub use backtest_renewable::{BacktestRenewable, RenewableReport};

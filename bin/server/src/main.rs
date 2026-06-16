@@ -65,8 +65,8 @@ use carbonfr_adapter_odre::OdreClient;
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_adapter_webhook::HttpNotifier;
 use carbonfr_core::application::{
-    BackfillHistory, BacktestConsumptionForecast, BacktestForecast, BacktestRenewable,
-    BacktestReport, CalibrateRenewable, IngestLatest,
+    AnalyzeRenewableSignal, BackfillHistory, BacktestConsumptionForecast, BacktestForecast,
+    BacktestRenewable, BacktestReport, CalibrateRenewable, IngestLatest,
 };
 use carbonfr_core::domain::{
     ACV_FORECAST_ID, ACV_FORECAST_VERSION, CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams,
@@ -96,6 +96,7 @@ async fn main() -> anyhow::Result<()> {
         Some("backtest-acv") => run_backtest_acv().await,
         Some("backtest-sweep") => run_backtest_sweep().await,
         Some("backtest-renewable") => run_backtest_renewable().await,
+        Some("analyze-renewable-signal") => run_analyze_renewable_signal().await,
         Some("backtest-bands") => run_backtest_bands().await,
         Some("train") => run_train().await,
         Some("mint-key") => run_mint_key().await,
@@ -499,6 +500,42 @@ async fn run_backtest_acv() -> anyhow::Result<()> {
         .context("backtest acv-ademe")?;
 
     print_backtest_report(&model, "national", "acv-ademe@2", &report);
+    Ok(())
+}
+
+/// Analyse-gate de la **prévision météo-pilotée** (ADR-0018, étape A) : mesure si
+/// l'anomalie de renouvelable **réel** améliore la climatologie d'intensité (borne
+/// supérieure). Si même le renouvelable parfait n'aide pas, la version prévue est
+/// vaine — on ne construit `forecast@N` que si ce gate est franchi.
+async fn run_analyze_renewable_signal() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let params = BacktestParams::from_env()?;
+
+    info!(from = %params.test.start(), to = %params.test.end(), "analyse du signal renouvelable (upper-bound : renouvelable réel)");
+
+    let report = AnalyzeRenewableSignal::new(repo)
+        .execute(params.test)
+        .await
+        .context("analyse du signal renouvelable")?;
+
+    info!(
+        beta = (report.beta * 1000.0).round() / 1000.0,
+        train = report.train,
+        test = report.test,
+        "coefficient calé (gCO2eq/kWh par MW au-dessus de la normale)"
+    );
+    info!(
+        baseline_rmse = report.baseline.rmse.round(),
+        adjusted_rmse = report.adjusted.rmse.round(),
+        "RMSE intensité : climatologie seule vs climatologie + anomalie renouvelable"
+    );
+    info!(
+        ameliore = report.improves(),
+        gain_rmse = ((report.baseline.rmse - report.adjusted.rmse) * 100.0).round() / 100.0,
+        "verdict : le renouvelable aide-t-il (hors échantillon) ?"
+    );
     Ok(())
 }
 

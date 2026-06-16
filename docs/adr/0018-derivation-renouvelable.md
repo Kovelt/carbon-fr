@@ -37,8 +37,16 @@ Le modèle bat le baseline d'un facteur **2,4× (éolien)** et **3,4× (solaire)
 
 - **Défendable** : tout le monde peut relire Open-Meteo ; calibrer et **prouver** la dérivation sur la production RTE française, non. C'est notre IP (le calcul est nôtre, on cite les sources de méthode : courbe de puissance, modèle PV).
 - **Honnêteté** : moyenne nationale + relation **contemporaine** (météo de l'heure → production de l'heure) — on prouve d'abord le **lien physique**.
-- **À suivre** (engagé, derrière le même contrat versionné) :
-  1. **Prévision** : météo *prévue* (anti-fuite `run_at ≤ valid_at − h`) → production prévue → intensité prévue (`forecast@N`, gardé par backtest face à `climatology@1`).
-  2. **Attribution carbone** : part renouvelable estimée → contribution à l'intensité (le produit final).
-  3. **Exposition** : `/v1/weather` (substrat, attribution Open-Meteo CC-BY 4.0 vérifiée) **et `/v1/renewable`** (production estimée + facteur de charge, modèle auto-calibré au démarrage) — **livrés**.
-  4. **Raffinement** : paramètres de courbe (médiane/raideur) calés par balayage ; capacité variable dans le temps (parc croissant) plutôt que constante par fenêtre.
+- **Livré** : `/v1/weather` (substrat, attribution Open-Meteo CC-BY 4.0 vérifiée) et `/v1/renewable` (production estimée + facteur de charge, modèle auto-calibré au démarrage).
+- **Écarté (mesuré)** : la **prévision d'intensité météo-pilotée** (étape A) — voir addendum.
+- **À suivre éventuellement** : raffinement des paramètres de courbe (médiane/raideur calés par balayage) ; capacité variable dans le temps (parc croissant).
+
+## Addendum (2026-06-16) — Étape A : prévision météo-pilotée **écartée** (gate non franchi)
+
+Avant de construire un `forecast@N` (météo prévue → renouvelable prévu → intensité prévue), on a mesuré le **plafond** du gain : l'anomalie de renouvelable **réel** (borne supérieure, perfect-foresight) améliore-t-elle la climatologie d'intensité, hors échantillon ? (cas d'usage `AnalyzeRenewableSignal`, sous-commande `analyze-renewable-signal`).
+
+**Mesuré (2024, national, 5270 pts test)** : RMSE intensité **12,0 → 11,5** (gain **0,48 gCO₂eq/kWh, ~4 %**), avec **β ≈ 0**. L'outil est **validé** (tests : détecte un signal synthétique fort, donne β≈0 sans lien) → le résultat est fiable, pas un artefact.
+
+**Conclusion** : pour le réseau **français**, dominé par le **nucléaire** (déjà très bas carbone), les variations de renouvelable ne déplacent quasiment pas l'intensité **au-delà de ce que la climatologie capte déjà**. Avec du renouvelable *prévu* (erreur météo en plus), le gain serait encore plus marginal. **On ne construit donc pas `forecast@N` météo-piloté** — même discipline que l'ajustement de charge (ADR-0011 §4) et le GBDT bout-en-bout (ADR-0012), tous deux écartés au backtest.
+
+La dérivation renouvelable garde toute sa valeur **comme produit** (`/v1/renewable` : production estimée, facteur de charge, « pourquoi le carbone est bas ») — mais **pas comme levier de précision de la prévision d'intensité** sur ce réseau.

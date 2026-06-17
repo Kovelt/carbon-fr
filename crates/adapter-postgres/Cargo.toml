@@ -1,6 +1,6 @@
 [package]
 name = "carbonfr-adapter-postgres"
-version = "0.0.0"
+version.workspace = true
 description = "Adapter sortant carbon-fr : implémente IntensityRepository sur PostgreSQL natif (sqlx)."
 edition.workspace = true
 license.workspace = true

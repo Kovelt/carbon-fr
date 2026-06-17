@@ -1,6 +1,6 @@
 [package]
 name = "carbonfr-adapter-http"
-version = "0.0.0"
+version.workspace = true
 description = "Adapter entrant carbon-fr : API HTTP (axum) exposant les cas d'usage sous /v1."
 edition.workspace = true
 license.workspace = true

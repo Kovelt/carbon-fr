@@ -2,9 +2,31 @@
 
 Deux voies, selon le contexte.
 
+## Image (source recommandée)
+
+Chaque tag git `vX.Y.Z` publie une image de prod sur **GHCR** (workflow [`release.yml`](../.github/workflows/release.yml), ADR-0019) :
+
+```
+ghcr.io/kovelt/carbon-fr:X.Y.Z   ← épingler la version exacte en prod
+ghcr.io/kovelt/carbon-fr:X.Y     ← suit les patchs de la mineure
+ghcr.io/kovelt/carbon-fr:latest  ← dernier tag publié
+```
+
+```bash
+# tirer une version (image publique, ou après `docker login ghcr.io` avec un PAT read:packages)
+docker pull ghcr.io/kovelt/carbon-fr:0.1.0
+docker run --rm ghcr.io/kovelt/carbon-fr:0.1.0 --version   # → carbonfr-server 0.1.0
+```
+
+**Toujours épingler une version exacte en prod** (pas `latest`) : on sait quel build répond, et le rollback = redéployer le tag précédent. Le binaire logue sa version au démarrage (`info … version=…`) et répond à `--version`.
+
+Cadrer une release : `git tag v0.2.0 && git push origin v0.2.0` (le workflow vérifie que le tag correspond à la version du workspace, puis construit et pousse l'image).
+
+> **Build local** plutôt que tirer l'image : possible via le [`Dockerfile`](../Dockerfile) (`docker build -t carbon-fr .`) — utile pour un fork ou un patch non publié.
+
 ## 1. Self-hosting générique (exemples fournis)
 
-- **[`Dockerfile`](../Dockerfile)** — image de prod multi-stage, non-root, cache de build.
+- **Image** — `ghcr.io/kovelt/carbon-fr:X.Y.Z` (ci-dessus) ou build local via le [`Dockerfile`](../Dockerfile) (multi-stage, non-root, cache de build).
 - **[`Caddyfile`](Caddyfile)** — reverse proxy TLS (Let's Encrypt auto, en-têtes de sécurité, sonde `/health/ready`). `caddy run --config deploy/Caddyfile`.
 - **[`carbonfr.service`](carbonfr.service)** — unité systemd bare-metal (durcie : `NoNewPrivileges`, `ProtectSystem=strict`, arrêt gracieux SIGTERM).
 
@@ -13,6 +35,8 @@ Dans tous les cas : **API derrière un reverse proxy TLS** + `CARBONFR_TRUST_PRO
 ## 2. Production Kovelt — derrière Traefik (org)
 
 L'instance hébergée (`carbon-fr-api.kovelt.fr`) tourne **comme un service de la stack Kovelt** (Traefik d'organisation, PostgreSQL dédié en conteneur). Caddy/systemd ci-dessus ne sont **pas** utilisés là : Traefik fait le TLS et pose `X-Forwarded-For`/`X-Real-Ip`.
+
+Le service compose tire l'**image taguée** depuis GHCR (`image: ghcr.io/kovelt/carbon-fr:X.Y.Z`, version épinglée — cf. section *Image*), pas un build sur place. Déployer une nouvelle version = bumper le tag de l'image et redéployer.
 
 Labels Traefik du service (compose) :
 

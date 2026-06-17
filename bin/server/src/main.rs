@@ -88,9 +88,21 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_tracing();
+    let arg = std::env::args().nth(1);
 
-    match std::env::args().nth(1).as_deref() {
+    // `--version` : répond et sort, sans bruit de logs (ADR-0019 — traçabilité du
+    // build déployé). La version vient du workspace (`version.workspace = true`).
+    if matches!(arg.as_deref(), Some("--version" | "-V")) {
+        println!("carbonfr-server {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    init_tracing();
+    // Annonce la version au démarrage de **tous** les modes (service, backfill,
+    // backtest…) : on sait quel build répond / a produit un résultat (ADR-0019).
+    info!(version = env!("CARGO_PKG_VERSION"), "carbonfr-server");
+
+    match arg.as_deref() {
         None => run_server().await,
         Some("backfill") => run_backfill().await,
         Some("backtest") => run_backtest().await,

@@ -28,6 +28,7 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0016](0016-webhooks.md) | Webhooks : notification sortante signée, gardée par l'ownership de clé | Accepté (engagé) |
 | [0017](0017-endpoint-echanges-transfrontaliers.md) | Endpoint public des échanges transfrontaliers (ENTSO-E) | Accepté (implémenté) |
 | [0018](0018-derivation-renouvelable.md) | Dérivation renouvelable météo→production (prévision météo-pilotée écartée) | Accepté (engagé) |
+| [0019](0019-politique-de-versionnement.md) | Politique de versionnement (4 axes découplés : appli, API, méthodo, SDK) | Accepté (engagé) |
 
 ## Gabarit
 

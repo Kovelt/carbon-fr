@@ -1,6 +1,6 @@
 [package]
 name = "carbonfr-adapter-gbdt"
-version = "0.0.0"
+version.workspace = true
 description = "Modèle de prévision ML carbon-fr : GBDT pur Rust (entraînement + inférence), ADR-0012."
 edition.workspace = true
 license.workspace = true

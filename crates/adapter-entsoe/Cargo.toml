@@ -1,6 +1,6 @@
 [package]
 name = "carbonfr-adapter-entsoe"
-version = "0.0.0"
+version.workspace = true
 description = "Adapter sortant carbon-fr : contexte d'import transfrontalier (ENTSO-E) pour acv-ademe consumption-based (ADR-0010)."
 edition.workspace = true
 license.workspace = true

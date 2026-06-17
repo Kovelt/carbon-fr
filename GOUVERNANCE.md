@@ -70,6 +70,7 @@ Ces jobs deviennent les **status checks requis** de la protection de `main`. La 
 - **Phase `0.x`** : tant qu'on est avant la `1.0`, les ruptures d'API sont tolérées en *minor* — ça laisse itérer sans drame, tout en restant honnête sur la stabilité.
 - **CHANGELOG.md** au format [Keep a Changelog](https://keepachangelog.com/fr/) : une section par version, regroupée en *Ajouté / Modifié / Corrigé / Supprimé*.
 - **Publication crates.io** (plus tard) : `cargo publish` par crate publiable (`carbonfr-core`, …). Rappel : l'URL de l'API publique, elle, est versionnée séparément dans le chemin (`/v1`, ADR-0007) — ne pas confondre version du code et version du contrat d'API.
+- **Dépréciation** (ADR-0020) : on ne retire **jamais** un élément public (version d'API, endpoint, champ, méthodologie) sans préavis. Une dépréciation s'annonce via les en-têtes HTTP `Deprecation` (RFC 9745) + `Sunset` (RFC 8594), une section *Déprécié* du CHANGELOG et `deprecated: true` dans l'OpenAPI ; retrait au plus tôt après la fenêtre (≥ 6 mois post-1.0, ≥ 30 jours en pré-1.0).
 
 ## 7. Les fichiers de gouvernance
 
@@ -84,7 +85,7 @@ Ces jobs deviennent les **status checks requis** de la protection de `main`. La 
 | `.github/workflows/ci.yml` | CI (fmt, clippy, test + PostgreSQL) | ✅ présent |
 | `GOUVERNANCE.md` | Gouvernance & workflow (ce document) | ✅ présent |
 | `SECURITY.md` | Signalement de faille (en privé) | ✅ présent |
-| `.github/dependabot.yml` | MAJ dépendances + alertes sécurité | ⬜ à ajouter |
+| `.github/dependabot.yml` | MAJ dépendances + alertes sécurité (cargo, npm, actions) | ✅ présent |
 | `.github/ISSUE_TEMPLATE/` + `PULL_REQUEST_TEMPLATE.md` | Gabarits issues/PR | ⬜ à ajouter |
 | `CHANGELOG.md` | Journal des versions | ✅ présent |
 | `CODEOWNERS` | Revue obligatoire par domaine | ⬜ quand contributeurs |

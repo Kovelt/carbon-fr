@@ -8,6 +8,16 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.2.1] - 2026-06-17
+
+Aucun changement fonctionnel du service (image identique à 0.2.0 côté binaire).
+
+### CI
+
+- **Release automatisée** : `release.yml` crée désormais la **GitHub Release** au
+  push du tag (notes extraites de la section CHANGELOG correspondante), en plus de
+  publier l'image GHCR — tag, image et Release restent alignés en une opération.
+
 ## [0.2.0] - 2026-06-17
 
 Durcissement de maintenabilité d'API publique : contrat verrouillé, erreurs

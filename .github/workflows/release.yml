@@ -7,6 +7,10 @@ name: Release (image Docker)
 # Aucun secret : l'auth GHCR se fait via le GITHUB_TOKEN du workflow
 # (`packages: write`), même esprit OIDC/sans-jeton que release-sdk.yml.
 #
+# Une fois l'image publiée, le job `release` crée (ou met à jour) la **GitHub
+# Release** du tag, avec les notes extraites de la section correspondante du
+# CHANGELOG → tag, image et Release restent alignés en une seule opération.
+#
 # L'image déployée (VPS Kovelt, ADR-0007) se tire alors de :
 #   ghcr.io/kovelt/carbon-fr:X.Y.Z   (épingler la version exacte en prod)
 
@@ -71,3 +75,44 @@ jobs:
           # des cache mounts BuildKit pour le registre Cargo et target/).
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  release:
+    name: Publier la GitHub Release
+    needs: image # ne publie la Release que si l'image est bien construite/poussée
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # créer/éditer une Release (le job `image` n'a, lui, que read+packages)
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Extraire les notes du CHANGELOG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Contenu entre l'en-tête `## [X.Y.Z]` et le prochain `## [` (en-tête exclu).
+          awk -v ver="$VERSION" '
+            $0 ~ ("^## \\[" ver "\\]") { flag=1; next }
+            flag && /^## \[/ { exit }
+            flag { print }
+          ' CHANGELOG.md > release-notes.md
+          # Repli si la version n'est pas (encore) dans le CHANGELOG.
+          if [ ! -s release-notes.md ]; then
+            echo "Release ${GITHUB_REF_NAME}." > release-notes.md
+          fi
+          IMAGE_LC="$(echo "${IMAGE_NAME}" | tr '[:upper:]' '[:lower:]')"
+          {
+            echo
+            echo "### Image"
+            echo "\`${REGISTRY}/${IMAGE_LC}:${VERSION}\` (GHCR, publique). En prod : épingler la version exacte."
+          } >> release-notes.md
+          echo "--- notes générées ---"; cat release-notes.md
+
+      - name: Créer ou mettre à jour la Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --notes-file release-notes.md --latest
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" --notes-file release-notes.md --verify-tag --latest
+          fi

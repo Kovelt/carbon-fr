@@ -1,0 +1,2619 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "carbon-fr",
+    "description": "Intensité carbone (gCO₂eq/kWh) de l'électricité française, d'après les données ouvertes RTE/éCO2mix (ODRÉ). Couverture : National + 12 régions. Méthodologies : `rte-direct` (estimation RTE, combustion directe, national) et `acv-ademe` (cycle de vie ADEME, national + régions).",
+    "contact": {
+      "name": "Kovelt",
+      "url": "https://kovelt.fr"
+    },
+    "license": {
+      "name": "MIT OR Apache-2.0"
+    },
+    "version": "{{version}}"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": [
+          "opérations"
+        ],
+        "summary": "`GET /health` — sonde de disponibilité (hors contrat d'API versionné).",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Service disponible",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "tags": [
+          "opérations"
+        ],
+        "summary": "`GET /health/ready` — sonde de **readiness** : vérifie l'accès à la base\n(lecture légère). `503` si la base est injoignable → le proxy/monitoring cesse\nd'y router le trafic (distinct de `/health`, liveness statique).",
+        "operationId": "health_ready",
+        "responses": {
+          "200": {
+            "description": "Base accessible",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Base indisponible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/exchanges": {
+      "get": {
+        "tags": [
+          "échanges"
+        ],
+        "summary": "`GET /v1/exchanges` — échanges transfrontaliers : flux net signé par\nfrontière (`> 0` = import vers la France) + intensité carbone du voisin\n(ADR-0017). Donnée ENTSO-E déjà ingérée pour `acv-ademe@2`, servie au pas\nquart d'heure, alignée sur la dernière mesure nationale.",
+        "operationId": "exchanges",
+        "responses": {
+          "200": {
+            "description": "Échanges transfrontaliers courants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExchangesResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Aucune donnée d'échange disponible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/exchanges/date": {
+      "get": {
+        "tags": [
+          "échanges"
+        ],
+        "summary": "`GET /v1/exchanges/date?from=&to=` — série historique des échanges\ntransfrontaliers sur un intervalle RFC 3339 (fenêtre ≤ 366 jours), au pas\nquart d'heure (ADR-0017).",
+        "operationId": "exchanges_date",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "description": "Slug de région. National par défaut.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "methodology",
+            "in": "query",
+            "description": "Méthodologie. Défaut `rte-direct`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode (`acv-ademe` : `2` = consommation, national).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Série historique des échanges",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExchangesHistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bornes manquantes ou invalides",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/factors": {
+      "get": {
+        "tags": [
+          "méthodologie"
+        ],
+        "summary": "`GET /v1/factors` — table des facteurs d'émission d'une méthode (ADR-0010 §7).",
+        "description": "Levier de **vérifiabilité** : la méthode est auditable, pas un chiffre opaque.\nSeule `acv-ademe` expose une table (`rte-direct` est un report de RTE).",
+        "operationId": "factors",
+        "parameters": [
+          {
+            "name": "methodology",
+            "in": "query",
+            "description": "Méthodologie (`acv-ademe`). Défaut `acv-ademe`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version (défaut : dernière version de la méthode).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Table des facteurs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FactorsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Méthode sans table de facteurs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/intensity/below": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "`GET /v1/intensity/below` — tous les créneaux prévus d'intensité sous\n`threshold` (gCO₂eq/kWh) sur l'horizon (ADR-0014).",
+        "operationId": "intensity_below",
+        "parameters": [
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "methodology",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "horizon_hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "threshold",
+            "in": "query",
+            "description": "Seuil d'intensité (gCO₂eq/kWh). Requis. Renvoie les créneaux sous ce seuil.",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "estimator",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Créneaux sous le seuil",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlotsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/intensity/date": {
+      "get": {
+        "tags": [
+          "intensité"
+        ],
+        "summary": "`GET /v1/intensity/date?from=&to=&region=` — série historique sur un\nintervalle `[from, to)` (RFC 3339), national par défaut.",
+        "operationId": "intensity_date",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "description": "Slug de région. National par défaut.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "methodology",
+            "in": "query",
+            "description": "Méthodologie. Défaut `rte-direct`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode (`acv-ademe` : `2` = consommation, national).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Série chronologique",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide ou fenêtre > 366 jours",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/intensity/forecast": {
+      "get": {
+        "tags": [
+          "prévision"
+        ],
+        "summary": "`GET /v1/intensity/forecast` — série d'intensité **prévue** sur l'horizon,\npar le modèle `climatology@1` (ADR-0009).",
+        "operationId": "forecast",
+        "parameters": [
+          {
+            "name": "region",
+            "in": "query",
+            "description": "Slug de région. National par défaut.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "methodology",
+            "in": "query",
+            "description": "Méthodologie à prévoir. Défaut `rte-direct`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Début de l'horizon (RFC 3339). Défaut : maintenant.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "horizon_hours",
+            "in": "query",
+            "description": "Profondeur de l'horizon en heures (1..=72). Défaut 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode (`acv-ademe` : `2` = consommation prévue, ADR-0013).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Série prévue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForecastResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Historique insuffisant pour prévoir",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/intensity/greenest-window": {
+      "get": {
+        "tags": [
+          "prévision"
+        ],
+        "summary": "`GET /v1/intensity/greenest-window` — créneau le plus bas-carbone à venir, sur\nla prévision `climatology@1` (ADR-0009).",
+        "operationId": "greenest_window",
+        "parameters": [
+          {
+            "name": "region",
+            "in": "query",
+            "description": "Slug de région. National par défaut.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "methodology",
+            "in": "query",
+            "description": "Méthodologie à prévoir. Défaut `rte-direct`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Début de l'horizon (RFC 3339). Défaut : maintenant.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "horizon_hours",
+            "in": "query",
+            "description": "Profondeur de l'horizon en heures (1..=72). Défaut 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "window_minutes",
+            "in": "query",
+            "description": "Durée du créneau recherché, en minutes. Défaut 60.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "estimator",
+            "in": "query",
+            "description": "Estimateur : `central` (estimation, défaut) ou `prudent` (borne haute).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Créneau le plus bas-carbone",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GreenestWindowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Série insuffisante pour déterminer un créneau",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/intensity/now": {
+      "get": {
+        "tags": [
+          "intensité"
+        ],
+        "summary": "`GET /v1/intensity/now` — dernière intensité carbone connue.",
+        "operationId": "intensity_now",
+        "parameters": [
+          {
+            "name": "region",
+            "in": "query",
+            "description": "Slug de région (ex. `bretagne`). National par défaut.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "methodology",
+            "in": "query",
+            "description": "Méthodologie : `rte-direct` (national) ou `acv-ademe`. Défaut `rte-direct`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Pour `acv-ademe` : `1` = production (défaut),\n`2` = consommation (imports inclus, national, ADR-0010).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dernière mesure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntensityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Région ou méthodologie invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Aucune donnée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/intensity/stats": {
+      "get": {
+        "tags": [
+          "intensité"
+        ],
+        "summary": "`GET /v1/intensity/stats?from=&to=&region=&interval=` — résumé (moyenne/min/\nmax) sur `[from, to)`, et série agrégée par pas si `interval=hour|day`.",
+        "operationId": "intensity_stats",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "description": "Slug de région. National par défaut.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "interval",
+            "in": "query",
+            "description": "Pas d'agrégation de la série : `hour` ou `day`. Optionnel.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "methodology",
+            "in": "query",
+            "description": "Méthodologie. Défaut `rte-direct`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode (`acv-ademe` : `2` = consommation, national).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Résumé (et série si interval)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Aucune donnée sur l'intervalle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/intensity/stream": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "`GET /v1/intensity/stream` — flux **live** (Server-Sent Events) des mises à\njour du read-model, poussées à la cadence du poller (ADR-0014 §2).",
+        "description": "Le client ouvre la connexion (`text/event-stream`) ; le serveur émet un\névénement `intensity` à chaque nouvelle mesure. Filtres optionnels `region`\net `below`. Sans état par-client : la posture anonyme est préservée.",
+        "operationId": "intensity_stream",
+        "parameters": [
+          {
+            "name": "region",
+            "in": "query",
+            "description": "Slug de région à suivre. Sans filtre, toutes les régions sont poussées.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "below",
+            "in": "query",
+            "description": "Ne pousser que les mises à jour d'intensité **strictement sous** ce seuil\n(gCO₂eq/kWh) — pour un événement « créneau vert imminent ».",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Flux SSE d'événements `intensity` (text/event-stream)"
+          },
+          "400": {
+            "description": "Région invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/methodologies": {
+      "get": {
+        "tags": [
+          "méthodologie"
+        ],
+        "summary": "`GET /v1/methodologies` — catalogue des méthodes carbone + versions (ADR-0010 §7).",
+        "operationId": "methodologies",
+        "responses": {
+          "200": {
+            "description": "Méthodes disponibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodologiesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/mix": {
+      "get": {
+        "tags": [
+          "mix"
+        ],
+        "summary": "`GET /v1/mix` — mix de production de la dernière mesure.",
+        "operationId": "mix",
+        "parameters": [
+          {
+            "name": "region",
+            "in": "query",
+            "description": "Slug de région (ex. `bretagne`). National par défaut.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "methodology",
+            "in": "query",
+            "description": "Méthodologie : `rte-direct` (national) ou `acv-ademe`. Défaut `rte-direct`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Pour `acv-ademe` : `1` = production (défaut),\n`2` = consommation (imports inclus, national, ADR-0010).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mix de production (MW)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MixResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Région ou méthodologie invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Aucune donnée / mix indisponible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/renewable": {
+      "get": {
+        "tags": [
+          "renouvelable"
+        ],
+        "summary": "`GET /v1/renewable` — production renouvelable **estimée** depuis la météo\ncourante (modèle calibré au démarrage, ADR-0018) + facteur de charge. Le moat\nrendu visible : « given le vent/soleil actuels, voici la production attendue ».\n`503` si le modèle n'a pas pu être calibré (historique insuffisant).",
+        "operationId": "renewable",
+        "responses": {
+          "200": {
+            "description": "Production renouvelable estimée + facteur de charge",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenewableResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Aucune météo disponible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Modèle renouvelable non calibré",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/schedule": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "`GET /v1/schedule` — planifie un job : créneau contigu le plus bas-carbone\n(avant une échéance optionnelle) + économie carbone vs « maintenant »\n(ADR-0014).",
+        "operationId": "schedule",
+        "parameters": [
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "methodology",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Début de l'horizon (RFC 3339). Défaut : maintenant.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "horizon_hours",
+            "in": "query",
+            "description": "Profondeur de l'horizon en heures (1..=72). Défaut 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "duration_minutes",
+            "in": "query",
+            "description": "Durée du job à planifier, en minutes. Défaut 60.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "deadline",
+            "in": "query",
+            "description": "Échéance de livraison (RFC 3339). Optionnelle : sans elle, tout l'horizon.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "energy_kwh",
+            "in": "query",
+            "description": "Énergie du job (kWh) : si fournie, l'économie absolue (gCO₂eq) est calculée.",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "estimator",
+            "in": "query",
+            "description": "Estimateur : `central` (défaut) ou `prudent`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Créneau planifié + économie",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScheduleResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Série insuffisante",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/schedule/slots": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "`GET /v1/schedule/slots` — les `count` créneaux les moins intenses sur\nl'horizon (job **divisible**, interruptibilité supposée parfaite, ADR-0014).",
+        "operationId": "schedule_slots",
+        "parameters": [
+          {
+            "name": "region",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "methodology",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "horizon_hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "description": "Nombre de créneaux les moins intenses à retourner. Requis (1..=horizon).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "estimator",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Créneaux les moins intenses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SlotsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stats": {
+      "get": {
+        "tags": [
+          "opérations"
+        ],
+        "summary": "`GET /v1/stats` — statistiques de consultation.",
+        "operationId": "visit_stats",
+        "responses": {
+          "200": {
+            "description": "Statistiques courantes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VisitStatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stats/visit": {
+      "post": {
+        "tags": [
+          "opérations"
+        ],
+        "summary": "`POST /v1/stats/visit` — enregistre une visite (unique par IP/jour, IP\nhachée jamais stockée) et renvoie les statistiques à jour.",
+        "operationId": "record_visit",
+        "responses": {
+          "200": {
+            "description": "Statistiques à jour",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VisitStatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/weather": {
+      "get": {
+        "tags": [
+          "météo"
+        ],
+        "summary": "`GET /v1/weather` — météo nationale courante (vent à 100 m, irradiance ;\nmoyenne 7 points), ADR-0012/0018. Données Open-Meteo (CC-BY 4.0, attribuées).",
+        "operationId": "weather",
+        "responses": {
+          "200": {
+            "description": "Météo nationale courante",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeatherResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Aucune donnée météo disponible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/weather/date": {
+      "get": {
+        "tags": [
+          "météo"
+        ],
+        "summary": "`GET /v1/weather/date?from=&to=` — série météo historique (vent + irradiance)\nsur un intervalle RFC 3339 (fenêtre ≤ 366 jours), ADR-0012/0018.",
+        "operationId": "weather_date",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "description": "Slug de région. National par défaut.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "methodology",
+            "in": "query",
+            "description": "Méthodologie. Défaut `rte-direct`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode (`acv-ademe` : `2` = consommation, national).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Série météo historique",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeatherHistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bornes manquantes ou invalides",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "`GET /v1/webhooks` — liste les abonnements de la clé. **Auth requise.**",
+        "operationId": "list_webhooks",
+        "responses": {
+          "200": {
+            "description": "Abonnements de la clé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Clé API requise/inconnue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "`POST /v1/webhooks` — crée un abonnement webhook (ADR-0016). **Auth requise.**\nLe `secret` de signature est renvoyé **une seule fois**.",
+        "operationId": "create_webhook",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Abonnement créé (secret affiché une fois)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedWebhookResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide ou URL refusée (anti-SSRF)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Clé API requise/inconnue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}": {
+      "delete": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "`DELETE /v1/webhooks/{id}` — supprime un abonnement **possédé par la clé**.",
+        "operationId": "delete_webhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant d'abonnement",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Supprimé"
+          },
+          "401": {
+            "description": "Clé API requise/inconnue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Abonnement introuvable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CreateWebhookRequest": {
+        "type": "object",
+        "description": "Corps de `POST /v1/webhooks` (ADR-0016).",
+        "required": [
+          "threshold",
+          "direction",
+          "callback_url"
+        ],
+        "properties": {
+          "callback_url": {
+            "type": "string",
+            "description": "URL HTTPS de rappel (validée anti-SSRF)."
+          },
+          "direction": {
+            "type": "string",
+            "description": "Sens du franchissement : `below` ou `above`."
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Slug de région à surveiller. National par défaut."
+          },
+          "threshold": {
+            "type": "number",
+            "format": "double",
+            "description": "Seuil d'intensité (gCO₂eq/kWh)."
+          }
+        }
+      },
+      "CreatedWebhookResponse": {
+        "type": "object",
+        "description": "Réponse de création : inclut le **secret** (affiché une seule fois).",
+        "required": [
+          "id",
+          "secret",
+          "region",
+          "threshold",
+          "direction",
+          "callback_url"
+        ],
+        "properties": {
+          "callback_url": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string",
+            "description": "Secret de signature HMAC — **à conserver, non ré-affiché**."
+          },
+          "threshold": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "description": "Corps JSON d'une erreur de l'API.",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Code court et stable (`no_data`, `bad_request`, `internal`)."
+          },
+          "message": {
+            "type": "string",
+            "description": "Message lisible."
+          }
+        }
+      },
+      "ExchangeEntry": {
+        "type": "object",
+        "description": "Une frontière : flux net signé FR↔voisin + intensité carbone du voisin.",
+        "required": [
+          "country",
+          "country_name",
+          "flow_mw",
+          "direction",
+          "intensity"
+        ],
+        "properties": {
+          "country": {
+            "type": "string",
+            "description": "Code du voisin (`be`, `de-lu`, `es`, `it-north`, `ch`, `gb`)."
+          },
+          "country_name": {
+            "type": "string",
+            "description": "Nom lisible du voisin."
+          },
+          "direction": {
+            "type": "string",
+            "description": "Sens FR↔pays pour la flèche : `import` | `export` | `balanced`."
+          },
+          "flow_mw": {
+            "type": "number",
+            "format": "double",
+            "description": "Flux net (MW) : `> 0` = la France **importe** de ce pays, `< 0` = exporte."
+          },
+          "intensity": {
+            "$ref": "#/components/schemas/IntensityValue",
+            "description": "Intensité carbone (cycle de vie ADEME) du voisin au même instant."
+          }
+        }
+      },
+      "ExchangesHistoryResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/exchanges/date` — série historique des échanges (ADR-0017).",
+        "required": [
+          "from",
+          "to",
+          "count",
+          "snapshots"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "description": "Nombre de snapshots renvoyés (pas quart d'heure).",
+            "minimum": 0
+          },
+          "from": {
+            "type": "string"
+          },
+          "snapshots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExchangesResponse"
+            },
+            "description": "Snapshots triés par horodatage croissant."
+          },
+          "to": {
+            "type": "string"
+          }
+        }
+      },
+      "ExchangesResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/exchanges` — échanges transfrontaliers (ADR-0017).\n\nDonnées déjà ingérées pour `acv-ademe@2` (flux ENTSO-E par frontière +\nintensité du voisin), exposées au pas quart d'heure. Convention de signe :\n**`> 0` = import vers la France**, `< 0` = export.",
+        "required": [
+          "timestamp",
+          "net_flow_mw",
+          "direction",
+          "imports_mw",
+          "exports_mw",
+          "exchanges"
+        ],
+        "properties": {
+          "direction": {
+            "type": "string",
+            "description": "Sens du solde : `import` | `export` | `balanced`."
+          },
+          "exchanges": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExchangeEntry"
+            },
+            "description": "Détail par frontière."
+          },
+          "exports_mw": {
+            "type": "number",
+            "format": "double",
+            "description": "Total exporté (MW) — somme des frontières sortantes."
+          },
+          "imports_mw": {
+            "type": "number",
+            "format": "double",
+            "description": "Total importé (MW) — somme des frontières entrantes."
+          },
+          "net_flow_mw": {
+            "type": "number",
+            "format": "double",
+            "description": "Solde net FR (MW) : `> 0` = la France importe, `< 0` = exporte."
+          },
+          "timestamp": {
+            "type": "string",
+            "description": "Horodatage du snapshot (RFC 3339, UTC), aligné sur `/v1/intensity/now`."
+          }
+        }
+      },
+      "FactorEntry": {
+        "type": "object",
+        "description": "Un facteur d'émission par filière (entrée de `GET /v1/factors`).",
+        "required": [
+          "filiere",
+          "factor"
+        ],
+        "properties": {
+          "factor": {
+            "type": "number",
+            "format": "double",
+            "description": "Facteur cycle de vie (gCO₂eq/kWh)."
+          },
+          "filiere": {
+            "type": "string",
+            "description": "Filière (`nucleaire`, `gaz`, …)."
+          }
+        }
+      },
+      "FactorsResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/factors` — table des facteurs d'une méthode (vérifiabilité).",
+        "required": [
+          "methodology",
+          "methodology_version",
+          "unit",
+          "source",
+          "factors"
+        ],
+        "properties": {
+          "factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FactorEntry"
+            }
+          },
+          "methodology": {
+            "type": "string"
+          },
+          "methodology_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string"
+          },
+          "td_loss_factor": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Facteur de pertes T&D appliqué (uplift consommation), `null` hors méthode\nconsommation."
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "ForecastPointBody": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "expected",
+          "lower",
+          "upper"
+        ],
+        "properties": {
+          "expected": {
+            "type": "number",
+            "format": "double",
+            "description": "Estimation centrale (gCO₂eq/kWh)."
+          },
+          "lower": {
+            "type": "number",
+            "format": "double",
+            "description": "Borne basse de l'intervalle d'incertitude."
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "upper": {
+            "type": "number",
+            "format": "double",
+            "description": "Borne haute de l'intervalle d'incertitude."
+          }
+        }
+      },
+      "ForecastResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/intensity/forecast` : la série **prévue** sur l'horizon.\n\nLe champ `model` (identité versionnée du modèle, ex. `climatology@1`) marque\nexplicitement ces points comme des **prévisions** — pas des observations\n(ADR-0011). Chaque point porte une **estimation centrale encadrée**\n(`expected`/`lower`/`upper`) ; pas de `vintage` : une prévision n'est pas une\nmesure révisée et n'est jamais persistée.",
+        "required": [
+          "region",
+          "methodology",
+          "model",
+          "from",
+          "horizon_hours",
+          "unit",
+          "count",
+          "data"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ForecastPointBody"
+            }
+          },
+          "from": {
+            "type": "string",
+            "description": "Début de l'horizon (RFC 3339)."
+          },
+          "horizon_hours": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Profondeur de l'horizon, en heures.",
+            "minimum": 0
+          },
+          "methodology": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "description": "Identité versionnée du modèle de prévision (ex. `climatology@1`)."
+          },
+          "region": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "GreenestWindowResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/intensity/greenest-window` : le créneau le plus\nbas-carbone sur l'horizon prévu (ADR-0009).",
+        "required": [
+          "region",
+          "methodology",
+          "model",
+          "start",
+          "end",
+          "unit",
+          "average_intensity"
+        ],
+        "properties": {
+          "average_intensity": {
+            "type": "number",
+            "format": "double",
+            "description": "Intensité carbone moyenne prévue sur le créneau."
+          },
+          "end": {
+            "type": "string",
+            "description": "Fin du créneau (RFC 3339, exclue)."
+          },
+          "methodology": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "description": "Identité versionnée du modèle de prévision (ex. `climatology@1`)."
+          },
+          "region": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string",
+            "description": "Début du créneau (RFC 3339)."
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "HistoryPoint": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "intensity",
+          "vintage"
+        ],
+        "properties": {
+          "intensity": {
+            "type": "number",
+            "format": "double"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "vintage": {
+            "type": "string"
+          }
+        }
+      },
+      "HistoryResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/intensity/date` : la série sur l'intervalle demandé.",
+        "required": [
+          "region",
+          "from",
+          "to",
+          "unit",
+          "methodology",
+          "count",
+          "data"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HistoryPoint"
+            }
+          },
+          "from": {
+            "type": "string"
+          },
+          "methodology": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "IntensityResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/intensity/now`.",
+        "required": [
+          "region",
+          "timestamp",
+          "intensity",
+          "methodology",
+          "methodology_version",
+          "vintage"
+        ],
+        "properties": {
+          "intensity": {
+            "$ref": "#/components/schemas/IntensityValue"
+          },
+          "methodology": {
+            "type": "string"
+          },
+          "methodology_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "region": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "vintage": {
+            "type": "string"
+          }
+        }
+      },
+      "IntensityValue": {
+        "type": "object",
+        "required": [
+          "value",
+          "unit"
+        ],
+        "properties": {
+          "unit": {
+            "type": "string"
+          },
+          "value": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "MethodologiesResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/methodologies` — catalogue des méthodes + versions.",
+        "required": [
+          "methodologies"
+        ],
+        "properties": {
+          "methodologies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MethodologyInfo"
+            }
+          }
+        }
+      },
+      "MethodologyInfo": {
+        "type": "object",
+        "description": "Une méthodologie disponible (catalogue de `GET /v1/methodologies`).",
+        "required": [
+          "id",
+          "version",
+          "basis",
+          "scope",
+          "default",
+          "status",
+          "adr",
+          "description"
+        ],
+        "properties": {
+          "adr": {
+            "type": "string",
+            "description": "ADR de référence."
+          },
+          "basis": {
+            "type": "string",
+            "description": "Périmètre de calcul."
+          },
+          "default": {
+            "type": "boolean",
+            "description": "`true` si c'est la méthode servie par défaut quand `?methodology=` est absent."
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "Identifiant stable (`rte-direct`, `acv-ademe`)."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Couverture géographique servie."
+          },
+          "status": {
+            "type": "string",
+            "description": "`served` = interrogeable aujourd'hui ; `planned` = spécifiée mais pas\nencore servie (dépend d'une source à brancher)."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Version de la méthode (la version fait partie de son identité, ADR-0005).",
+            "minimum": 0
+          }
+        }
+      },
+      "MixBody": {
+        "type": "object",
+        "required": [
+          "nucleaire",
+          "gaz",
+          "charbon",
+          "fioul",
+          "hydraulique",
+          "eolien",
+          "solaire",
+          "bioenergies",
+          "pompage",
+          "echanges"
+        ],
+        "properties": {
+          "bioenergies": {
+            "type": "number",
+            "format": "double"
+          },
+          "charbon": {
+            "type": "number",
+            "format": "double"
+          },
+          "echanges": {
+            "type": "number",
+            "format": "double"
+          },
+          "eolien": {
+            "type": "number",
+            "format": "double"
+          },
+          "fioul": {
+            "type": "number",
+            "format": "double"
+          },
+          "gaz": {
+            "type": "number",
+            "format": "double"
+          },
+          "hydraulique": {
+            "type": "number",
+            "format": "double"
+          },
+          "nucleaire": {
+            "type": "number",
+            "format": "double"
+          },
+          "pompage": {
+            "type": "number",
+            "format": "double"
+          },
+          "solaire": {
+            "type": "number",
+            "format": "double"
+          },
+          "thermique": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Thermique fossile agrégé (mix régional uniquement ; omis au national)."
+          }
+        }
+      },
+      "MixResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/mix`.",
+        "required": [
+          "region",
+          "timestamp",
+          "unit",
+          "mix"
+        ],
+        "properties": {
+          "mix": {
+            "$ref": "#/components/schemas/MixBody"
+          },
+          "region": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "RenewableModelInfo": {
+        "type": "object",
+        "description": "Capacités effectives calibrées (transparence du modèle).",
+        "required": [
+          "wind_capacity_mw",
+          "solar_capacity_mw"
+        ],
+        "properties": {
+          "solar_capacity_mw": {
+            "type": "number",
+            "format": "double"
+          },
+          "wind_capacity_mw": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "RenewableResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/renewable` — production renouvelable **estimée** depuis la\nmétéo courante (modèle calibré, ADR-0018) + facteur de charge.",
+        "required": [
+          "source",
+          "at",
+          "wind_mw",
+          "solar_mw",
+          "wind_capacity_factor",
+          "solar_capacity_factor",
+          "model"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "description": "Instant de la météo utilisée (RFC 3339, UTC)."
+          },
+          "model": {
+            "$ref": "#/components/schemas/RenewableModelInfo",
+            "description": "Capacités effectives calibrées (transparence)."
+          },
+          "solar_capacity_factor": {
+            "type": "number",
+            "format": "double",
+            "description": "Facteur de charge solaire (0–1)."
+          },
+          "solar_mw": {
+            "type": "number",
+            "format": "double",
+            "description": "Solaire estimé (MW)."
+          },
+          "source": {
+            "type": "string",
+            "description": "Attribution (météo Open-Meteo CC-BY 4.0 ; valeurs modélisées)."
+          },
+          "wind_capacity_factor": {
+            "type": "number",
+            "format": "double",
+            "description": "Facteur de charge éolien (0–1) : part de la capacité installée réalisée."
+          },
+          "wind_mw": {
+            "type": "number",
+            "format": "double",
+            "description": "Éolien estimé (MW)."
+          }
+        }
+      },
+      "SavingsBody": {
+        "type": "object",
+        "description": "Économie carbone d'un créneau planifié vs « maintenant » (ADR-0014).",
+        "required": [
+          "now",
+          "scheduled",
+          "intensity_delta",
+          "reduction_percent"
+        ],
+        "properties": {
+          "absolute_saved_g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Économie absolue (gCO₂eq) si l'énergie du job (`energy_kwh`) est fournie."
+          },
+          "intensity_delta": {
+            "type": "number",
+            "format": "double",
+            "description": "Réduction d'intensité (gCO₂eq/kWh) : `now − scheduled`."
+          },
+          "now": {
+            "type": "number",
+            "format": "double",
+            "description": "Intensité « maintenant » (gCO₂eq/kWh)."
+          },
+          "reduction_percent": {
+            "type": "number",
+            "format": "double",
+            "description": "Réduction relative en pourcentage."
+          },
+          "scheduled": {
+            "type": "number",
+            "format": "double",
+            "description": "Intensité du créneau planifié (gCO₂eq/kWh)."
+          }
+        }
+      },
+      "ScheduleResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/schedule` : créneau retenu + économie vs maintenant.",
+        "required": [
+          "region",
+          "methodology",
+          "model",
+          "estimator",
+          "unit",
+          "start",
+          "end",
+          "average_intensity",
+          "savings"
+        ],
+        "properties": {
+          "average_intensity": {
+            "type": "number",
+            "format": "double",
+            "description": "Intensité moyenne prévue sur le créneau."
+          },
+          "end": {
+            "type": "string",
+            "description": "Fin du créneau planifié (RFC 3339, exclue)."
+          },
+          "estimator": {
+            "type": "string"
+          },
+          "methodology": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "savings": {
+            "$ref": "#/components/schemas/SavingsBody"
+          },
+          "start": {
+            "type": "string",
+            "description": "Début du créneau planifié (RFC 3339)."
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "SlotBody": {
+        "type": "object",
+        "description": "Un créneau de scheduling (résultat de `lowest-k` ou `below`).",
+        "required": [
+          "timestamp",
+          "intensity"
+        ],
+        "properties": {
+          "intensity": {
+            "type": "number",
+            "format": "double",
+            "description": "Intensité prévue du créneau (gCO₂eq/kWh), selon l'estimateur."
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        }
+      },
+      "SlotsResponse": {
+        "type": "object",
+        "description": "Réponse d'une liste de créneaux (`/v1/schedule/slots`, `/v1/intensity/below`).",
+        "required": [
+          "region",
+          "methodology",
+          "model",
+          "estimator",
+          "unit",
+          "count",
+          "slots"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "estimator": {
+            "type": "string",
+            "description": "Estimateur appliqué : `central` ou `prudent`."
+          },
+          "methodology": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string",
+            "description": "Identité versionnée du modèle de prévision (ex. `climatology@1`)."
+          },
+          "region": {
+            "type": "string"
+          },
+          "slots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SlotBody"
+            }
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "StatsBucket": {
+        "type": "object",
+        "required": [
+          "start",
+          "average",
+          "min",
+          "max",
+          "count"
+        ],
+        "properties": {
+          "average": {
+            "type": "number",
+            "format": "double"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "max": {
+            "type": "number",
+            "format": "double"
+          },
+          "min": {
+            "type": "number",
+            "format": "double"
+          },
+          "start": {
+            "type": "string"
+          }
+        }
+      },
+      "StatsResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/intensity/stats` : résumé sur l'intervalle, et série\nagrégée par pas si `interval` est fourni.",
+        "required": [
+          "region",
+          "from",
+          "to",
+          "unit",
+          "methodology",
+          "average",
+          "min",
+          "max",
+          "count"
+        ],
+        "properties": {
+          "average": {
+            "type": "number",
+            "format": "double"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "from": {
+            "type": "string"
+          },
+          "interval": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "intervals": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/StatsBucket"
+            }
+          },
+          "max": {
+            "type": "number",
+            "format": "double"
+          },
+          "methodology": {
+            "type": "string"
+          },
+          "min": {
+            "type": "number",
+            "format": "double"
+          },
+          "region": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "StreamEventBody": {
+        "type": "object",
+        "description": "Données d'un événement SSE `intensity` (`GET /v1/intensity/stream`, ADR-0014).",
+        "required": [
+          "region",
+          "timestamp",
+          "intensity",
+          "methodology",
+          "methodology_version",
+          "unit"
+        ],
+        "properties": {
+          "intensity": {
+            "type": "number",
+            "format": "double"
+          },
+          "methodology": {
+            "type": "string"
+          },
+          "methodology_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "region": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "VisitStatsResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/stats` et `POST /v1/stats/visit` : compteur de visiteurs.",
+        "required": [
+          "unique",
+          "total"
+        ],
+        "properties": {
+          "since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Premier jour comptabilisé (ISO `YYYY-MM-DD`), absent si aucun."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Visiteur-jours cumulés.",
+            "minimum": 0
+          },
+          "unique": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Visiteurs uniques (clés distinctes).",
+            "minimum": 0
+          }
+        }
+      },
+      "WeatherHistoryResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/weather/date` — série météo historique.",
+        "required": [
+          "source",
+          "from",
+          "to",
+          "count",
+          "points"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "from": {
+            "type": "string"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeatherPoint"
+            }
+          },
+          "source": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        }
+      },
+      "WeatherPoint": {
+        "type": "object",
+        "description": "Un créneau météo (vent à 100 m, irradiance), moyenne nationale.",
+        "required": [
+          "valid_at",
+          "run_at",
+          "wind_kmh",
+          "irradiance_wm2"
+        ],
+        "properties": {
+          "irradiance_wm2": {
+            "type": "number",
+            "format": "double",
+            "description": "Rayonnement solaire incident (W/m²), moyenne nationale."
+          },
+          "run_at": {
+            "type": "string",
+            "description": "Instant de production de la prévision (run)."
+          },
+          "valid_at": {
+            "type": "string",
+            "description": "Instant prévu (RFC 3339, UTC)."
+          },
+          "wind_kmh": {
+            "type": "number",
+            "format": "double",
+            "description": "Vent à 100 m (km/h), moyenne nationale."
+          }
+        }
+      },
+      "WeatherResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/weather` — météo nationale courante (ADR-0012/0018).",
+        "required": [
+          "source",
+          "valid_at",
+          "run_at",
+          "wind_kmh",
+          "irradiance_wm2"
+        ],
+        "properties": {
+          "irradiance_wm2": {
+            "type": "number",
+            "format": "double"
+          },
+          "run_at": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Attribution de la source (licence CC-BY 4.0)."
+          },
+          "valid_at": {
+            "type": "string"
+          },
+          "wind_kmh": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "WebhookListResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/webhooks`.",
+        "required": [
+          "count",
+          "webhooks"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "webhooks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookSummary"
+            }
+          }
+        }
+      },
+      "WebhookSummary": {
+        "type": "object",
+        "description": "Résumé d'un abonnement (sans le secret).",
+        "required": [
+          "id",
+          "region",
+          "threshold",
+          "direction",
+          "callback_url"
+        ],
+        "properties": {
+          "callback_url": {
+            "type": "string"
+          },
+          "direction": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "threshold": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "intensité",
+      "description": "Intensité carbone"
+    },
+    {
+      "name": "mix",
+      "description": "Mix de production"
+    },
+    {
+      "name": "échanges",
+      "description": "Échanges transfrontaliers (ENTSO-E, ADR-0017)"
+    },
+    {
+      "name": "météo",
+      "description": "Météo nationale (Open-Meteo CC-BY 4.0, ADR-0012/0018)"
+    },
+    {
+      "name": "renouvelable",
+      "description": "Dérivation renouvelable météo→production (ADR-0018)"
+    },
+    {
+      "name": "méthodologie",
+      "description": "Méthodes de calcul & facteurs (ADR-0010)"
+    },
+    {
+      "name": "prévision",
+      "description": "Prévision d'intensité (ADR-0009)"
+    },
+    {
+      "name": "usage",
+      "description": "Scheduling carbon-aware (ADR-0014)"
+    },
+    {
+      "name": "webhooks",
+      "description": "Abonnements webhook (ADR-0016, clé requise)"
+    },
+    {
+      "name": "opérations",
+      "description": "Exploitation & statistiques"
+    }
+  ]
+}

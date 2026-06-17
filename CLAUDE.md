@@ -137,6 +137,7 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 - ADR-0017 — **endpoint public des échanges transfrontaliers** (**Accepté, implémenté**) : `GET /v1/exchanges` (+ `/exchanges/date`) expose la donnée ENTSO-E déjà ingérée (flux net signé par frontière + intensité du voisin), projection de lecture pure (`GetCrossBorderExchanges`), sans nouvelle ingestion. `gb` absent (indispo ENTSO-E depuis le Brexit).
 - ADR-0018 — **dérivation renouvelable** (**Accepté, engagé**) : météo → production éolien/solaire via un intermédiaire physique explicable, capacités calibrées sur l'historique (`RenewableModel`, `calibrate_renewable`). Prouvé au backtest (×2,4/×3,4 vs baseline), exposé `GET /v1/renewable` (+ `/v1/weather` et historique, attribution Open-Meteo CC-BY 4.0). **Addendum** : la prévision d'intensité météo-pilotée (`forecast@N`) est **écartée** (gate mesuré : gain marginal sur le réseau FR nucléaire ; `analyze-renewable-signal`).
 - ADR-0019 — **politique de versionnement** (**Accepté, engagé**) : voir la section dédiée ci-dessous.
+- ADR-0020 — **politique de dépréciation** (**Accepté**) : on ne retire jamais un élément public (version d'API, endpoint, champ, méthodologie) sans préavis ; annonce via en-têtes `Deprecation` (RFC 9745) + `Sunset` (RFC 8594) + CHANGELOG + `deprecated` OpenAPI ; fenêtre ≥ 6 mois (post-1.0) / ≥ 30 j (pré-1.0). En-têtes **non implémentés tant que rien n'est déprécié** (pas de code mort) — l'utilitaire arrivera avec sa première dépréciation.
 
 ## Versionnement (ADR-0019)
 

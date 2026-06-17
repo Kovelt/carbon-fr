@@ -1,0 +1,73 @@
+name: Release (image Docker)
+
+# Construit et publie l'image de prod sur GHCR quand un tag `vX.Y.Z` est poussé.
+# Exemple : git tag v0.1.0 && git push origin v0.1.0  (ADR-0019)
+#
+# L'image est taguée par version SemVer (vX.Y.Z → X.Y.Z + X.Y) + `latest`.
+# Aucun secret : l'auth GHCR se fait via le GITHUB_TOKEN du workflow
+# (`packages: write`), même esprit OIDC/sans-jeton que release-sdk.yml.
+#
+# L'image déployée (VPS Kovelt, ADR-0007) se tire alors de :
+#   ghcr.io/kovelt/carbon-fr:X.Y.Z   (épingler la version exacte en prod)
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }} # Kovelt/carbon-fr → minusculé par metadata-action
+
+jobs:
+  image:
+    name: Build + push image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Garde-fou : le tag (vX.Y.Z) doit correspondre à la version du workspace
+      # (`[workspace.package] version`). Sinon on publierait une image mal nommée.
+      - name: Vérifier que le tag == version du workspace
+        run: |
+          WS_VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/^version *= *"(.*)".*/\1/')"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$WS_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME (=$TAG_VERSION) ≠ version workspace ($WS_VERSION)"
+            exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Métadonnées (tags + labels OCI)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - name: Build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache de couches partagé entre exécutions (le Dockerfile utilise déjà
+          # des cache mounts BuildKit pour le registre Cargo et target/).
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

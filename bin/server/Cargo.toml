@@ -1,6 +1,6 @@
 [package]
 name = "server"
-version = "0.0.0"
+version.workspace = true
 description = "Composition root de carbon-fr : câble les adapters, le poller et l'API."
 edition.workspace = true
 license.workspace = true

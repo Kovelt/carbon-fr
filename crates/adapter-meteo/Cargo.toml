@@ -1,6 +1,6 @@
 [package]
 name = "carbonfr-adapter-meteo"
-version = "0.0.0"
+version.workspace = true
 description = "Adapter sortant carbon-fr : prévision météo nationale (Open-Meteo) — entrée du futur modèle ML (ADR-0012)."
 edition.workspace = true
 license.workspace = true

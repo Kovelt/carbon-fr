@@ -1,6 +1,6 @@
 [package]
 name = "carbonfr-core"
-version = "0.0.0"
+version.workspace = true
 description = "Cœur métier de carbon-fr : domaine, cas d'usage et ports (architecture hexagonale, sans IO)."
 edition.workspace = true
 license.workspace = true

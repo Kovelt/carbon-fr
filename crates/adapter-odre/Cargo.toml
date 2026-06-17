@@ -1,6 +1,6 @@
 [package]
 name = "carbonfr-adapter-odre"
-version = "0.0.0"
+version.workspace = true
 description = "Adapter sortant carbon-fr : implémente Eco2mixSource via l'API ODRÉ (éCO2mix RTE)."
 edition.workspace = true
 license.workspace = true

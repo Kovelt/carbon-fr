@@ -28,7 +28,7 @@ jobs:
     name: Build + push image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # Garde-fou : le tag (vX.Y.Z) doit correspondre à la version du workspace
       # (`[workspace.package] version`). Sinon on publierait une image mal nommée.

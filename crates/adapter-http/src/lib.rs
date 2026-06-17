@@ -33,6 +33,10 @@
 //! Les endpoints `/v1` acceptent les paramètres optionnels `?region=<slug>`
 //! (national par défaut) et `?methodology=<id>` (`rte-direct` par défaut ;
 //! `acv-ademe` pour la vue cycle de vie, ADR-0008).
+//!
+//! Les **erreurs** suivent **Problem Details** (RFC 9457, `application/problem+json`) :
+//! `type`/`title`/`status`/`detail` + un `code` court et stable (ADR-0021, module
+//! `error`).
 
 mod auth;
 mod carbonfr_openapi;

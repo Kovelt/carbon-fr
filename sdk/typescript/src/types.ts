@@ -336,8 +336,20 @@ export interface WebhookListResponse {
   webhooks: WebhookSummary[];
 }
 
-/** Corps d'erreur standard de l'API. */
-export interface ErrorBody {
-  error: string;
-  message: string;
+/**
+ * Corps d'erreur de l'API, au format **Problem Details** (RFC 9457,
+ * `application/problem+json`). Le champ d'extension `code` est l'identifiant
+ * court **stable** sur lequel s'aligner (`no_data`, `bad_request`, …).
+ */
+export interface ProblemDetails {
+  /** Type de problème (URI) ; `about:blank` quand `status` + `code` suffisent. */
+  type: string;
+  /** Résumé court et lisible du type de problème. */
+  title: string;
+  /** Code de statut HTTP. */
+  status: number;
+  /** Explication lisible spécifique à cette occurrence. */
+  detail: string;
+  /** Code court stable et machine-lisible (extension carbon-fr). */
+  code: string;
 }

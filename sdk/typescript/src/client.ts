@@ -1,7 +1,7 @@
 import type {
   CreateWebhookRequest,
   CreatedWebhookResponse,
-  ErrorBody,
+  ProblemDetails,
   Estimator,
   ExchangesHistoryResponse,
   ExchangesResponse,
@@ -39,15 +39,22 @@ export interface CarbonFrOptions {
   fetch?: typeof fetch;
 }
 
-/** Erreur API : porte le code HTTP et le corps `{ error, message }`. */
+/**
+ * Erreur API : porte le code HTTP et le corps **Problem Details** (RFC 9457).
+ * `code` est l'identifiant court stable (`no_data`, `bad_request`, …) ; le
+ * message reprend `detail` (sinon `title`).
+ */
 export class CarbonFrError extends Error {
   readonly status: number;
   readonly code: string;
-  constructor(status: number, body: Partial<ErrorBody>) {
-    super(body.message ?? `HTTP ${status}`);
+  /** Corps Problem Details brut, si disponible. */
+  readonly problem: Partial<ProblemDetails>;
+  constructor(status: number, body: Partial<ProblemDetails>) {
+    super(body.detail ?? body.title ?? `HTTP ${status}`);
     this.name = "CarbonFrError";
     this.status = status;
-    this.code = body.error ?? "error";
+    this.code = body.code ?? "error";
+    this.problem = body;
   }
 }
 
@@ -399,9 +406,9 @@ export class CarbonFr {
   }
 
   private async toError(res: Response): Promise<CarbonFrError> {
-    let body: Partial<ErrorBody> = {};
+    let body: Partial<ProblemDetails> = {};
     try {
-      body = (await res.json()) as Partial<ErrorBody>;
+      body = (await res.json()) as Partial<ProblemDetails>;
     } catch {
       // Corps non-JSON.
     }

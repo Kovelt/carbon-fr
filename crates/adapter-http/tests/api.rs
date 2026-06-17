@@ -593,7 +593,30 @@ async fn missing_data_is_404() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     let body = json_body(response).await;
-    assert_eq!(body["error"], "no_data");
+    assert_eq!(body["code"], "no_data");
+}
+
+/// Le corps d'erreur suit RFC 9457 (Problem Details) : type média
+/// `application/problem+json` et champs `type`/`title`/`status`/`detail` + le
+/// code stable d'extension `code`.
+#[tokio::test]
+async fn errors_are_rfc9457_problem_json() {
+    let response = get(app(None), "/v1/intensity/now").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/problem+json"),
+    );
+
+    let body = json_body(response).await;
+    assert_eq!(body["type"], "about:blank");
+    assert_eq!(body["title"], "Donnée absente");
+    assert_eq!(body["status"], 404);
+    assert_eq!(body["code"], "no_data");
+    assert!(body["detail"].is_string());
 }
 
 #[tokio::test]
@@ -606,7 +629,7 @@ async fn unknown_region_is_400() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
     let body = json_body(response).await;
-    assert_eq!(body["error"], "bad_request");
+    assert_eq!(body["code"], "bad_request");
 }
 
 #[tokio::test]
@@ -657,7 +680,7 @@ async fn intensity_date_returns_series() {
 async fn intensity_date_missing_param_is_400() {
     let response = get(app(None), "/v1/intensity/date?from=1970-01-01T00:00:00Z").await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(json_body(response).await["error"], "bad_request");
+    assert_eq!(json_body(response).await["code"], "bad_request");
 }
 
 #[tokio::test]
@@ -844,14 +867,14 @@ async fn forecast_without_history_is_404() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    assert_eq!(json_body(response).await["error"], "no_data");
+    assert_eq!(json_body(response).await["code"], "no_data");
 }
 
 #[tokio::test]
 async fn forecast_horizon_too_large_is_400() {
     let response = get(app(None), "/v1/intensity/forecast?horizon_hours=100").await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(json_body(response).await["error"], "bad_request");
+    assert_eq!(json_body(response).await["code"], "bad_request");
 }
 
 #[tokio::test]

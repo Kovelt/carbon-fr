@@ -8,6 +8,11 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.2.0] - 2026-06-17
+
+Durcissement de maintenabilité d'API publique : contrat verrouillé, erreurs
+standardisées, observabilité et gouvernance de sécurité.
+
 ### Ajouté
 
 - **Garde-fou de contrat OpenAPI** : un instantané commité (`openapi.snapshot.json`)

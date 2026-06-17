@@ -29,7 +29,7 @@ use crate::dto::{
     StatsResponse, StreamEventBody, VisitStatsResponse, WeatherHistoryResponse, WeatherResponse,
     WebhookListResponse,
 };
-use crate::error::{ApiError, ErrorBody};
+use crate::error::{ApiError, ProblemDetails};
 use crate::{AppState, ForecastState};
 use std::convert::Infallible;
 
@@ -126,8 +126,8 @@ fn parse_timestamp(name: &str, raw: &str) -> Result<OffsetDateTime, ApiError> {
     params(RegionQuery),
     responses(
         (status = 200, description = "Dernière mesure", body = IntensityResponse),
-        (status = 400, description = "Région ou méthodologie invalide", body = ErrorBody),
-        (status = 404, description = "Aucune donnée", body = ErrorBody),
+        (status = 400, description = "Région ou méthodologie invalide", body = ProblemDetails),
+        (status = 404, description = "Aucune donnée", body = ProblemDetails),
     ),
     tag = "intensité"
 )]
@@ -167,8 +167,8 @@ where
     params(RegionQuery),
     responses(
         (status = 200, description = "Mix de production (MW)", body = MixResponse),
-        (status = 400, description = "Région ou méthodologie invalide", body = ErrorBody),
-        (status = 404, description = "Aucune donnée / mix indisponible", body = ErrorBody),
+        (status = 400, description = "Région ou méthodologie invalide", body = ProblemDetails),
+        (status = 404, description = "Aucune donnée / mix indisponible", body = ProblemDetails),
     ),
     tag = "mix"
 )]
@@ -201,7 +201,7 @@ where
     path = "/v1/exchanges",
     responses(
         (status = 200, description = "Échanges transfrontaliers courants", body = ExchangesResponse),
-        (status = 404, description = "Aucune donnée d'échange disponible", body = ErrorBody),
+        (status = 404, description = "Aucune donnée d'échange disponible", body = ProblemDetails),
     ),
     tag = "échanges"
 )]
@@ -225,7 +225,7 @@ where
     params(HistoryQuery),
     responses(
         (status = 200, description = "Série historique des échanges", body = ExchangesHistoryResponse),
-        (status = 400, description = "Bornes manquantes ou invalides", body = ErrorBody),
+        (status = 400, description = "Bornes manquantes ou invalides", body = ProblemDetails),
     ),
     tag = "échanges"
 )]
@@ -267,7 +267,7 @@ where
     path = "/v1/weather",
     responses(
         (status = 200, description = "Météo nationale courante", body = WeatherResponse),
-        (status = 404, description = "Aucune donnée météo disponible", body = ErrorBody),
+        (status = 404, description = "Aucune donnée météo disponible", body = ProblemDetails),
     ),
     tag = "météo"
 )]
@@ -290,7 +290,7 @@ where
     params(HistoryQuery),
     responses(
         (status = 200, description = "Série météo historique", body = WeatherHistoryResponse),
-        (status = 400, description = "Bornes manquantes ou invalides", body = ErrorBody),
+        (status = 400, description = "Bornes manquantes ou invalides", body = ProblemDetails),
     ),
     tag = "météo"
 )]
@@ -334,8 +334,8 @@ where
     path = "/v1/renewable",
     responses(
         (status = 200, description = "Production renouvelable estimée + facteur de charge", body = RenewableResponse),
-        (status = 404, description = "Aucune météo disponible", body = ErrorBody),
-        (status = 503, description = "Modèle renouvelable non calibré", body = ErrorBody),
+        (status = 404, description = "Aucune météo disponible", body = ProblemDetails),
+        (status = 503, description = "Modèle renouvelable non calibré", body = ProblemDetails),
     ),
     tag = "renouvelable"
 )]
@@ -378,7 +378,7 @@ pub(crate) struct HistoryQuery {
     params(HistoryQuery),
     responses(
         (status = 200, description = "Série chronologique", body = HistoryResponse),
-        (status = 400, description = "Paramètre invalide ou fenêtre > 366 jours", body = ErrorBody),
+        (status = 400, description = "Paramètre invalide ou fenêtre > 366 jours", body = ProblemDetails),
     ),
     tag = "intensité"
 )]
@@ -465,8 +465,8 @@ pub(crate) struct StatsQuery {
     params(StatsQuery),
     responses(
         (status = 200, description = "Résumé (et série si interval)", body = StatsResponse),
-        (status = 400, description = "Paramètre invalide", body = ErrorBody),
-        (status = 404, description = "Aucune donnée sur l'intervalle", body = ErrorBody),
+        (status = 400, description = "Paramètre invalide", body = ProblemDetails),
+        (status = 404, description = "Aucune donnée sur l'intervalle", body = ProblemDetails),
     ),
     tag = "intensité"
 )]
@@ -592,8 +592,8 @@ pub(crate) struct ForecastQuery {
     params(ForecastQuery),
     responses(
         (status = 200, description = "Série prévue", body = ForecastResponse),
-        (status = 400, description = "Paramètre invalide", body = ErrorBody),
-        (status = 404, description = "Historique insuffisant pour prévoir", body = ErrorBody),
+        (status = 400, description = "Paramètre invalide", body = ProblemDetails),
+        (status = 404, description = "Historique insuffisant pour prévoir", body = ProblemDetails),
     ),
     tag = "prévision"
 )]
@@ -679,8 +679,8 @@ fn resolve_estimator(raw: &Option<String>) -> Result<WindowEstimator, ApiError> 
     params(GreenestWindowQuery),
     responses(
         (status = 200, description = "Créneau le plus bas-carbone", body = GreenestWindowResponse),
-        (status = 400, description = "Paramètre invalide", body = ErrorBody),
-        (status = 404, description = "Série insuffisante pour déterminer un créneau", body = ErrorBody),
+        (status = 400, description = "Paramètre invalide", body = ProblemDetails),
+        (status = 404, description = "Série insuffisante pour déterminer un créneau", body = ProblemDetails),
     ),
     tag = "prévision"
 )]
@@ -759,8 +759,8 @@ pub(crate) struct ScheduleQuery {
     params(ScheduleQuery),
     responses(
         (status = 200, description = "Créneau planifié + économie", body = ScheduleResponse),
-        (status = 400, description = "Paramètre invalide", body = ErrorBody),
-        (status = 404, description = "Série insuffisante", body = ErrorBody),
+        (status = 400, description = "Paramètre invalide", body = ProblemDetails),
+        (status = 404, description = "Série insuffisante", body = ProblemDetails),
     ),
     tag = "usage"
 )]
@@ -835,7 +835,7 @@ pub(crate) struct SlotsQuery {
     params(SlotsQuery),
     responses(
         (status = 200, description = "Créneaux les moins intenses", body = SlotsResponse),
-        (status = 400, description = "Paramètre invalide", body = ErrorBody),
+        (status = 400, description = "Paramètre invalide", body = ProblemDetails),
     ),
     tag = "usage"
 )]
@@ -897,7 +897,7 @@ pub(crate) struct BelowQuery {
     params(BelowQuery),
     responses(
         (status = 200, description = "Créneaux sous le seuil", body = SlotsResponse),
-        (status = 400, description = "Paramètre invalide", body = ErrorBody),
+        (status = 400, description = "Paramètre invalide", body = ProblemDetails),
     ),
     tag = "usage"
 )]
@@ -965,7 +965,7 @@ pub(crate) struct StreamQuery {
     params(StreamQuery),
     responses(
         (status = 200, description = "Flux SSE d'événements `intensity` (text/event-stream)"),
-        (status = 400, description = "Région invalide", body = ErrorBody),
+        (status = 400, description = "Région invalide", body = ProblemDetails),
     ),
     tag = "usage"
 )]
@@ -1037,8 +1037,8 @@ async fn authenticate_owner<R: ApiKeyRepository>(
     request_body = CreateWebhookRequest,
     responses(
         (status = 201, description = "Abonnement créé (secret affiché une fois)", body = CreatedWebhookResponse),
-        (status = 400, description = "Paramètre invalide ou URL refusée (anti-SSRF)", body = ErrorBody),
-        (status = 401, description = "Clé API requise/inconnue", body = ErrorBody),
+        (status = 400, description = "Paramètre invalide ou URL refusée (anti-SSRF)", body = ProblemDetails),
+        (status = 401, description = "Clé API requise/inconnue", body = ProblemDetails),
     ),
     tag = "webhooks"
 )]
@@ -1096,7 +1096,7 @@ where
     path = "/v1/webhooks",
     responses(
         (status = 200, description = "Abonnements de la clé", body = WebhookListResponse),
-        (status = 401, description = "Clé API requise/inconnue", body = ErrorBody),
+        (status = 401, description = "Clé API requise/inconnue", body = ProblemDetails),
     ),
     tag = "webhooks"
 )]
@@ -1119,8 +1119,8 @@ where
     params(("id" = String, Path, description = "Identifiant d'abonnement")),
     responses(
         (status = 204, description = "Supprimé"),
-        (status = 401, description = "Clé API requise/inconnue", body = ErrorBody),
-        (status = 404, description = "Abonnement introuvable", body = ErrorBody),
+        (status = 401, description = "Clé API requise/inconnue", body = ProblemDetails),
+        (status = 404, description = "Abonnement introuvable", body = ProblemDetails),
     ),
     tag = "webhooks"
 )]
@@ -1225,7 +1225,7 @@ pub(crate) async fn health() -> &'static str {
     path = "/health/ready",
     responses(
         (status = 200, description = "Base accessible", body = String),
-        (status = 503, description = "Base indisponible", body = ErrorBody),
+        (status = 503, description = "Base indisponible", body = ProblemDetails),
     ),
     tag = "opérations"
 )]
@@ -1274,7 +1274,7 @@ pub(crate) struct FactorsQuery {
     params(FactorsQuery),
     responses(
         (status = 200, description = "Table des facteurs", body = FactorsResponse),
-        (status = 400, description = "Méthode sans table de facteurs", body = ErrorBody),
+        (status = 400, description = "Méthode sans table de facteurs", body = ProblemDetails),
     ),
     tag = "méthodologie"
 )]

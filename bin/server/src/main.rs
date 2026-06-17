@@ -50,6 +50,8 @@
 //! | `CARBONFR_LOG_FORMAT`        | (texte)        | `json` pour des logs structurés (prod) |
 //! | `RUST_LOG`                   | `info`         | filtre de logs (`tracing`)        |
 
+mod metrics;
+
 use std::net::SocketAddr;
 
 use anyhow::Context;
@@ -79,6 +81,7 @@ use carbonfr_core::ports::{
     CrossBorderSource, Eco2mixArchive, Eco2mixSource, IntensityRepository, Notifier,
     SubscriptionRepository, WeatherForecastSource, WeatherRepository, WebhookDelivery,
 };
+use metrics::Metrics;
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, Month, OffsetDateTime};
 use tokio::net::TcpListener;
@@ -147,6 +150,9 @@ async fn run_server() -> anyhow::Result<()> {
     // nationale, les connexions SSE s'y abonnent. Canal mémoire (poller intégré) ;
     // pour un bin/poller séparé (ADR-0007), basculer sur LISTEN/NOTIFY.
     let (updates_tx, _) = tokio::sync::broadcast::channel(64);
+    // Métriques d'exploitation (Prometheus `/metrics`) : le poller les alimente,
+    // le handler les rend. `build_info` porte la version du binaire (ADR-0019).
+    let metrics = Metrics::new(env!("CARGO_PKG_VERSION"));
     let poller = spawn_poller(
         source,
         weather,
@@ -154,6 +160,7 @@ async fn run_server() -> anyhow::Result<()> {
         repo.clone(),
         updates_tx.clone(),
         config.poll_interval,
+        metrics.clone(),
     );
 
     // Watcher de webhooks (ADR-0016) : s'abonne au même flux que le SSE, détecte
@@ -182,7 +189,13 @@ async fn run_server() -> anyhow::Result<()> {
         state = state.with_visit_salt(salt);
     }
     let stream_state = StreamState::new(updates_tx);
-    let mut app = router(state, forecast_state, stream_state);
+    // `/metrics` (hors contrat `/v1`, comme `/health`) : exposition Prometheus en
+    // texte, pas du JSON versionné → fusionnée ici plutôt que dans le routeur de
+    // l'adapter. En prod, restreindre l'accès au scrapeur côté reverse proxy.
+    let metrics_router = axum::Router::new()
+        .route("/metrics", axum::routing::get(serve_metrics))
+        .with_state(metrics);
+    let mut app = router(state, forecast_state, stream_state).merge(metrics_router);
 
     // Tier hébergé (ADR-0015) : middleware clés API + quota, **opt-in**. Désactivé
     // par défaut → l'API reste anonyme et sans limite (parité self-hosting).
@@ -221,6 +234,20 @@ async fn run_server() -> anyhow::Result<()> {
     poller.abort();
     webhook_watcher.abort();
     serve_result
+}
+
+/// `GET /metrics` — exposition Prometheus (text format 0.0.4). Hors du contrat
+/// `/v1` (endpoint d'exploitation, comme `/health`).
+async fn serve_metrics(
+    axum::extract::State(metrics): axum::extract::State<Metrics>,
+) -> impl axum::response::IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        metrics.render(),
+    )
 }
 
 /// Construit l'état du middleware d'auth/quota si le tier hébergé est **activé**
@@ -1248,6 +1275,7 @@ fn spawn_poller<S, W, C, R>(
     repo: R,
     updates: tokio::sync::broadcast::Sender<IntensityUpdate>,
     interval: std::time::Duration,
+    metrics: Metrics,
 ) -> JoinHandle<()>
 where
     S: Eco2mixSource + ConsumptionSource + Clone + 'static,
@@ -1270,12 +1298,20 @@ where
             // (acv-ademe). Une région en échec ne bloque pas les autres.
             let mut written = 0usize;
             for region in std::iter::once(Region::National).chain(Region::METROPOLITAN) {
+                // Un appel ODRÉ par région : compté pour suivre le quota (50k/mois).
+                metrics.add_upstream_odre(1);
                 match ingest.execute(region).await {
                     Ok(n) => written += n,
                     Err(err) => {
+                        metrics.inc_error();
                         warn!(region = region.slug(), error = %err, "échec d'ingestion ODRÉ")
                     }
                 }
+            }
+            metrics.inc_cycle();
+            metrics.add_written(written);
+            if written > 0 {
+                metrics.set_last_success(OffsetDateTime::now_utc().unix_timestamp());
             }
             info!(written, "ingestion ODRÉ (national + régions)");
 
@@ -1283,11 +1319,13 @@ where
             // nationale `rte-direct` aux abonnés SSE. `send` échoue sans abonné —
             // sans conséquence (canal sans rétention forte).
             if let Ok(Some(m)) = repo.latest(Region::National, "rte-direct").await {
+                metrics.set_last_measurement(m.at.unix_timestamp());
                 let _ = updates.send(IntensityUpdate::from_measurement(&m));
             }
 
             // Charge nationale : consommation récente + prévisions RTE — entrée
             // du futur modèle ML (ADR-0012).
+            metrics.add_upstream_odre(1);
             match source.recent_loads(Region::National).await {
                 Ok(loads) if !loads.is_empty() => match repo.upsert_loads(&loads).await {
                     Ok(n) => info!(loads = n, "ingestion charge (conso + prévisions)"),
@@ -1299,6 +1337,7 @@ where
 
             // Prévision météo nationale (vent + irradiance, ADR-0012) : chaque
             // cycle enregistre un nouveau `run_at` (historique anti-fuite).
+            metrics.inc_upstream_open_meteo();
             match weather.current_forecast().await {
                 Ok(forecasts) if !forecasts.is_empty() => {
                     match repo.upsert_weather(&forecasts).await {
@@ -1314,6 +1353,7 @@ where
             // calcul `acv-ademe@2`. Optionnel : seulement si un token est
             // configuré. Échec non bloquant.
             if let Some(entsoe) = cross_border.as_ref() {
+                metrics.inc_upstream_entsoe();
                 match entsoe.recent_flows().await {
                     Ok(snapshots) if !snapshots.is_empty() => {
                         match repo.upsert_flows(&snapshots).await {

@@ -15,11 +15,11 @@ use std::sync::{Arc, Mutex};
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Json, Response};
+use axum::response::Response;
 use carbonfr_core::ports::{ApiKeyRepository, ApiTier};
 use sha2::{Digest, Sha256};
 
-use crate::error::ErrorBody;
+use crate::error::problem_response;
 
 /// Limites de débit par niveau (requêtes par minute), ADR-0015 §5.
 #[derive(Debug, Clone, Copy)]
@@ -158,8 +158,13 @@ fn current_minute() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp() / 60
 }
 
-fn error_response(status: StatusCode, code: &'static str, message: &str) -> Response {
-    (status, Json(ErrorBody::new(code, message.to_string()))).into_response()
+fn error_response(
+    status: StatusCode,
+    code: &'static str,
+    title: &'static str,
+    message: &str,
+) -> Response {
+    problem_response(status, code, title, message.to_string())
 }
 
 /// Middleware d'authentification + quota. À appliquer via
@@ -180,6 +185,7 @@ pub async fn enforce(State(state): State<AuthState>, request: Request, next: Nex
                     return error_response(
                         StatusCode::UNAUTHORIZED,
                         "unauthorized",
+                        "Non autorisé",
                         "clé API inconnue",
                     );
                 }
@@ -187,6 +193,7 @@ pub async fn enforce(State(state): State<AuthState>, request: Request, next: Nex
                     return error_response(
                         StatusCode::SERVICE_UNAVAILABLE,
                         "unavailable",
+                        "Service indisponible",
                         "vérification de la clé impossible",
                     );
                 }
@@ -224,6 +231,7 @@ pub async fn enforce(State(state): State<AuthState>, request: Request, next: Nex
             let mut response = error_response(
                 StatusCode::TOO_MANY_REQUESTS,
                 "rate_limited",
+                "Quota dépassé",
                 "quota dépassé",
             );
             let h = response.headers_mut();

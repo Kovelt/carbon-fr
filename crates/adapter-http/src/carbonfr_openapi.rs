@@ -78,7 +78,7 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::dto::WebhookSummary,
         crate::dto::VisitStatsResponse,
         crate::dto::StreamEventBody,
-        crate::error::ErrorBody,
+        crate::error::ProblemDetails,
     )),
     tags(
         (name = "intensité", description = "Intensité carbone"),
@@ -220,7 +220,7 @@ mod tests {
             "RenewableResponse",
             "ForecastResponse",
             "StreamEventBody",
-            "ErrorBody",
+            "ProblemDetails",
         ] {
             assert!(
                 components.schemas.contains_key(schema),

@@ -12,8 +12,9 @@ ghcr.io/kovelt/carbon-fr:X.Y     ← suit les patchs de la mineure
 ghcr.io/kovelt/carbon-fr:latest  ← dernier tag publié
 ```
 
+L'image est **publique** : `docker pull` sans authentification.
+
 ```bash
-# tirer une version (image publique, ou après `docker login ghcr.io` avec un PAT read:packages)
 docker pull ghcr.io/kovelt/carbon-fr:0.1.0
 docker run --rm ghcr.io/kovelt/carbon-fr:0.1.0 --version   # → carbonfr-server 0.1.0
 ```

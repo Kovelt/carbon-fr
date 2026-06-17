@@ -8,6 +8,11 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.1.0] - 2026-06-17
+
+Première release publique. Image de production sur GHCR
+(`ghcr.io/kovelt/carbon-fr:0.1.0`), déployée sur VPS FR/EU.
+
 ### Performance & infra (audit, lot 5)
 
 - **Rollups incrémentaux** (migration `0010`) : les vues matérialisées (rafraîchies

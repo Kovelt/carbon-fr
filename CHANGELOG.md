@@ -8,6 +8,28 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté
+
+- **Garde-fou de contrat OpenAPI** : un instantané commité (`openapi.snapshot.json`)
+  est comparé en CI au document généré ; toute évolution du contrat `/v1` devient un
+  acte volontaire visible dans le diff (ADR-0019).
+- **`SECURITY.md`** : politique de signalement de faille (privé via GitHub).
+- **Politique de dépréciation** (ADR-0020) : cycle de vie public Actif → Déprécié →
+  Retiré, annonce via en-têtes `Deprecation` (RFC 9745) + `Sunset` (RFC 8594), fenêtre
+  de retrait ≥ 6 mois (post-1.0) / ≥ 30 j (pré-1.0).
+- **`.github/dependabot.yml`** : mises à jour de dépendances (cargo, npm SDK, actions).
+- **Observabilité** (ADR-0022) : endpoint `GET /metrics` (format Prometheus, hors `/v1`) —
+  fraîcheur du poller, volume/erreurs d'ingestion, appels amont par source (proxy de
+  quota), `build_info`. Registre maison, zéro dépendance.
+
+### Modifié
+
+- **Format d'erreur → Problem Details (RFC 9457)** (ADR-0021) : les réponses d'erreur
+  passent de `{error, message}` (`application/json`) à `application/problem+json`
+  (`type`/`title`/`status`/`detail` + extension **`code`** stable). **Rupture** de
+  contrat assumée pré-1.0. Le **SDK** (`@carbon-fr/sdk`) est mis à jour en conséquence
+  (`CarbonFrError.code`/`.message`, `ProblemDetails`).
+
 ## [0.1.0] - 2026-06-17
 
 Première release publique. Image de production sur GHCR

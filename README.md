@@ -91,6 +91,8 @@ Tous les endpoints `/v1` acceptent `?region=<slug>` (national par défaut) et `?
 
 La spécification **OpenAPI 3.1** (dérivée du code via `utoipa`) est servie sous **`GET /v1/openapi.json`**, et une **Swagger UI** sous **`GET /docs`**. Une collection **[Bruno](https://www.usebruno.com/)** versionnée (dossier [`bruno/`](bruno/)) couvre tous les endpoints (cas nominaux + erreurs).
 
+Les **erreurs** suivent **[RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)** (`application/problem+json`) : `type`/`title`/`status`/`detail` + un champ `code` court et **stable** (`no_data`, `bad_request`…) sur lequel s'aligner.
+
 Un compteur de consultation sobre est exposé (**`GET /v1/stats`**, **`POST /v1/stats/visit`**) : l'IP n'est **jamais** stockée — seule une empreinte **SHA-256 salée** sert à dédupliquer (unique par IP/jour), RGPD-friendly.
 
 > Couverture **National + 12 régions métropolitaines**. Le `taux_co2` publié par RTE (`rte-direct`) n'existe qu'au national ; l'intensité **régionale** est dérivée via `acv-ademe` (cycle de vie appliqué au mix régional, ADR-0008). `acv-ademe@1` est **basée production** ; `acv-ademe@2` **consumption-based** (imports valorisés à l'intensité du voisin via ENTSO-E + pertes T&D, ADR-0010) est servie au national via `?methodology=acv-ademe&version=2`.
@@ -167,7 +169,7 @@ docker build -t carbon-fr .
 docker run -e DATABASE_URL=postgres://… -e CARBONFR_VISIT_SALT=… -p 8080:8080 carbon-fr
 ```
 
-Configuration via variables d'environnement — voir [`.env.example`](.env.example). Sondes : `GET /health` (liveness) et `GET /health/ready` (vérifie la base). Les migrations sont appliquées au démarrage.
+Configuration via variables d'environnement — voir [`.env.example`](.env.example). Sondes : `GET /health` (liveness) et `GET /health/ready` (vérifie la base). Métriques **Prometheus** sous `GET /metrics` (fraîcheur du poller, volume ingéré, appels amont — à restreindre au scrapeur côté proxy en prod). Les migrations sont appliquées au démarrage.
 
 ## Méthodologie & données
 

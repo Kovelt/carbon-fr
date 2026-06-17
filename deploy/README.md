@@ -59,3 +59,26 @@ labels:
 ```
 
 Avec, côté service, **`CARBONFR_TRUST_PROXY=1`** (Traefik est le proxy de confiance) et un **`CARBONFR_VISIT_SALT`** secret (sinon le serveur refuse de démarrer en mode proxy). Les migrations s'appliquent au démarrage ; sondes `GET /health` (liveness) et `GET /health/ready` (vérifie la base).
+
+### Restreindre `/metrics` (exploitation, non public)
+
+`GET /metrics` (Prometheus, ADR-0022) est un endpoint **d'exploitation** : il n'expose aucun secret, mais n'a pas vocation à être public. Deux niveaux, à combiner :
+
+1. **Scraper en interne, sans passer par Traefik** (recommandé) : si Prometheus tourne dans la même stack, il scrute directement le service sur le réseau Docker — `http://carbonfr:8080/metrics` — et `/metrics` n'a alors **aucune** raison d'être routé publiquement.
+
+2. **Bloquer `/metrics` sur l'entrée publique** (défense en profondeur, même si la DNS pointe sur l'hôte). Routeur **dédié et prioritaire** pour le préfixe `/metrics`, derrière une *allow-list* d'IP internes (middleware `ipAllowList`, Traefik v3) — un client public tombe sur `403` :
+
+```yaml
+  # /metrics : routeur dédié, prioritaire, restreint aux IP internes.
+  - "traefik.http.routers.carbonfr-metrics.entrypoints=websecure"
+  - "traefik.http.routers.carbonfr-metrics.rule=Host(`carbon-fr-api.${DOMAIN}`) && PathPrefix(`/metrics`)"
+  - "traefik.http.routers.carbonfr-metrics.priority=100"   # > routeur principal → gagne sur /metrics
+  - "traefik.http.routers.carbonfr-metrics.tls=true"
+  - "traefik.http.routers.carbonfr-metrics.tls.certresolver=letsencrypt"
+  - "traefik.http.routers.carbonfr-metrics.service=carbonfr"
+  - "traefik.http.routers.carbonfr-metrics.middlewares=carbonfr-metrics-allow"
+  # Plages privées RFC 1918 (réseau Docker / hôte de supervision) — ajuster au besoin.
+  - "traefik.http.middlewares.carbonfr-metrics-allow.ipallowlist.sourcerange=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+```
+
+> ⚠️ `ipAllowList` filtre sur l'**IP source vue par Traefik**. Si Traefik est lui-même derrière un autre balanceur, régler `ipallowlist.ipstrategy.depth` pour lire la bonne IP dans `X-Forwarded-For` (sinon l'allow-list verrait l'IP du balanceur, pas celle du client). Le routeur principal `carbonfr` (rule `Host(...)` seule, priorité = longueur de règle) reste plus bas que `priority=100` : `/metrics` part donc bien sur le routeur restreint, tout le reste sur le routeur public.

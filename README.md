@@ -6,6 +6,7 @@
 
 L'équivalent français de [carbonintensity.org.uk](https://carbonintensity.org.uk/), bâti sur les données ouvertes RTE / éCO2mix via [ODRÉ](https://odre.opendatasoft.com/).
 
+[![Release](https://img.shields.io/github/v/release/Kovelt/carbon-fr?label=release&color=brightgreen)](https://github.com/Kovelt/carbon-fr/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#licence)
 [![Rust](https://img.shields.io/badge/rust-edition%202024-orange.svg)](https://www.rust-lang.org/)
 [![Statut](https://img.shields.io/badge/statut-en%20production-brightgreen.svg)](#feuille-de-route)

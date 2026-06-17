@@ -16,7 +16,8 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
 #[openapi(
     info(
         title = "carbon-fr",
-        version = "0.0.0",
+        // La version est câblée dynamiquement dans `document()` sur la version de
+        // la crate (`CARGO_PKG_VERSION`) — pas de placeholder qui se périme.
         description = "Intensité carbone (gCO₂eq/kWh) de l'électricité française, \
                        d'après les données ouvertes RTE/éCO2mix (ODRÉ). Couverture : \
                        National + 12 régions. Méthodologies : `rte-direct` (estimation \
@@ -96,7 +97,11 @@ pub(crate) struct ApiDoc;
 
 /// Document OpenAPI généré depuis le code.
 pub(crate) fn document() -> OpenApiDoc {
-    ApiDoc::openapi()
+    let mut doc = ApiDoc::openapi();
+    // Version de l'API = version de la crate (ADR-0019, version unique de
+    // workspace). Évite tout placeholder figé visible sur `/docs`.
+    doc.info.version = env!("CARGO_PKG_VERSION").to_string();
+    doc
 }
 
 /// `GET /v1/openapi.json` — la spécification OpenAPI.

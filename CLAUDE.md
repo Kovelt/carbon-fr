@@ -136,6 +136,20 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 - ADR-0015 — **tier hébergé** (**Accepté, engagé**) : clés API (`Bearer`) en **middleware de bord** (`core` intact, port `ApiKeyRepository` sur Postgres), **anonyme conservé par défaut** (auth opt-in, self-hosting préservé), payant = extension future non-bloquante. Débloque les webhooks (fournit l'*ownership*). **Tranche A livrée** : middleware `enforce` (401/429 + en-têtes `RateLimit-*`), quota fenêtre-minute en mémoire, table `api_key`, sous-commande `mint-key`, opt-in via `CARBONFR_RATELIMIT_ENABLED`. **À venir** : `UsageMeter` persistant + webhooks.
 - ADR-0017 — **endpoint public des échanges transfrontaliers** (**Accepté, implémenté**) : `GET /v1/exchanges` (+ `/exchanges/date`) expose la donnée ENTSO-E déjà ingérée (flux net signé par frontière + intensité du voisin), projection de lecture pure (`GetCrossBorderExchanges`), sans nouvelle ingestion. `gb` absent (indispo ENTSO-E depuis le Brexit).
 - ADR-0018 — **dérivation renouvelable** (**Accepté, engagé**) : météo → production éolien/solaire via un intermédiaire physique explicable, capacités calibrées sur l'historique (`RenewableModel`, `calibrate_renewable`). Prouvé au backtest (×2,4/×3,4 vs baseline), exposé `GET /v1/renewable` (+ `/v1/weather` et historique, attribution Open-Meteo CC-BY 4.0). **Addendum** : la prévision d'intensité météo-pilotée (`forecast@N`) est **écartée** (gate mesuré : gain marginal sur le réseau FR nucléaire ; `analyze-renewable-signal`).
+- ADR-0019 — **politique de versionnement** (**Accepté, engagé**) : voir la section dédiée ci-dessous.
+
+## Versionnement (ADR-0019)
+
+**Quatre axes découplés, aucun ne pilote les autres** :
+
+1. **Version applicative** — SemVer **unique de workspace** (`[workspace.package] version` dans `Cargo.toml` racine, héritée par toutes les crates via `version.workspace = true`). Pas de version par crate (les crates ne sont **pas** publiées sur crates.io ; le service se distribue en image Docker). Pré-`1.0` tant que des ruptures internes restent possibles.
+2. **Contrat d'API** — l'URL `/v1` ; on bump vers `/v2` **seulement** sur rupture, et les versions coexistent (ADR-0007/0011).
+3. **Méthodologies & modèles** — version **portée par la donnée** (`rte-direct`, `acv-ademe@1`/`@2`, `climatology@1`, `gbdt@1`), **immuable une fois publiée** (ADR-0005/0006/0009).
+4. **SDK** — `@carbon-fr/sdk`, tag `sdk-v*`, suit le **contrat d'API** (pas le code serveur).
+
+Invariant : `v0.4.2` (code) ≠ `/v1` (contrat) ≠ `acv-ademe@2` (donnée) ≠ `sdk-v0.1.0` (client).
+
+**Release applicative** : `git tag vX.Y.Z` (doit refléter la version du workspace — garde-fou CI) → le workflow `release.yml` construit et **publie l'image sur GHCR** taguée `X.Y.Z`/`X.Y`/`latest` (`ghcr.io/kovelt/carbon-fr`, publique). Le binaire expose sa version au démarrage (log) et via `--version`. En prod : **épingler une version exacte** (rollback = redéployer le tag précédent). La version OpenAPI servie sur `/docs` est câblée sur `CARGO_PKG_VERSION`.
 
 ## État d'avancement
 

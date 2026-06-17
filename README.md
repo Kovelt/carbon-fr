@@ -8,7 +8,7 @@ L'équivalent français de [carbonintensity.org.uk](https://carbonintensity.org.
 
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#licence)
 [![Rust](https://img.shields.io/badge/rust-edition%202024-orange.svg)](https://www.rust-lang.org/)
-[![Statut](https://img.shields.io/badge/statut-phases%201--4%20livr%C3%A9es-brightgreen.svg)](#feuille-de-route)
+[![Statut](https://img.shields.io/badge/statut-en%20production-brightgreen.svg)](#feuille-de-route)
 [![Architecture](https://img.shields.io/badge/architecture-hexagonale-6f42c1.svg)](docs/ARCHITECTURE.md)
 
 </div>
@@ -27,6 +27,45 @@ L'intensité carbone du réseau électrique français (en **gCO₂eq/kWh**) est 
 - 🔬 **Méthodologie versionnée** — chaque mesure porte sa méthode de calcul (`rte-direct` et `acv-ademe` — cycle de vie production **et** consommation), jamais de changement silencieux.
 - 🔮 **Prévision comme valeur ajoutée** — l'intensité prévisionnelle n'existe pas à la source : `carbon-fr` la modélise derrière un port dédié (`climatology@1`, gardée par backtest).
 - ⏱️ **Carbon-aware & live** — primitives de scheduling (créneau sous échéance, *lowest-k*, seuil, économie), flux **SSE**, et **webhooks** signés (sur clé API).
+
+## Utiliser l'API
+
+**Aucune installation** : l'instance hébergée répond tout de suite. L'intensité carbone courante du réseau national, en une requête :
+
+```bash
+curl https://carbon-fr-api.kovelt.fr/v1/intensity/now
+```
+
+```json
+{
+  "region": "national",
+  "timestamp": "2026-06-17T06:30:00Z",
+  "intensity": { "value": 20.0, "unit": "gCO2eq/kWh" },
+  "methodology": "rte-direct",
+  "methodology_version": 1,
+  "vintage": "tr"
+}
+```
+
+Ajoute `?region=<slug>` pour l'une des 12 régions, ou `?methodology=acv-ademe` pour le cycle de vie (cf. [Fonctionnalités](#fonctionnalités)).
+
+🌐 **Dans le navigateur** — explore et essaie tous les endpoints depuis la **Swagger UI** : **[carbon-fr-api.kovelt.fr/docs](https://carbon-fr-api.kovelt.fr/docs)**.
+
+📦 **En TypeScript / JavaScript** — le SDK officiel ([`@carbon-fr/sdk`](sdk/typescript/), zéro dépendance runtime) :
+
+```bash
+npm install @carbon-fr/sdk
+```
+
+```ts
+import { CarbonFr } from "@carbon-fr/sdk";
+
+const cf = new CarbonFr(); // instance hébergée par défaut
+const now = await cf.intensityNow();
+console.log(now.intensity.value, now.intensity.unit); // 20 gCO2eq/kWh
+```
+
+<!-- TODO: capture /docs -->
 
 ## Fonctionnalités
 
@@ -102,9 +141,9 @@ carbon-fr/
     └── adr/                    # Architecture Decision Records
 ```
 
-## Démarrage rapide
+## Développer / contribuer
 
-Prérequis : [Rust](https://www.rust-lang.org/tools/install) (edition 2024, `cargo` ≥ 1.85).
+Pour travailler sur `carbon-fr` lui-même (et non simplement consommer l'API). Prérequis : [Rust](https://www.rust-lang.org/tools/install) (edition 2024, `cargo` ≥ 1.85).
 
 ```bash
 git clone git@github.com:Kovelt/carbon-fr.git

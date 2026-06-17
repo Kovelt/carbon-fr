@@ -171,6 +171,43 @@ mod tests {
         }
     }
 
+    /// Garde-fou de **contrat**. L'OpenAPI servi sous `/v1` est une promesse
+    /// faite à des consommateurs externes qu'on ne peut pas prévenir. Ce test
+    /// fige le document généré dans un instantané commité
+    /// (`tests/openapi.snapshot.json`) : toute évolution du contrat (chemin,
+    /// schéma, champ, code de retour) fait échouer la CI et devient un acte
+    /// *volontaire*, visible dans le diff de la PR. La version applicative —
+    /// axe orthogonal au contrat (ADR-0019) — est neutralisée pour ne pas casser
+    /// l'instantané à chaque release.
+    ///
+    /// Après un changement de contrat **intentionnel**, régénérer puis relire le
+    /// diff dans la PR :
+    /// `UPDATE_OPENAPI_SNAPSHOT=1 cargo test -p carbonfr-adapter-http openapi_contract_snapshot`
+    #[test]
+    fn openapi_contract_snapshot() {
+        let mut doc = document();
+        // Découple le contrat de la version applicative (ADR-0019).
+        doc.info.version = "{{version}}".to_string();
+        let actual = serde_json::to_string_pretty(&doc).expect("sérialisation OpenAPI");
+
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/openapi.snapshot.json");
+
+        if std::env::var_os("UPDATE_OPENAPI_SNAPSHOT").is_some() {
+            std::fs::write(path, format!("{actual}\n")).expect("écriture de l'instantané");
+            return;
+        }
+
+        let expected = std::fs::read_to_string(path).unwrap_or_default();
+        assert_eq!(
+            actual.trim(),
+            expected.trim(),
+            "\n\nLe contrat OpenAPI /v1 a changé par rapport à l'instantané commité.\n\
+             • si c'est INVOLONTAIRE : c'est une rupture de contrat, corrige le code ;\n\
+             • si c'est VOLONTAIRE : régénère l'instantané et relis son diff dans ta PR :\n    \
+             UPDATE_OPENAPI_SNAPSHOT=1 cargo test -p carbonfr-adapter-http openapi_contract_snapshot\n"
+        );
+    }
+
     #[test]
     fn document_lists_schemas() {
         let doc = document();

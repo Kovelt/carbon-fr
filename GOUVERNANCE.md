@@ -83,7 +83,7 @@ Ces jobs deviennent les **status checks requis** de la protection de `main`. La 
 | `CLAUDE.md` | Contexte/conventions pour Claude Code | ✅ présent |
 | `.github/workflows/ci.yml` | CI (fmt, clippy, test + PostgreSQL) | ✅ présent |
 | `GOUVERNANCE.md` | Gouvernance & workflow (ce document) | ✅ présent |
-| `SECURITY.md` | Signalement de faille (en privé) | ⬜ à ajouter |
+| `SECURITY.md` | Signalement de faille (en privé) | ✅ présent |
 | `.github/dependabot.yml` | MAJ dépendances + alertes sécurité | ⬜ à ajouter |
 | `.github/ISSUE_TEMPLATE/` + `PULL_REQUEST_TEMPLATE.md` | Gabarits issues/PR | ⬜ à ajouter |
 | `CHANGELOG.md` | Journal des versions | ✅ présent |

@@ -141,3 +141,30 @@ Les **licences** ont été confirmées (recherche du 2026-06-20, §licences) : p
 **Pré-conditions de gouvernance restantes (non bloquantes)** : (1) trouver une 2e source **licence-compatible pour le nucléaire neuf** (lèverait la dernière asymétrie de couverture) ; (2) une **contre-source France** pour les EnR (réduirait l'asymétrie géographique FR/mondial) ; (3) sourçage fin des hypothèses des 2e sources (CRE + IRENA portent `None`) ; (4) re-millésimer les points uniques IRENA (hydro 52,7 ; biomasse 80,4).
 
 VERDICT-GLOBAL (re-jeu n°3) : **GREEN**.
+
+---
+
+## Addendum — Re-jeu n°4 du GATE (2026-06-20) : 2e source FR renouvelables → **ROUGE → changement annulé**
+
+**Objet :** tentative d'ajout d'une **2e source française** aux renouvelables (prix de soutien Cour des comptes « Le soutien aux EnR via les CSPE », mars 2026 + prix d'appels d'offres CRE, via une base dédiée `support-price`), pour réduire l'asymétrie géographique FR/monde héritée du re-jeu n°3. Sources licence-compatibles (CRPA, sans clause NC).
+
+| Bloc | Verdict |
+|---|---|
+| Bloc 2 — Non-verdict | pass |
+| Bloc 3 — Provenance | pass |
+| Bloc 4 — Test adverse (pro-nucléaire) | pass |
+| Bloc 4 — Test adverse (anti-nucléaire) | pass |
+| **Bloc 1 — Commensurabilité** | **FAIL** |
+| **Bloc 4 — Test aveugle** | **FAIL** |
+
+**Bloc 1 (FAIL) :** co-lister la grande hydro amortie (ADEME 15) et la petite hydro sous soutien (Cour 125) sous une **seule** filière `Hydraulique` reproduit la non-commensurabilité que l'ADR a corrigée pour le nucléaire en *scindant* la techno (« jamais fusionnés », §2). Le `basis` + le disclaimer en prose sont un traitement **plus faible** que ce précédent maison → mord sur un choix de conception.
+
+**Bloc 4 (FAIL) :** enrichir les **seuls** renouvelables porte leur `technology_source_count` à **3** (uniforme) vs **2** (nucléaire existant) / **1** (neuf) → un lecteur aveugle partitionne nucléaire/renouvelable au seul compte de sources, et le neuf (mono-source, le plus cher) devient un « phare » structurel. Le rééquilibrage (ajouter des sources au nucléaire) est **bloqué par les licences NC** (IPCC/NEA/IEA).
+
+Les deux critiques adverses (pro **et** anti-nucléaire) **passent** et s'effondrent symétriquement (la base `support-price` étiquette honnêtement la nature ; les prix de soutien FR *relèvent* les bornes EnR, effet non auto-servant) — mais le **critère strict** du GATE exige que **tous** les blocs passent. Deux blocs mordent sur la conception.
+
+**Décision (Principe 0) :** la neutralité ne pouvant être garantie, **le changement est annulé** (modifs `cost.rs` non livrées). L'état VERT (re-jeu n°3, **v0.3.2**) est conservé. L'asymétrie géographique FR/monde des renouvelables est **assumée** (déjà jugée *content-blind* au re-jeu n°3 — IRENA, la source la plus pro-EnR, est incluse). 
+
+**Constat utile :** l'enrichissement FR des renouvelables, bien qu'intuitif, **dégrade** la neutralité au regard des critères du GATE tant que le nucléaire n'est pas multi-sourçable. La contre-source FR redeviendra envisageable **une fois** une 2e source nucléaire licence-compatible disponible (pour garder les comptes de sources symétriques).
+
+VERDICT-GLOBAL (re-jeu n°4) : **RED → changement non livré**.

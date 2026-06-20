@@ -8,6 +8,8 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.3.0] - 2026-06-20
+
 ### Ajouté
 
 - **Prix de l'électricité** (ADR-0023) : `GET /v1/price` et `GET /v1/price/date` —

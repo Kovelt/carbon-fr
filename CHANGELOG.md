@@ -8,6 +8,8 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.3.2] - 2026-06-20
+
 ### Ajouté
 
 - **`/v1/cost-reference` — dispersion inter-sources (multi-sources)**. 2e source par

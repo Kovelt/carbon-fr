@@ -27,15 +27,30 @@
 /// (ADR-0024 §5). Aucune source n'est privilégiée par défaut ; l'équilibre
 /// méthodologique prime.
 ///
-/// **Critère d'inclusion uniforme (revue 2026-06-20)** : on ré-encode des
-/// *chiffres-faits* publiés tant que la licence **n'interdit pas** la réutilisation
-/// commerciale. ADEME = Licence Ouverte (jeu réutilisable) ; Cour des comptes / RTE
-/// = rapports d'institutions publiques, sans clause d'interdiction (chiffres
-/// réutilisables comme faits). Sont **écartées** les sources dont la licence
-/// **interdit explicitement** la réutilisation commerciale (AIE, CC-BY-NC) ou qui
-/// sont entièrement propriétaires (Lazard) — motif *interdiction de licence*,
-/// indépendant du résultat. La souveraineté (France-first) est une **préférence de
-/// contexte**, jamais le motif disqualifiant.
+/// **Critère d'inclusion & fondement de réutilisation (recherche licences
+/// 2026-06-20).** On ne réutilise que des *chiffres-faits* — **non protégés par le
+/// droit d'auteur** (CPI L112-1, dichotomie idée/expression) — **ré-encodés** dans
+/// la structure propre [`CostEstimate`], jamais les tableaux/figures/texte des
+/// rapports, et en **petit nombre** par filière (≠ extraction substantielle d'une
+/// base, CPI L341-1/L342-3). Fondement **par source** :
+/// - **ADEME** = **Licence Ouverte / Etalab 2.0** (réutilisation commerciale
+///   explicitement permise avec attribution) — confiance haute.
+/// - **Cour des comptes** = pas de licence ouverte nommée sur `ccomptes.fr`, mais
+///   conditions du site **sans clause non commerciale** + **CRPA art. L321-1** et s.
+///   (réutilisation des informations publiques, y compris commerciale) — confiance
+///   moyenne.
+/// - **RTE** = mentions légales du **rapport restrictives** (accord écrit pour le
+///   « contenu ») → la réutilisation des chiffres repose **uniquement** sur « faits
+///   non protégés + extraction non substantielle », **PAS** sur une Licence Ouverte
+///   du rapport (les jeux open data RTE le sont, mais la valeur EPR2 vient du
+///   rapport) — confiance moyenne, **risque résiduel réel**.
+///
+/// Sont **écartées** les sources dont la licence **interdit** le commercial (AIE,
+/// CC BY-NC) ou entièrement propriétaires (Lazard) — motif *licence*, indépendant
+/// du résultat. La souveraineté (France-first) est une **préférence de contexte**,
+/// jamais le motif disqualifiant. ⚠️ Recherche best-effort, **pas un avis
+/// juridique** ; pour un **palier payant** s'appuyant sur la donnée RTE, une
+/// confirmation écrite de RTE est recommandée (ADR-0024 §risques + revue de neutralité).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CostSource {
     /// ADEME — *Coûts des EnR&R en France* (renouvelables).
@@ -63,21 +78,24 @@ impl CostSource {
         }
     }
 
-    /// Attribution / référence de la source (réutilisation des **chiffres**, pas
-    /// des tableaux ; licences à confirmer pour CdC/RTE — ADR-0024 §risques).
+    /// Attribution / référence de la source. **Seuls des chiffres-faits sont
+    /// ré-encodés** (jamais les tableaux/figures/texte) ; le fondement de
+    /// réutilisation diffère par source (cf. doc de [`CostSource`]).
     pub fn attribution(self) -> &'static str {
         match self {
             CostSource::Ademe => {
                 "ADEME, « Coûts des énergies renouvelables et de récupération en France » \
-                 (Licence Ouverte / Etalab)"
+                 (Licence Ouverte / Etalab 2.0) — chiffres-faits ré-encodés par carbon-fr"
             }
             CostSource::CourDesComptes => {
                 "Cour des comptes, rapports sur les coûts de la filière nucléaire \
-                 (document public ; licence formelle à confirmer)"
+                 (www.ccomptes.fr) — chiffres-faits ré-encodés ; réutilisation au titre du \
+                 CRPA art. L321-1, source citée, sens non altéré"
             }
             CostSource::Rte => {
-                "RTE, « Futurs énergétiques 2050 » \
-                 (données RTE largement en Licence Ouverte ; termes du rapport à confirmer)"
+                "RTE, « Futurs énergétiques 2050 » (Bilan prévisionnel, rte-france.com) — \
+                 chiffres-faits ré-encodés ; valeur issue du rapport (mentions légales \
+                 restrictives), non d'un jeu sous Licence Ouverte ; source citée, sens non altéré"
             }
         }
     }

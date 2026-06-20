@@ -8,6 +8,20 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Modifié
+
+- **`/v1/cost-reference` — licences confirmées** (recherche 2026-06-20, sources
+  primaires). Pré-condition « licences CdC/RTE » de l'ADR-0024 **levée sous
+  conditions**. L'attribution servie (`source_attribution`) est corrigée pour
+  refléter le vrai fondement de réutilisation : ADEME = Licence Ouverte / Etalab 2.0 ;
+  Cour des comptes = CRPA art. L321-1 + absence de clause non commerciale ; **RTE =
+  non-protection des faits (CPI L112-1) + extraction non substantielle** — la mention
+  antérieure « données RTE largement en Licence Ouverte » était **inexacte** (la
+  valeur vient du rapport, aux mentions légales restrictives). Conditions : chiffres-
+  faits uniquement, attribution nominative, lien externe ; **confirmation écrite RTE
+  recommandée avant un palier payant** sur sa donnée. ADR-0024 (§5, §risques, statut)
+  et revue de neutralité (§licences) mis à jour. *Best-effort, pas un avis juridique.*
+
 ## [0.3.1] - 2026-06-20
 
 ### Modifié

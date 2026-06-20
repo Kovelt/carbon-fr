@@ -1,10 +1,10 @@
 # ADR-0025 — Extension au vecteur hydrogène : couche carbon-aware « électrolyseur » et cadres d'éligibilité RFNBO / bas-carbone
 
-- **Statut** : Accepté
+- **Statut** : Accepté — **couche A implémentée** (méthodologie détaillée : ADR-0026)
 - **Date** : 2026-06-20
 - **Décideurs** : Morgan (Kovelt / carbon-fr)
 - **ADR liés** : ADR-0003 (périmètre de données), ADR-0005 (méthodologie carbone), ADR-0006 (cycle de vie des révisions de données), ADR-0014 (primitives de scheduling carbon-aware)
-- **Suite pressentie** : ADR-0026 (méthodologie détaillée des overlays d'éligibilité)
+- **Suite** : ADR-0026 (méthodologie détaillée des overlays d'éligibilité) — **rédigée et acceptée**
 
 ---
 

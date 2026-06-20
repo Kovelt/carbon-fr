@@ -754,12 +754,15 @@ impl FactorsResponse {
     }
 }
 
-/// Avertissement best-effort sur la construction réglementaire (ADR-0023 §risques).
+/// Avertissement sur la construction réglementaire (ADR-0023).
 const PRICE_DISCLAIMER: &str = "Décomposition ancrée sur le Tarif Réglementé de Vente \
-(empilement publié par la CRE). La composante énergie est le prix spot day-ahead (ENTSO-E), \
-factuel et horaire ; les composantes réglementaires (acheminement TURPE, accise, TVA, résidu) \
-sont des valeurs de référence versionnées, best-effort millésime 2026 et à confirmer auprès de \
-la CRE/RTE. carbon-fr ne formule aucun jugement sur ces composantes.";
+(empilement publié par la CRE), profil résidentiel BT ≤ 36 kVA option Base (6 kVA, ~2 400 kWh/an). \
+La composante énergie est le prix spot day-ahead (ENTSO-E), factuel et horaire ; les composantes \
+réglementaires sont des valeurs de référence versionnées (millésime 2026) sourcées : accise \
+30,85 €/MWh (CRE délib. 2026-06 + BOFiP), TVA 20 % (BOFiP), commercialisation 18,11 €/MWh HT (CRE \
+délib. 2026-06), acheminement dérivé du TURPE 7 (CRE délib. 2025-78). L'acheminement en €/MWh est \
+une conversion dépendant du profil et de la ventilation horaire (≈ 78 €/MWh, plage 53–116). \
+carbon-fr ne formule aucun jugement sur ces composantes.";
 
 /// Réponse de `GET /v1/price` — décomposition complète du prix payé (ADR-0023).
 ///

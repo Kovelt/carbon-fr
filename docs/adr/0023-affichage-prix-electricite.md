@@ -95,7 +95,7 @@ Création d'un endpoint dédié `/price` plutôt qu'enrichissement de `/mix`. Ju
 
 ### Risques / points ouverts (actions de gouvernance avant implémentation)
 1. **Licence de réutilisation ENTSO-E** : vérifier les conditions de réutilisation des données day-ahead de la Transparency Platform (cohérence avec l'exigence de pureté de licence). Un ADR ou une clause dédiée peut être requis, comme pour Open-Meteo.
-2. **Sources CRE (TURPE, TRV, taxes)** : confirmer disponibilité en open data et conditions de réutilisation ; figer les références exactes de la **formule TRV post-2026**.
+2. ~~**Sources CRE (TURPE, TRV, taxes)** : confirmer disponibilité et figer les références exactes de la formule TRV post-2026.~~ **Sourcé (2026-06-20).** Valeurs millésime 2026 figées dans `TrvReference::trv_2026` à partir de sources primaires : **TURPE 7** (CRE délib. n°2025-78 du 13/03/2025, grille au 1/8/2025 → ≈ 78 €/MWh pour 6 kVA / 2 400 kWh) ; **accise** 30,85 €/MWh (CRE délib. TRVE 2026 n°2026-06 du 14/01/2026 + BOFiP `BOI-RES-EAT-000240`) ; **commercialisation** 18,11 €/MWh HT (même délib. n°2026-06) ; **TVA** 20 % unique (BOFiP `ACTU-2025-00057`, le taux réduit 5,5 % a été supprimé par la LF 2025). *Caveats* : l'acheminement en €/MWh est une conversion dépendant du profil (6 kVA / 2 400 kWh retenus) ; au 2e semestre 2026 le TURPE est revalorisé (+3,04 % au 1/8/2026) et l'accise peut être réindexée → re-millésimer le cas échéant.
 3. ~~**Forme d'exposition** : ratifier `/price` vs enrichissement `/mix`.~~ **Tranché (2026-06-20) : `/price`.**
 4. **Emplacement de la technologie marginale** : `/mix` (dérivé composition) référencé par `/price`, à trancher à l'implémentation.
 

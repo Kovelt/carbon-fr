@@ -8,6 +8,17 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Modifié
+
+- **`/v1/price` — valeurs réglementaires 2026 sourcées** (remplacent les
+  placeholders best-effort de la 0.3.0). `TrvReference::trv_2026` :
+  accise **30,85 €/MWh** (CRE délib. TRVE 2026 n°2026-06 + BOFiP `BOI-RES-EAT-000240`),
+  TVA **20 %** unique (BOFiP `ACTU-2025-00057` ; le taux réduit 5,5 % a été supprimé),
+  commercialisation **18,11 €/MWh HT** (CRE délib. n°2026-06), acheminement **≈ 78 €/MWh**
+  dérivé du **TURPE 7** (CRE délib. n°2025-78) pour un profil 6 kVA / ~2 400 kWh/an.
+  L'acheminement en €/MWh reste une conversion profil-dépendante (plage 53–116) ;
+  TURPE +3,04 % au 1/8/2026 et accise possiblement réindexée au 2e semestre → à re-millésimer.
+
 ## [0.3.0] - 2026-06-20
 
 ### Ajouté

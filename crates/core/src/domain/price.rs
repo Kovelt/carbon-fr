@@ -41,45 +41,61 @@ impl SpotPrice {
 /// Construction réglementée du TRV (empilement publié par la CRE), **versionnée**
 /// par période de validité (millésime) — ADR-0023 §2.
 ///
-/// Constante de domaine, **pas une dépendance IO** : les valeurs sont sourçables
-/// et la donnée reste reproductible historiquement (clé = période de validité).
+/// Constante de domaine, **pas une dépendance IO** : les valeurs sont sourcées et
+/// la donnée reste reproductible historiquement (clé = période de validité).
 ///
-/// ⚠️ **Valeurs best-effort millésime 2026, à confirmer/sourcer** (CRE/RTE) avant
-/// publication ferme — analogue au `TD_LOSS_FACTOR_V1` (ADR-0010). Les montants
-/// au MWh consommé supposent un profil de consommation résidentiel BT ≤ 36 kVA
-/// (Tarif Bleu). Tout changement de valeur = **nouveau millésime** (jamais de
-/// mutation silencieuse d'un millésime publié, ADR-0005/0019).
+/// Valeurs **millésime 2026 sourcées** auprès de la CRE et du BOFiP (cf.
+/// [`TrvReference::trv_2026`]). Les montants au MWh consommé visent un profil
+/// résidentiel **BT ≤ 36 kVA, option Base, 6 kVA, ~2 400 kWh/an** (facture-type
+/// CRE). Tout changement de valeur = **nouveau millésime** (jamais de mutation
+/// silencieuse d'un millésime publié, ADR-0005/0019).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrvReference {
     /// Période de validité (millésime), ex. `"2026"`.
     pub vintage: &'static str,
-    /// Acheminement (TURPE 6, fixé par la CRE) ramené au kWh consommé, en €/MWh.
-    /// TODO à sourcer : grille TURPE 6 en vigueur 2026 + profil de soutirage.
+    /// Acheminement (TURPE 7, fixé par la CRE) ramené au kWh consommé, en €/MWh.
+    /// **Valeur dérivée** d'un barème €/an + c€/kWh (cf. [`TrvReference::trv_2026`]) :
+    /// la conversion en €/MWh dépend du profil et de la ventilation horaire.
     pub turpe_eur_mwh: f64,
-    /// Accise sur l'électricité (ex-TICFE/CSPE), en €/MWh.
-    /// TODO à confirmer : taux post-LF 2025/2026 (tarif normal résidentiel).
+    /// Accise sur l'électricité (ex-TICFE/CSPE), en €/MWh — tarif normal ménages.
     pub accise_eur_mwh: f64,
     /// Composante commercialisation / **résidu** structurel de la construction
     /// réglementée du TRV, en €/MWh — pas un chiffre libre (ADR-0023 §2).
-    /// TODO à sourcer : résidu de l'empilement TRV publié par la CRE.
     pub commercialisation_eur_mwh: f64,
-    /// Taux de TVA appliqué à la base de consommation. Simplification best-effort
-    /// (20 %) : la TVA réelle est scindée (5,5 % sur l'abonnement + la CTA,
-    /// 20 % sur la consommation). TODO affiner la ventilation.
+    /// Taux de TVA appliqué à la base de consommation. **20 % unique** sur toute
+    /// la facture HT depuis la LF 2025 (le taux réduit 5,5 % sur l'abonnement a
+    /// été supprimé) — BOFiP ACTU-2025-00057.
     pub tva_rate: f64,
 }
 
 impl TrvReference {
-    /// Empilement TRV **best-effort millésime 2026** (Tarif Bleu, BT ≤ 36 kVA).
+    /// Empilement TRV **millésime 2026** (Tarif Bleu, résidentiel BT ≤ 36 kVA,
+    /// option Base, profil de référence 6 kVA / ~2 400 kWh/an). Valeurs sourcées.
     ///
-    /// Valeurs **à confirmer/sourcer** auprès de la CRE/RTE (voir champs). Ordre
-    /// de grandeur d'un TTC ≈ 20 c€/kWh selon la composante énergie spot du jour.
+    /// **Sources primaires** (consultées 2026-06-20) :
+    /// - **TURPE 7 HTA-BT** — CRE délib. n°2025-78 (13/03/2025), grille en vigueur
+    ///   au 1er août 2025 (applicable janv.–juil. 2026 ; +3,04 % au 1/8/2026).
+    ///   Conversion : part fixe = gestion 16,80 + comptage Linky 22,00 +
+    ///   6 kVA × 10,11 = **99,46 €/an** → 41,4 €/MWh à 2 400 kWh ; + part variable
+    ///   réseau (plages CU4) ≈ 36 €/MWh ⇒ **≈ 78 €/MWh** (plage défendable 53–116
+    ///   selon la ventilation horaire — confiance « moyenne » sur la conversion).
+    /// - **Accise** = **30,85 €/MWh** (ménages, tarif normal, au 1/2/2026 ; base
+    ///   25,19 + majoration de péréquation ZNI 5,66, facturée à tous) — CRE délib.
+    ///   TRVE 2026 n°2026-06 (14/01/2026) + BOFiP BOI-RES-EAT-000240. Évolution :
+    ///   33,70 (1/2/2025) → 29,98 (1/8/2025) → 30,85 (2026).
+    /// - **Commercialisation** = **18,11 €/MWh HT** (résidentiel) — CRE délib.
+    ///   n°2026-06 (empilement TRVE 2026).
+    /// - **TVA** = **20 %** unique — BOFiP ACTU-2025-00057.
+    ///
+    /// ⚠️ Caveats : `turpe_eur_mwh` est une **conversion** dépendant du profil
+    /// (6 kVA / 2 400 kWh retenus) ; au 2e semestre 2026 le TURPE est revalorisé
+    /// (+3,04 %) et l'accise peut être réindexée — à re-millésimer le cas échéant.
     pub const fn trv_2026() -> Self {
         Self {
             vintage: "2026",
-            turpe_eur_mwh: 60.0,
-            accise_eur_mwh: 33.70,
-            commercialisation_eur_mwh: 20.0,
+            turpe_eur_mwh: 78.0,
+            accise_eur_mwh: 30.85,
+            commercialisation_eur_mwh: 18.11,
             tva_rate: 0.20,
         }
     }

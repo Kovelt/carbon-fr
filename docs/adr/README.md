@@ -35,6 +35,7 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0023](0023-affichage-prix-electricite.md) | Affichage du prix de l'électricité : décomposition ancrée TRV, endpoint `/price` (énergie spot ENTSO-E + TURPE + taxes + résidu) | Accepté |
 | [0024](0024-couche-comparative-lcoe.md) | Couche comparative LCOE (`/cost-reference`) : cadre de neutralité, fourchette multi-sources, GATE bloquant | Accepté (GATE) |
 | [0024-revue](0024-revue-neutralite.md) | Revue de neutralité — Couche comparative LCOE (ADR-0024), évaluation adversariale multi-agents | Neutralité confirmée (GREEN) |
+| [0025](0025-extension-hydrogene-carbon-aware.md) | Extension hydrogène : couche carbon-aware « électrolyseur » & cadres d'éligibilité RFNBO / bas-carbone | Accepté (non implémenté) |
 
 ## Gabarit
 

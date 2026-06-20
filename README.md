@@ -195,7 +195,7 @@ Outre le serveur, le binaire expose des **sous-commandes** *one-shot* : `backfil
 - [x] **Phase 3 — Prévision** : `climatology@1` (backtest, calibration des intervalles) → `/forecast` + `/greenest-window`.
 - [x] **Phase 4 — Enrichissement & usage** : `acv-ademe@2` consumption-based (ENTSO-E) · prévision `acv-ademe` · scheduling carbon-aware + SSE · clés API + quota · webhooks signés. *(ML GBDT exploré, gardé par backtest ; raffinements ouverts.)*
 - [x] **Phase 5 — Enrichissement, déploiement & SDK** : échanges transfrontaliers (`/v1/exchanges`), météo (`/v1/weather`), dérivation renouvelable (`/v1/renewable`) ; **prix de l'électricité** (`/v1/price`, décomposition TRV, ADR-0023) + **couche comparative LCOE** (`/v1/cost-reference`, ADR-0024) ; **déployé** sur VPS FR/EU (Traefik + PostgreSQL) ; **SDK TypeScript** (`@carbon-fr/sdk`).
-- [ ] **À venir** : SDK Rust ; site statique (o2switch) ; `UsageMeter` persistant.
+- [ ] **À venir** : SDK Rust ; site statique (o2switch) ; `UsageMeter` persistant ; **extension hydrogène carbon-aware** (overlay « électrolyseur » RFNBO / bas-carbone au-dessus de `/greenest-window`, [ADR-0025](docs/adr/0025-extension-hydrogene-carbon-aware.md)).
 
 ## Contribuer
 

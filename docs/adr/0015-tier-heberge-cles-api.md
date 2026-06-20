@@ -109,3 +109,14 @@ Décider « cible = tier gratuit » **n'oblige pas à le construire tout de suit
 - Granularité et rétention du métering (`UsageMeter`).
 - Surface de gestion : endpoint `/v1/keys` vs petit portail sur le site statique (o2switch, ADR-0007).
 - Ordre des travaux (anonyme d'abord, clés ensuite) — la direction est posée, pas le calendrier.
+
+## Addendum (2026-06-20) — Modèle de financement & déclencheur du payant
+
+Précision de **positionnement** (sans modifier la décision : §7 « payant = extension future non-bloquante » reste valable). Elle clarifie *pourquoi* et *dans quel cas* le payant existerait.
+
+- **Le cœur reste gratuit, ouvert, auto-hébergeable.** carbon-fr re-sert de la **donnée publique ouverte** (RTE/ODRÉ/ADEME, Licence Ouverte) ; on ne **paywall jamais** la donnée ni la mesure. C'est l'ADN du projet (modèle revendiqué : carbonintensity.org.uk, gratuit).
+- **Financement de la maintenance : priorité au sponsoring / fonds publics** (État, associations) — logique d'intérêt général. C'est la voie privilégiée pour couvrir les coûts d'exploitation (VPS, temps).
+- **Le tier payant n'a de sens que comme garde-fou de bande passante.** Son **unique** déclencheur légitime : un **consommateur commercial** qui **sature le quota / la bande passante** de l'instance hébergée. Le payant est alors de la **récupération de coût / fair-use** ciblée sur ces gros usages — il **protège le commun** au lieu de le fermer. Ce n'est ni une monétisation de la donnée, ni un *upsell* généralisé : l'anonyme gratuit et le self-hosting restent la norme.
+- **Conséquence inter-ADR :** la précaution « confirmation écrite de réutilisation à demander à RTE avant un palier payant » (ADR-0024 §risques) reste **en veille** — elle ne se réactive que si un tel tier payant venait à s'appuyer spécifiquement sur la donnée **RTE**. Tant que le service est gratuit/d'intérêt général, la réutilisation des chiffres-faits publics est couverte sans démarche commerciale (CRPA + faits non protégés).
+
+En somme : **gratuit par nature, payant par exception** (et seulement contre l'abus de bande passante commercial), sans jamais déplacer la barrière devant la donnée ou la mesure.

@@ -15,13 +15,13 @@ ghcr.io/kovelt/carbon-fr:latest  ← dernier tag publié
 L'image est **publique** : `docker pull` sans authentification.
 
 ```bash
-docker pull ghcr.io/kovelt/carbon-fr:0.1.0
-docker run --rm ghcr.io/kovelt/carbon-fr:0.1.0 --version   # → carbonfr-server 0.1.0
+docker pull ghcr.io/kovelt/carbon-fr:0.3.2
+docker run --rm ghcr.io/kovelt/carbon-fr:0.3.2 --version   # → carbonfr-server 0.3.2
 ```
 
 **Toujours épingler une version exacte en prod** (pas `latest`) : on sait quel build répond, et le rollback = redéployer le tag précédent. Le binaire logue sa version au démarrage (`info … version=…`) et répond à `--version`.
 
-Cadrer une release : `git tag v0.2.0 && git push origin v0.2.0` (le workflow vérifie que le tag correspond à la version du workspace, puis construit et pousse l'image).
+Cadrer une release : `git tag v0.3.3 && git push origin v0.3.3` (le workflow vérifie que le tag correspond à la version du workspace, puis construit et pousse l'image).
 
 > **Build local** plutôt que tirer l'image : possible via le [`Dockerfile`](../Dockerfile) (`docker build -t carbon-fr .`) — utile pour un fork ou un patch non publié.
 

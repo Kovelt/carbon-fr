@@ -29,3 +29,10 @@ Utiliser **PostgreSQL natif, sans extension** :
 
 - **TimescaleDB Apache-2** : hypertables + compression en Apache, mais **sans agrégats continus** (TSL). On prendrait la contrainte d'une extension sans le bénéfice ergonomique qui la justifie — le pire compromis ici.
 - **TimescaleDB Community (TSL)** : agrégats continus + rétention automatiques (ergonomie maximale), mais licence source-available **non OSI** et clause « pas de DBaaS ». Entorse directe au positionnement souverain/OSS, et visible dans un repo public.
+
+## Addendum (2026-06-20) — implémentation des rollups
+
+La décision (PostgreSQL natif, sans extension) reste valide. Deux points d'implémentation ont évolué depuis :
+
+- **Rollups** : d'abord des **vues matérialisées** (migration `0002`), puis remplacées par de **vraies tables incrémentales** upsertées par seau (migration `0010_rollups_incremental.sql`). Le rafraîchissement n'est donc plus complet mais ciblé sur les seaux touchés ; la surface de lecture est inchangée.
+- **Partitionnement déclaratif + index `BRIN`** : **reportés** (la table `measurement` reste simple, cf. commentaire de la migration `0001`). À reconsidérer maintenant que l'historique complet est ingéré ; le choix reste réversible via le port `IntensityRepository`.

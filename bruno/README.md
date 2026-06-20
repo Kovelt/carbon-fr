@@ -29,6 +29,7 @@ bru run --env Local
 | Requête | Vérifie |
 |---|---|
 | Health | `200`, corps `ok` |
+| Health ready — vérifie la base | `200` (lit la dernière mesure nationale) |
 | Intensité now — national (rte-direct / acv-ademe) | `200`, méthodologie |
 | Intensité now — régional Bretagne (acv-ademe) | `200`, région |
 | Intensité now — acv-ademe@2 (consommation) | `200`, version `2` (si contexte d'import ingéré) |
@@ -38,18 +39,28 @@ bru run --env Local
 | Facteurs — acv-ademe | `200`, unité, filières |
 | Intensité date — historique | `200` |
 | Intensité stats — résumé / série journalière | `200`, `intervals` |
+| Échanges transfrontaliers — courant / historique | `200`, `net_flow_mw`, `snapshots` |
+| Météo nationale — courant / historique | `200`, `wind_kmh`, `irradiance_wm2` |
+| Renouvelable — production estimée | `200`, `wind_mw`, `wind_capacity_factor` |
+| Prix — décomposition TRV / série (cheapest window) | `200`, unité `EUR/MWh`, `components` |
+| Coût de production — LCOE (estimation) | `200`, `kind: estimation`, `unit: EUR/MWh` |
 | Prévision — série (climatology@1) | `200`, `model`, unité |
 | Prévision — acv-ademe@2 (consommation) | `200`, `model` `acv-clim@1` (si contexte d'import ingéré) |
 | Prévision — créneau le plus bas-carbone | `200`, `average_intensity` |
 | Schedule — créneau + économie | `200`, `savings` |
 | Schedule — créneaux divisibles (lowest-k) | `200`, `count` |
 | Intensité — créneaux sous un seuil | `200`, `slots` |
+| Compteur de visiteurs — lire / enregistrer | `200`, `unique`, `total` |
 | Webhook — créer (clé requise) | `201`, `id`, `secret` (nécessite `{{apiKey}}`) |
+| Webhook — lister (clé requise) | `200`, `webhooks` (nécessite `{{apiKey}}`) |
+| Webhook — supprimer (clé requise) | `204` (nécessite `{{apiKey}}` + `{{webhookId}}`) |
 | OpenAPI — spec | `200`, `openapi: 3.1.0` |
 | Erreur — région en rte-direct | `404 no_data` |
 | Erreur — région inconnue | `400 bad_request` |
 | Erreur — date sans `from` | `400 bad_request` |
+| Erreur — version inconnue | `400 bad_request` |
 | Erreur — facteurs en rte-direct | `400 bad_request` |
+| Erreur — source LCOE inconnue | `400 bad_request` |
 
 > La collection n'est **pas** dans la CI : elle exige une API live (+ base,
 > + données ODRÉ). C'est un outil de dev/QA manuel.

@@ -32,10 +32,12 @@ Conséquence sur le découpage de la valeur :
 
 | Endpoint | Nature | Difficulté |
 | --- | --- | --- |
-| `/intensity/now`, `/mix`, `/intensity/date` | Repackaging propre de données existantes | Faible |
-| `/intensity/forecast`, `/greenest-window` | **Valeur créée** : il faut modéliser | Élevée |
+| `/intensity/now`, `/mix`, `/intensity/date`, `/intensity/stats` | Repackaging propre de données existantes | Faible |
+| `/exchanges`, `/weather`, `/factors`, `/methodologies` | Donnée externe ou catalogue, exposés tels quels | Faible |
+| `/renewable`, `/price`, `/cost-reference` | Donnée dérivée/composée (modèle physique, décomposition TRV, fourchettes LCOE) | Moyenne |
+| `/intensity/forecast`, `/greenest-window`, `/schedule*`, `/intensity/below`, `/intensity/stream` | **Valeur créée** : il faut modéliser (prévision) puis l'outiller (carbon-aware, live) | Élevée |
 
-La prévision est donc une **responsabilité du service**, pas un simple proxy. Le modèle est branché derrière un port (`ForecastModel`) : on démarre avec un modèle statistique simple, on le remplace par du ML plus tard sans toucher au reste. À titre de référence, le modèle britannique repose sur du machine learning et de la modélisation réseau, avec une prévision à 96 h et plus.
+La prévision est donc une **responsabilité du service**, pas un simple proxy. Le modèle est branché derrière un port (`ForecastModel`) : on a démarré avec un modèle statistique (`climatology@1`) et un modèle ML (`gbdt@1`) a été exploré derrière le même port sans toucher au reste — il n'est pas servi car il ne bat pas la climatologie au backtest. À titre de référence, le modèle britannique repose sur du machine learning et de la modélisation réseau, avec une prévision à 96 h et plus.
 
 ## 3. Quota, ingestion & cache
 
@@ -57,9 +59,9 @@ Budget indicatif : ~96/jour (national) + ~24/jour (régional) ≈ **~120 appels/
               Adapters entrants                 Adapters sortants
               (driving)                          (driven)
         ┌─────────────────────┐          ┌────────────────────────────┐
-        │  API HTTP (axum)     │          │  OdreClient  → Eco2mixSource│
-        │  CLI (plus tard)     │          │  PgRepository→ IntensityRepo│
-        └──────────┬──────────┘          │  StatForecaster→ForecastModel│
+        │  API HTTP (axum, /v1)│          │  OdreClient  → Eco2mixSource│
+        │  + SSE + webhooks    │          │  PgRepository→ IntensityRepo│
+        └──────────┬──────────┘          │  Climatology→ ForecastModel │
                    │                      └──────────────┬─────────────┘
                    │ appelle les cas d'usage             │ implémentent les ports
                    ▼                                     ▼
@@ -67,8 +69,9 @@ Budget indicatif : ~96/jour (national) + ~24/jour (régional) ≈ **~120 appels/
         │                        core (lib pure)                     │
         │   application/  cas d'usage (ports entrants)               │
         │   ports/        traits sortants (Eco2mixSource, …)         │
-        │   domain/       CarbonIntensity, Index, GenerationMix,     │
-        │                 Region, Measurement, greenest_window()     │
+        │   domain/       CarbonIntensity, GenerationMix,            │
+        │                 Region, Measurement, ForecastPoint,        │
+        │                 Methodology, greenest_window()             │
         │                  ── aucune IO, aucune dépendance infra ──   │
         └───────────────────────────────────────────────────────────┘
                    ▲
@@ -81,12 +84,19 @@ Budget indicatif : ~96/jour (national) + ~24/jour (régional) ≈ **~120 appels/
 
 **Ports sortants** (le domaine *demande*, l'infra *fournit*) :
 
-- `Eco2mixSource` — récupérer la donnée RTE (dernier point, plage).
-- `IntensityRepository` — lire/écrire les mesures (chaud + historique).
-- `ForecastModel` — produire une prévision *(phase 3)*.
+- `Eco2mixSource` / `Eco2mixArchive` — récupérer la donnée RTE (dernier point, plage ; export de masse pour le backfill).
+- `IntensityRepository` — lire/écrire les mesures (chaud + historique ; upsert conditionnel au millésime, rollups).
+- `ForecastModel` — produire une prévision (rend des `ForecastPoint` avec intervalle).
+- `ConsumptionRepository` / `ConsumptionSource` — charge réalisée/prévue (entrée du futur ML).
+- `WeatherRepository` / `WeatherForecastSource` — météo (vent 100 m + irradiance, Open-Meteo).
+- `CrossBorderSource` / `CrossBorderRepository` — flux transfrontaliers + intensité du voisin (ENTSO-E, pour `acv-ademe@2` et `/exchanges`).
+- `SpotPriceSource` / `SpotPriceRepository` — prix spot day-ahead (ENTSO-E A44, pour `/price`).
+- `ApiKeyRepository` — résolution des clés API (port **de bord** : consommé par le middleware, jamais par un cas d'usage).
+- `SubscriptionRepository` / `Notifier` — abonnements webhooks + livraison signée.
+- `VisitCounter` — compteur de visiteurs (IP jamais stockée).
 - `Clock` — fournir l'instant courant (testabilité).
 
-**Ports entrants** (cas d'usage exposés) : `GetCurrentIntensity`, `GetMix`, `GetIntensityHistory`, `IngestLatest` (le poller), `FindGreenestWindow`, `GetForecast`.
+**Ports entrants** (cas d'usage exposés, génériques sur leurs ports) : `GetCurrentIntensity`, `GetIntensityHistory`, `GetIntensityStats`, `IngestLatest` (le poller), `BackfillHistory`, `FindGreenestWindow`, `CarbonAwareScheduler` (planification carbon-aware), `GetConsumptionIntensity` (`acv-ademe@2` à la lecture), `GetCrossBorderExchanges` (`/exchanges`), `GetElectricityPrice` (`/price`), `GetWeather`, `CalibrateRenewable`, `AnalyzeRenewableSignal`, plus les backtests (`BacktestForecast`, `BacktestConsumptionForecast`, `BacktestRenewable`).
 
 **Pourquoi ce pattern ici précisément** :
 
@@ -108,8 +118,8 @@ RTE **révise** ses données : le temps réel du mois M est remplacé par des do
 
 **Stockage : PostgreSQL natif, sans extension** (voir ADR-0004).
 
-- Partitionnement **déclaratif par plage temporelle** (mensuel), index `BRIN` sur l'horodatage, index sur `(region, horodatage)`. Le BRIN reste pertinent : les insertions arrivent ordonnées dans le temps ; les révisions sont des `UPDATE` ciblés (upsert), pas une remise en cause de l'ordre physique.
-- **Rollups** (horaire/journalier) pour les statistiques et le modèle : **vues matérialisées** rafraîchies par le poller. Le rafraîchissement natif est complet (non incrémental) ; à ce volume (~5–6 M lignes, ~1 Go) c'est sans conséquence. Le rafraîchissement doit être déclenché après toute révision touchant la période agrégée.
+- Table `measurement` simple, index sur `(region, horodatage)` et sur `(region, methodology, at)`. Le partitionnement **déclaratif par plage temporelle** (mensuel) et l'index `BRIN` sur l'horodatage restent **reportés** (à reconsidérer maintenant que l'historique complet est ingéré) : les insertions arrivent ordonnées dans le temps ; les révisions sont des `UPDATE` ciblés (upsert), pas une remise en cause de l'ordre physique.
+- **Rollups** (horaire/journalier) pour les statistiques et le modèle : initialement des **vues matérialisées** (migration `0002`), désormais de **vraies tables incrémentales** upsertées par seau (migration `0010`, lecture inchangée) et rafraîchies par le poller. Le rafraîchissement doit être déclenché après toute révision touchant la période agrégée.
 - Choix **réversible** : le port `IntensityRepository` permet d'ajouter un adapter TimescaleDB plus tard si le volume ou l'ingestion l'exigent.
 
 ## 6. Méthodologie carbone
@@ -130,37 +140,67 @@ Conséquence : le type `Measurement` du domaine porte un champ `methodology` dè
 
 ## 7. Découpage en crates
 
+Les crates publiables sont préfixées `carbonfr-*` même si les dossiers restent courts (`crates/core`, `crates/adapter-odre`, …).
+
 | Crate | Rôle | Dépendances notables |
 | --- | --- | --- |
-| `core` | domaine + cas d'usage + ports | aucune IO |
-| `adapter-odre` | `Eco2mixSource` via HTTP | reqwest, serde |
-| `adapter-postgres` | `IntensityRepository` via SQL | sqlx |
-| `adapter-http` | API REST | axum, serde |
-| `server` (bin) | composition root | toutes les précédentes |
+| `core` | domaine + cas d'usage + ports | aucune IO (`sha2` toléré = calcul pur HMAC) |
+| `adapter-odre` | `Eco2mixSource` + `Eco2mixArchive` (eCO2mix RTE) via HTTP | reqwest, serde |
+| `adapter-postgres` | repositories via SQL (Intensity, Consumption, Weather, CrossBorder, ApiKey, Subscription, SpotPrice, Visit) + migrations | sqlx |
+| `adapter-http` | API HTTP `/v1` (DTO, OpenAPI/utoipa, SSE, middleware auth/quota) | axum, serde, utoipa |
+| `adapter-forecast` | `ForecastModel` : climatologie (`climatology@1`) + prévision `acv-ademe@2` (`acv-clim`) | — |
+| `adapter-meteo` | `WeatherForecastSource` via Open-Meteo (vent 100 m + irradiance) | reqwest |
+| `adapter-entsoe` | `CrossBorderSource` (flux A11 + intensité voisine A75) + `SpotPriceSource` (spot A44) | reqwest, quick-xml |
+| `adapter-webhook` | `Notifier` (livraison HMAC signée, anti-SSRF) | reqwest |
+| `adapter-gbdt` | `ForecastModel` ML (`gbdt@1`, gardé par backtest — non servi) | gbdt |
+| `server` (bin) | composition root + poller unique + registre `/metrics` + sous-commandes | toutes les précédentes |
 
 ## 8. Roadmap
 
-1. **Socle** — `core` + poller (`IngestLatest`) + `/intensity/now` + `/mix`, national.
-2. **Historique + régional** — backfill consolidé, `/intensity/date`, 12 régions, vues matérialisées de rollup.
-3. **Prévision** — `StatForecaster` derrière `ForecastModel` → `/forecast` + `/greenest-window` ; ML ultérieurement.
-4. **DX** — SDK (crate + client TS), OpenAPI, conteneur Docker, éventuel tier hébergé.
-5. **Méthodologie enrichie** — méthode additionnelle `acv-ademe` (cycle de vie Base Carbone ADEME + imports interconnexions), coexistant avec `rte-direct` (livrée : production `@1` et consommation `@2`, ADR-0008/0010).
+Les cinq phases sont **livrées**. État réel (version de workspace `0.3.2`, contrat d'API `/v1`) :
+
+1. **Socle** ✅ — `core` + poller unique (`IngestLatest`) + `/intensity/now` + `/mix` + `/health`, national.
+2. **Historique + régional** ✅ — backfill par export de masse (2012→), `/intensity/date`, `/intensity/stats`, 12 régions (servies en `acv-ademe`), rollups (passés de vues matérialisées à tables incrémentales).
+3. **Prévision** ✅ — `ClimatologyForecaster` (`climatology@1`) derrière `ForecastModel` → `/intensity/forecast` + `/greenest-window`, intervalles `lower`/`expected`/`upper` (contrat `ForecastPoint`, ADR-0011), calage par backtest (N=10 sem., τ=14 j). Modèle ML `GbdtForecaster` (`gbdt@1`) exploré derrière le même port mais **non servi** (ne bat pas la climatologie au backtest).
+4. **Enrichissement & usage** ✅ — `acv-ademe@2` consumption-based + `adapter-entsoe` + `/v1/methodologies` & `/v1/factors` (ADR-0010) ; store météo (`adapter-meteo`) ; primitives carbon-aware (`/schedule`, `/schedule/slots`, `/intensity/below`) + flux live **SSE** (`/intensity/stream`, ADR-0014) ; clés API en middleware de bord **opt-in**, anonyme par défaut (ADR-0015) ; webhooks signés (`POST`/`GET`/`DELETE /v1/webhooks`, ADR-0016).
+5. **Enrichissement, déploiement & SDK** ✅ — échanges transfrontaliers (`/exchanges`, ADR-0017), météo (`/weather`) & dérivation renouvelable (`/renewable`, ADR-0018), prix de l'électricité (`/price`, ADR-0023), couche comparative LCOE (`/cost-reference`, ADR-0024) ; **SDK TypeScript** `@carbon-fr/sdk` ; observabilité `/metrics` (ADR-0022) ; déploiement live (voir §9).
+
+**Méthodologie enrichie** (transverse aux phases) : `acv-ademe` (cycle de vie Base Carbone ADEME + imports interconnexions) coexiste avec `rte-direct`, livrée en production `@1` (national + 12 régions) et consommation `@2` (national, ADR-0008/0010).
 
 ## 9. Déploiement
 
-Deux composants aux besoins distincts (détails et alternatives : **ADR-0007**) :
+L'API est **live** sur un VPS géré par Kovelt (détails et alternatives : **ADR-0007**) :
 
-- **Site + doc + playground** : statique (SSG type Zola/mdBook), hébergé sur l'**hébergement mutualisé o2switch**. Facilement redéplaçable.
-- **API** : service (`carbonfr-server` + PostgreSQL co-localisé + poller + reverse proxy/TLS) sur un **VPS FR/EU** géré par Kovelt. IP fixe → enregistrement DNS simple, **pas de DNS dynamique**.
-- **DNS** : sous-domaine Kovelt (ex. `carbon-fr.kovelt.fr`).
+- **API** : service `carbonfr-server` (poller **intégré**) + PostgreSQL dédié, déployé en conteneur sur le **VPS Kovelt**, derrière **Traefik** (terminaison TLS Let's Encrypt, en-têtes de sécurité, `X-Forwarded-For` de confiance). Le service tire une **image taguée depuis GHCR** (`ghcr.io/kovelt/carbon-fr:X.Y.Z`, épinglée — pas de build sur place) ; backfill réalisé, backups quotidiens.
+- **Image & release** : `Dockerfile` multi-stage (build `rust:1-bookworm` via rustls sans OpenSSL, runtime `debian:bookworm-slim` non-root). Le workflow `release.yml` se déclenche sur tag `v*` (garde-fou : tag == version de workspace) et publie l'image GHCR taguée `X.Y.Z`/`X.Y`/`latest` (publique).
+- **Forme du poller** : **intégré** au `server` (un seul binaire ; le SSE passe par un canal mémoire `tokio::broadcast`). Un `bin/poller` séparé sur `LISTEN`/`NOTIFY` reste documenté comme évolution si plusieurs instances API sont nécessaires.
+- **Variantes self-host fournies** dans `deploy/` (exemples, pas la prod) : un `Caddyfile` (terminaison TLS + reverse proxy, sonde `/health/ready`) et une unité `carbonfr.service` durcie (systemd, `Restart=on-failure`). À coupler avec `CARBONFR_TRUST_PROXY=1` et un `CARBONFR_VISIT_SALT` non-défaut (le serveur refuse de démarrer sans, derrière proxy).
+- **DNS** : sous-domaine Kovelt (`carbon-fr-api.kovelt.fr`).
 - **Contrat d'URL** : l'API est versionnée dans le chemin (`/v1/…`) dès le départ, pour migrer de domaine ou faire évoluer l'API sans casser les intégrations.
 
-Le packaging (`docker-compose` vs binaire + systemd) et la forme du poller (intégré au `server` vs binaire `bin/poller` + timer systemd) sont tranchés en phase 4.
+> Configuration par variables d'environnement (`DATABASE_URL` requis ; `CARBONFR_BIND`, `CARBONFR_POLL_SECS`, `CARBONFR_TRUST_PROXY`, `CARBONFR_VISIT_SALT`, `CARBONFR_RATELIMIT_ENABLED`, `CARBONFR_ENTSOE_TOKEN` (active `acv-ademe@2` + `/price`), `CARBONFR_*_CALIBRATE_WEEKS`, …) — voir `.env.example`. Sous-commandes : `backfill`, `backtest`/`-sweep`/`-bands`/`-acv`/`-renewable`, `analyze-renewable-signal`, `train`, `mint-key`.
 
-## 10. Sources
+## 10. Sources de données & références
 
-- RTE — éCO2mix, émissions de CO₂ : <https://www.rte-france.com/eco2mix/les-emissions-de-co2-par-kwh-produit-en-france>
-- ODRÉ — éCO2mix national temps réel : <https://odre.opendatasoft.com/explore/dataset/eco2mix-national-tr/>
-- ODRÉ — éCO2mix régional temps réel : <https://odre.opendatasoft.com/explore/dataset/eco2mix-regional-tr/>
-- Modèle de référence (UK) : <https://carbonintensity.org.uk/> et <https://api.carbonintensity.org.uk/>
+Tout est **re-traité et cité, jamais approprié** (cf. ADR-0003). Chaque source est isolée derrière un adapter.
+
+**Données ingérées par le poller** (alimentent le read-model) :
+
+- **RTE — éCO2mix**, via **ODRÉ** (licence ouverte) — intensité carbone + mix de production :
+  - émissions de CO₂ (national, `rte-direct`) : <https://www.rte-france.com/eco2mix/les-emissions-de-co2-par-kwh-produit-en-france>
+  - national temps réel : <https://odre.opendatasoft.com/explore/dataset/eco2mix-national-tr/>
+  - régional temps réel : <https://odre.opendatasoft.com/explore/dataset/eco2mix-regional-tr/>
+  - national consolidé/définitif (export de masse pour le backfill) : <https://odre.opendatasoft.com/explore/dataset/eco2mix-national-cons-def/>
+- **ENTSO-E — Transparency Platform** (si `CARBONFR_ENTSOE_TOKEN`) — flux physiques transfrontaliers (`A11`), génération par type des pays voisins (`A75`) et prix de gros day-ahead (`A44`) ; alimente `acv-ademe@2`, `/exchanges` et `/price` (ADR-0010/0017/0023). <https://transparency.entsoe.eu/>
+- **Open-Meteo** (CC-BY 4.0, attribué) — prévision **et** archive météo (vent 100 m + irradiance) ; alimente `/weather`, `/renewable` et les features ML (ADR-0012/0018). <https://open-meteo.com/>
+
+**Référentiels versionnés** (constantes de domaine, pas des flux live) :
+
+- **ADEME — Base Carbone / Base Empreinte** — facteurs d'émission cycle de vie par filière (méthodologie `acv-ademe`, ADR-0008). <https://base-empreinte.ademe.fr/>
+- **CRE** (délibérations TURPE 7, TRV, accise) & **BOFiP** (accise, TVA) — décomposition du prix `/price` (ADR-0023). <https://www.cre.fr/> · <https://bofip.impots.gouv.fr/>
+- **Couche comparative LCOE** `/cost-reference` (ADR-0024) : **Cour des comptes** & **CRE** (nucléaire existant), **IRENA** (LCOE renouvelables mondiaux), **RTE** *Futurs énergétiques 2050* (nucléaire nouveau), **ADEME** (renouvelables France).
+
+**Modèle de référence & écosystème** :
+
+- Modèle britannique : <https://carbonintensity.org.uk/> et <https://api.carbonintensity.org.uk/>
 - Concurrent fermé : <https://www.electricitymaps.com/>

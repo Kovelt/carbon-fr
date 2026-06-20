@@ -217,8 +217,8 @@ where
 }
 
 /// `GET /v1/exchanges/date?from=&to=` — série historique des échanges
-/// transfrontaliers sur un intervalle RFC 3339 (fenêtre ≤ 366 jours), au pas
-/// quart d'heure (ADR-0017).
+/// transfrontaliers sur un intervalle RFC 3339 (fenêtre ≤ 92 jours, série dense),
+/// au pas quart d'heure (ADR-0017).
 #[utoipa::path(
     get,
     path = "/v1/exchanges/date",
@@ -283,7 +283,7 @@ where
 }
 
 /// `GET /v1/weather/date?from=&to=` — série météo historique (vent + irradiance)
-/// sur un intervalle RFC 3339 (fenêtre ≤ 366 jours), ADR-0012/0018.
+/// sur un intervalle RFC 3339 (fenêtre ≤ 92 jours, série dense), ADR-0012/0018.
 #[utoipa::path(
     get,
     path = "/v1/weather/date",

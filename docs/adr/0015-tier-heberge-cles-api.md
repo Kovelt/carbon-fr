@@ -1,6 +1,6 @@
 # ADR-0015 — Tier hébergé : clés API en couche de bord, anonyme par défaut
 
-- **Statut** : Accepté (mise en œuvre **engagée** — auth par clé + quota livrés ; métering persistant & webhooks à venir)
+- **Statut** : Accepté (mise en œuvre **engagée** — auth par clé + quota livrés ; webhooks débloqués puis livrés par l'ADR-0016 ; métering persistant à venir)
 - **Date** : 2026-06-15
 - **S'appuie sur** : ADR-0002 (hexagonal), ADR-0004 (Postgres natif), ADR-0007 (déploiement / tier hébergé), ADR-0014 (webhooks reportés, en attente d'un *ownership*)
 
@@ -24,9 +24,13 @@ qui vivent **avec le port**, pas dans le domaine carbone).
   `cfr_<hex>`, stocke son empreinte, l'affiche **une seule fois** ;
   `CARBONFR_KEY_LABEL`).
 
+**Débloqué et livré depuis :** les **webhooks** (ADR-0014 §3), débloqués par
+l'*ownership* de la clé, ont été spécifiés et **implémentés** par l'ADR-0016
+(store `webhook_subscription` scopé propriétaire, `HttpNotifier`, watcher,
+endpoints `POST`/`GET`/`DELETE /v1/webhooks` à clé requise).
+
 **À venir :** **`UsageMeter`** persistant (métering/analytics, §2) — le quota
 actuel suffit à l'enforcement, le métering persistant viendra avec le payant ;
-**webhooks** (ADR-0014 §3, désormais débloqués par l'*ownership* de la clé) ;
 identité email + lien magique (§3) ; **payant** = adapter de facturation cantonné
 à l'instance hébergée (§7).
 

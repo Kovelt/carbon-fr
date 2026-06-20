@@ -1,0 +1,12 @@
+[package]
+name = "carbonfr-eligibility"
+version.workspace = true
+description = "Couche A « électrolyseur » de carbon-fr : éligibilité réseau RFNBO / bas-carbone (domaine pur, sans IO)."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+carbonfr-core = { workspace = true }
+time = { workspace = true }

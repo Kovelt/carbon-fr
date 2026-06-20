@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/core",
+    "crates/eligibility",
     "crates/adapter-odre",
     "crates/adapter-postgres",
     "crates/adapter-http",
@@ -31,6 +32,7 @@ repository = "https://github.com/Kovelt/carbon-fr"
 [workspace.dependencies]
 # Crates internes
 carbonfr-core = { path = "crates/core" }
+carbonfr-eligibility = { path = "crates/eligibility" }
 carbonfr-adapter-odre = { path = "crates/adapter-odre" }
 carbonfr-adapter-postgres = { path = "crates/adapter-postgres" }
 carbonfr-adapter-http = { path = "crates/adapter-http" }

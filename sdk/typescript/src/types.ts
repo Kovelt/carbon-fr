@@ -25,6 +25,9 @@ export type Methodology = "rte-direct" | "acv-ademe";
 /** Estimateur de prévision : central (attendu) ou prudent (borne haute). */
 export type Estimator = "central" | "prudent";
 
+/** Cadre d'éligibilité électrolyseur (ADR-0025/0026). */
+export type EligibilityFramework = "rfnbo" | "low-carbon";
+
 /** Pas d'agrégation des statistiques. */
 export type Interval = "hour" | "day";
 
@@ -144,6 +147,81 @@ export interface GreenestWindowResponse {
   end: string;
   unit: string;
   average_intensity: number;
+  /** Overlay d'éligibilité électrolyseur (présent si `?eligibility=` fourni). */
+  eligibility?: EligibilityBody;
+}
+
+/** Verdict d'un pilier d'éligibilité sur un créneau. */
+export interface EligibilitySignal {
+  /** `renewable-share`, `surplus-price` ou `low-carbon-intensity`. */
+  pillar: string;
+  /** `pass`, `fail` ou `indeterminate` (donnée manquante, jamais extrapolée). */
+  verdict: "pass" | "fail" | "indeterminate";
+  value?: number;
+  threshold?: number;
+  /** `regulatory` ou `indicative-non-regulatory` (seuil bas-carbone = proxy). */
+  basis: string;
+}
+
+/** Verdict d'éligibilité d'un créneau. */
+export interface EligibilitySlot {
+  timestamp: string;
+  eligible: boolean;
+  intensity: number;
+  /** Bornes de l'intervalle de confiance (ADR-0011). */
+  intensity_lower: number;
+  intensity_upper: number;
+  score: number;
+  signals: EligibilitySignal[];
+}
+
+/** Meilleur créneau éligible (score le plus bas). */
+export interface EligibleSlot {
+  timestamp: string;
+  intensity: number;
+  intensity_lower: number;
+  intensity_upper: number;
+  score: number;
+}
+
+/** Overlay d'éligibilité d'une fenêtre (ADR-0025/0026). */
+export interface EligibilityBody {
+  framework: EligibilityFramework;
+  ruleset_version: string;
+  ruleset_status: string;
+  overridden: boolean;
+  /** Zone de dépôt : toujours `FR` (jamais une sous-région). */
+  bidding_zone: string;
+  disclaimer: string;
+  /** `true` si tous les créneaux de la fenêtre verte retenue sont éligibles. */
+  window_eligible: boolean;
+  best_eligible?: EligibleSlot;
+  count_eligible: number;
+  count_indeterminate: number;
+  slots: EligibilitySlot[];
+}
+
+/** Une entrée du catalogue `GET /v1/eligibility/rulesets`. */
+export interface RulesetInfo {
+  framework: EligibilityFramework;
+  version: string;
+  status: string;
+  adr: string;
+  granularity: string;
+  hourly_switchover?: string;
+  article4_renewable_threshold: number;
+  surplus_price_eur_mwh?: number;
+  low_carbon_intensity_threshold_g_per_kwh?: number;
+  low_carbon_intensity_is_indicative: boolean;
+  electrolyzer_kwh_per_kg: number;
+  legal_basis: string;
+  description: string;
+}
+
+/** `GET /v1/eligibility/rulesets`. */
+export interface RulesetsResponse {
+  rulesets: RulesetInfo[];
+  disclaimer: string;
 }
 
 export interface Savings {

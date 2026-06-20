@@ -41,6 +41,7 @@
 mod auth;
 mod carbonfr_openapi;
 mod dto;
+mod eligibility_uc;
 mod error;
 mod handlers;
 
@@ -116,6 +117,66 @@ impl<R> AppState<R> {
     }
 }
 
+/// Accès minimal de l'**overlay d'éligibilité** (ADR-0025/0026) : mix nowcast
+/// national + prix spot day-ahead. Trait **objet-safe** (dispatch dynamique) pour
+/// ne pas contaminer le `F` générique du chemin de prévision — même motif que
+/// `consumption: Arc<dyn ForecastModel>`. Implémenté en *blanket* par tout
+/// repository qui sait lire l'intensité **et** le prix spot.
+#[async_trait::async_trait]
+pub trait EligibilityRepo: Send + Sync {
+    /// Dernière mesure nationale (mix) — ancre `rte-direct` (convention canonique
+    /// du mix national, cf. `GetElectricityPrice`). `None` si indisponible.
+    async fn latest_national_mix(&self) -> Option<carbonfr_core::domain::Measurement>;
+
+    /// Prix spot day-ahead (€/MWh) **frais** au créneau `at` (filtre d'ancienneté
+    /// appliqué : pas d'extrapolation du dernier day-ahead sur le futur).
+    async fn spot_price_at(&self, at: time::OffsetDateTime) -> Option<f64>;
+}
+
+/// Adaptateur d'un repository concret (`R: IntensityRepository +
+/// SpotPriceRepository`) vers [`EligibilityRepo`]. Un **wrapper** plutôt qu'un
+/// blanket impl `for R` : ce dernier entrerait en conflit de cohérence (E0119)
+/// avec d'autres implémentations (ex. fakes de test) qu'on ne peut pas prouver
+/// disjointes. Le composition root l'instancie sur le repo PostgreSQL.
+pub struct EligibilityRepoAdapter<R>(pub R);
+
+#[async_trait::async_trait]
+impl<R> EligibilityRepo for EligibilityRepoAdapter<R>
+where
+    R: IntensityRepository + SpotPriceRepository,
+{
+    async fn latest_national_mix(&self) -> Option<carbonfr_core::domain::Measurement> {
+        // Ancre `rte-direct` : convention canonique du mix national (alignée sur
+        // `/v1/intensity/now`, `/v1/mix`, `GetElectricityPrice`). `rte-direct` est
+        // strictement plus disponible et `acv-ademe` pourrait résoudre vers `@2`
+        // (consommation, mix incertain) car `latest()` filtre l'id sans la version.
+        self.0
+            .latest(carbonfr_core::domain::Region::National, "rte-direct")
+            .await
+            .ok()
+            .flatten()
+    }
+
+    async fn spot_price_at(&self, at: time::OffsetDateTime) -> Option<f64> {
+        // `price_at` renvoie le prix au plus proche ≤ at. On REFUSE un prix périmé
+        // de plus d'1 h pour ne pas propager le dernier day-ahead sur le futur
+        // (PIÈGE 2 : au-delà du day-ahead, le signal prix reste indéterminé).
+        // NB : comparer les `Duration` directement, PAS `whole_hours()` (division
+        // entière → tolérerait jusqu'à ~2 h). Garde `>= ZERO` au cas où une autre
+        // impl de `price_at` renverrait un prix postérieur à `at`.
+        self.0
+            .price_at(at)
+            .await
+            .ok()
+            .flatten()
+            .filter(|p| {
+                let age = at - p.at;
+                age >= time::Duration::ZERO && age <= time::Duration::hours(1)
+            })
+            .map(|p| p.eur_per_mwh)
+    }
+}
+
 /// État des endpoints de **prévision** (ADR-0009), distinct de [`AppState`] : il
 /// porte un modèle [`ForecastModel`] (le port, injecté par la composition root —
 /// l'adapter HTTP ignore l'implémentation concrète) plutôt que le repository.
@@ -134,6 +195,11 @@ pub struct ForecastState<F> {
         Option<std::sync::Arc<dyn carbonfr_core::ports::ForecastModel + Send + Sync>>,
     /// Identité versionnée du modèle `@2` (ex. `acv-clim@1`).
     pub(crate) consumption_model: String,
+    /// Overlay d'**éligibilité électrolyseur** (ADR-0025/0026), optionnel. Fournit
+    /// le mix nowcast + le prix spot à `greenest-window?eligibility=`. Dispatch
+    /// dynamique (même motif que `consumption`). `None` → overlay non câblé (503
+    /// si demandé), self-hosting et prévision classique intacts.
+    pub(crate) eligibility: Option<std::sync::Arc<dyn EligibilityRepo>>,
 }
 
 impl<F> ForecastState<F> {
@@ -146,7 +212,16 @@ impl<F> ForecastState<F> {
             methodology: "rte-direct".to_string(),
             consumption: None,
             consumption_model: String::new(),
+            eligibility: None,
         }
+    }
+
+    /// Câble l'overlay d'éligibilité électrolyseur (ADR-0025/0026), servi via
+    /// `GET /v1/intensity/greenest-window?eligibility=`. Sans cet appel, l'overlay
+    /// répond `503` (et la prévision classique reste inchangée).
+    pub fn with_eligibility(mut self, repo: std::sync::Arc<dyn EligibilityRepo>) -> Self {
+        self.eligibility = Some(repo);
+        self
     }
 
     /// Sélectionne une autre méthodologie servie par défaut.
@@ -220,6 +295,10 @@ where
         .route("/v1/weather/date", get(handlers::weather_date::<R>))
         .route("/v1/renewable", get(handlers::renewable::<R>))
         .route("/v1/methodologies", get(handlers::methodologies))
+        .route(
+            "/v1/eligibility/rulesets",
+            get(handlers::eligibility_rulesets),
+        )
         .route("/v1/factors", get(handlers::factors))
         .route("/v1/price", get(handlers::price::<R>))
         .route("/v1/price/date", get(handlers::price_date::<R>))

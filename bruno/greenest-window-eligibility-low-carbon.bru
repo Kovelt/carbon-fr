@@ -1,0 +1,32 @@
+meta {
+  name: Éligibilité — greenest-window (cadre low-carbon)
+  type: http
+  seq: 36
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/greenest-window?from=2024-01-08T00:00:00Z&horizon_hours=24&eligibility=low-carbon
+  body: none
+  auth: none
+}
+
+params:query {
+  from: 2024-01-08T00:00:00Z
+  horizon_hours: 24
+  eligibility: low-carbon
+}
+
+docs {
+  Annote la fenêtre verte d'un verdict d'éligibilité BAS-CARBONE (ADR-0025/0026).
+  Signal RÉSEAU : intensité ≤ seuil dérivé (~64 gCO₂eq/kWh, INDICATIF, condition
+  nécessaire). Servi sur tout l'horizon (l'intensité est dans la prévision).
+  Seuil = proxy non réglementaire (basis indicative-non-regulatory).
+}
+
+assert {
+  res.status: eq 200
+  res.body.eligibility.framework: eq low-carbon
+  res.body.eligibility.ruleset_version: eq low-carbon:2025-2359
+  res.body.eligibility.bidding_zone: eq FR
+  res.body.eligibility.slots[0].intensity_upper: isNumber
+}

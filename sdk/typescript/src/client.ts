@@ -3,6 +3,7 @@ import type {
   CreateWebhookRequest,
   CreatedWebhookResponse,
   ProblemDetails,
+  EligibilityFramework,
   Estimator,
   ExchangesHistoryResponse,
   ExchangesResponse,
@@ -19,6 +20,7 @@ import type {
   MixResponse,
   Region,
   RenewableResponse,
+  RulesetsResponse,
   ScheduleResponse,
   SlotsResponse,
   StatsResponse,
@@ -168,7 +170,11 @@ export class CarbonFr {
     });
   }
 
-  /** Créneau le plus bas-carbone à venir. */
+  /**
+   * Créneau le plus bas-carbone à venir. Avec `eligibility`, annote chaque
+   * créneau d'un verdict d'éligibilité électrolyseur (ADR-0025/0026) ; l'axe
+   * d'éligibilité est orthogonal à `methodology`.
+   */
   greenestWindow(opts: {
     region?: Region;
     methodology?: Methodology;
@@ -176,6 +182,11 @@ export class CarbonFr {
     horizonHours?: number;
     windowMinutes?: number;
     estimator?: Estimator;
+    eligibility?: EligibilityFramework;
+    eligibilityVersion?: string;
+    surplusPriceEurMwh?: number;
+    lowCarbonThresholdGPerKwh?: number;
+    electrolyzerKwhPerKg?: number;
   } = {}) {
     return this.get<GreenestWindowResponse>("/v1/intensity/greenest-window", {
       region: opts.region,
@@ -184,7 +195,17 @@ export class CarbonFr {
       horizon_hours: opts.horizonHours,
       window_minutes: opts.windowMinutes,
       estimator: opts.estimator,
+      eligibility: opts.eligibility,
+      eligibility_version: opts.eligibilityVersion,
+      surplus_price_eur_mwh: opts.surplusPriceEurMwh,
+      low_carbon_threshold_g_per_kwh: opts.lowCarbonThresholdGPerKwh,
+      electrolyzer_kwh_per_kg: opts.electrolyzerKwhPerKg,
     });
+  }
+
+  /** Catalogue des cadres et rulesets d'éligibilité électrolyseur (versionnés). */
+  eligibilityRulesets() {
+    return this.get<RulesetsResponse>("/v1/eligibility/rulesets", {});
   }
 
   /** Planifie un job sous échéance et chiffre l'économie carbone vs maintenant. */

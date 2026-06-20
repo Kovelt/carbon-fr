@@ -1,0 +1,31 @@
+meta {
+  name: Éligibilité — greenest-window (cadre rfnbo)
+  type: http
+  seq: 35
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/greenest-window?from=2024-01-08T00:00:00Z&horizon_hours=24&eligibility=rfnbo
+  body: none
+  auth: none
+}
+
+params:query {
+  from: 2024-01-08T00:00:00Z
+  horizon_hours: 24
+  eligibility: rfnbo
+}
+
+docs {
+  Annote la fenêtre verte d'un verdict d'éligibilité RFNBO (ADR-0025/0026).
+  Signaux RÉSEAU (disjonction) : part renouvelable instantanée ≥ seuil OU prix
+  day-ahead ≤ 20 €/MWh. Zone de dépôt nationale (FR). Non certifiant.
+}
+
+assert {
+  res.status: eq 200
+  res.body.eligibility.framework: eq rfnbo
+  res.body.eligibility.ruleset_version: eq rfnbo:2023-1184
+  res.body.eligibility.bidding_zone: eq FR
+  res.body.eligibility.disclaimer: isString
+}

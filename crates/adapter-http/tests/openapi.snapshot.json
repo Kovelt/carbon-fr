@@ -137,6 +137,27 @@
         }
       }
     },
+    "/v1/eligibility/rulesets": {
+      "get": {
+        "tags": [
+          "éligibilité"
+        ],
+        "summary": "`GET /v1/eligibility/rulesets` — catalogue des cadres et rulesets versionnés\nd'éligibilité électrolyseur (ADR-0025/0026). Vérifiabilité + neutralité.",
+        "operationId": "eligibility_rulesets",
+        "responses": {
+          "200": {
+            "description": "Rulesets d'éligibilité disponibles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RulesetsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/exchanges": {
       "get": {
         "tags": [
@@ -564,7 +585,7 @@
         "tags": [
           "prévision"
         ],
-        "summary": "`GET /v1/intensity/greenest-window` — créneau le plus bas-carbone à venir, sur\nla prévision `climatology@1` (ADR-0009).",
+        "summary": "`GET /v1/intensity/greenest-window` — créneau le plus bas-carbone à venir, sur\nla prévision `climatology@1` (ADR-0009). Avec `?eligibility=`, annote chaque\ncréneau d'un verdict d'éligibilité électrolyseur (ADR-0025/0026).",
         "operationId": "greenest_window",
         "parameters": [
           {
@@ -624,6 +645,44 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "eligibility",
+            "in": "query",
+            "description": "Cadre d'éligibilité électrolyseur : `rfnbo` ou `low-carbon` (ADR-0025/0026).\nAbsent ⇒ réponse historique inchangée. Axe **orthogonal** à `methodology`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "eligibility_version",
+            "in": "query",
+            "description": "Version de ruleset (ex. `rfnbo:2023-1184` ou `2023-1184`). Défaut : ruleset\nservi du cadre.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "surplus_price_eur_mwh",
+            "in": "query",
+            "description": "Override du seuil de surplus prix (€/MWh, ≥ 0).",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "low_carbon_threshold_g_per_kwh",
+            "in": "query",
+            "description": "Override du seuil d'intensité bas-carbone (gCO₂eq/kWh, ]0, 1000]).",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
           }
         ],
         "responses": {
@@ -649,6 +708,16 @@
           },
           "404": {
             "description": "Série insuffisante pour déterminer un créneau",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Overlay d'éligibilité demandé mais non câblé",
             "content": {
               "application/json": {
                 "schema": {
@@ -1820,6 +1889,185 @@
           }
         }
       },
+      "EligibilityBody": {
+        "type": "object",
+        "description": "Overlay d'éligibilité d'une fenêtre (ADR-0025/0026).",
+        "required": [
+          "framework",
+          "ruleset_version",
+          "ruleset_status",
+          "overridden",
+          "bidding_zone",
+          "disclaimer",
+          "window_eligible",
+          "count_eligible",
+          "count_indeterminate",
+          "slots"
+        ],
+        "properties": {
+          "best_eligible": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EligibleSlotBody",
+                "description": "Meilleur créneau éligible (score le plus bas), s'il en existe un."
+              }
+            ]
+          },
+          "bidding_zone": {
+            "type": "string",
+            "description": "Zone de dépôt : toujours `FR` (jamais une sous-région)."
+          },
+          "count_eligible": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "count_indeterminate": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "disclaimer": {
+            "type": "string"
+          },
+          "framework": {
+            "type": "string",
+            "description": "Cadre évalué : `rfnbo` ou `low-carbon`."
+          },
+          "overridden": {
+            "type": "boolean",
+            "description": "`true` si des overrides utilisateur ont été appliqués au ruleset."
+          },
+          "ruleset_status": {
+            "type": "string"
+          },
+          "ruleset_version": {
+            "type": "string"
+          },
+          "slots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EligibilitySlotBody"
+            },
+            "description": "Verdict par créneau de l'horizon."
+          },
+          "window_eligible": {
+            "type": "boolean",
+            "description": "`true` si **tous** les créneaux de la fenêtre verte retenue sont éligibles."
+          }
+        }
+      },
+      "EligibilitySignalBody": {
+        "type": "object",
+        "required": [
+          "pillar",
+          "verdict",
+          "basis"
+        ],
+        "properties": {
+          "basis": {
+            "type": "string",
+            "description": "`regulatory` ou `indicative-non-regulatory` (seuil bas-carbone = proxy)."
+          },
+          "pillar": {
+            "type": "string",
+            "description": "Pilier : `renewable-share`, `surplus-price` ou `low-carbon-intensity`."
+          },
+          "threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "verdict": {
+            "type": "string",
+            "description": "`pass`, `fail` ou `indeterminate` (donnée manquante, jamais extrapolée)."
+          }
+        }
+      },
+      "EligibilitySlotBody": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "eligible",
+          "intensity",
+          "intensity_lower",
+          "intensity_upper",
+          "score",
+          "signals"
+        ],
+        "properties": {
+          "eligible": {
+            "type": "boolean"
+          },
+          "intensity": {
+            "type": "number",
+            "format": "double"
+          },
+          "intensity_lower": {
+            "type": "number",
+            "format": "double",
+            "description": "Bornes de l'intervalle de confiance (ADR-0011)."
+          },
+          "intensity_upper": {
+            "type": "number",
+            "format": "double"
+          },
+          "score": {
+            "type": "number",
+            "format": "double"
+          },
+          "signals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EligibilitySignalBody"
+            }
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        }
+      },
+      "EligibleSlotBody": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "intensity",
+          "intensity_lower",
+          "intensity_upper",
+          "score"
+        ],
+        "properties": {
+          "intensity": {
+            "type": "number",
+            "format": "double"
+          },
+          "intensity_lower": {
+            "type": "number",
+            "format": "double"
+          },
+          "intensity_upper": {
+            "type": "number",
+            "format": "double"
+          },
+          "score": {
+            "type": "number",
+            "format": "double"
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        }
+      },
       "ExchangeEntry": {
         "type": "object",
         "description": "Une frontière : flux net signé FR↔voisin + intensité carbone du voisin.",
@@ -2068,7 +2316,7 @@
       },
       "GreenestWindowResponse": {
         "type": "object",
-        "description": "Réponse de `GET /v1/intensity/greenest-window` : le créneau le plus\nbas-carbone sur l'horizon prévu (ADR-0009).",
+        "description": "Réponse de `GET /v1/intensity/greenest-window` : le créneau le plus\nbas-carbone sur l'horizon prévu (ADR-0009). Si `?eligibility=` est fourni, un\nbloc [`EligibilityBody`] **additif** annote chaque créneau (ADR-0025/0026) ;\nla fenêtre verte classique reste inchangée (rétro-compatibilité).",
         "required": [
           "region",
           "methodology",
@@ -2083,6 +2331,17 @@
             "type": "number",
             "format": "double",
             "description": "Intensité carbone moyenne prévue sur le créneau."
+          },
+          "eligibility": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EligibilityBody",
+                "description": "Overlay d'éligibilité électrolyseur (présent uniquement si `?eligibility=`)."
+              }
+            ]
           },
           "end": {
             "type": "string",
@@ -2725,6 +2984,97 @@
           }
         }
       },
+      "RulesetInfo": {
+        "type": "object",
+        "description": "Une entrée du catalogue `GET /v1/eligibility/rulesets`.",
+        "required": [
+          "framework",
+          "version",
+          "status",
+          "adr",
+          "granularity",
+          "article4_renewable_threshold",
+          "low_carbon_intensity_is_indicative",
+          "electrolyzer_kwh_per_kg",
+          "legal_basis",
+          "description"
+        ],
+        "properties": {
+          "adr": {
+            "type": "string"
+          },
+          "article4_renewable_threshold": {
+            "type": "number",
+            "format": "double"
+          },
+          "description": {
+            "type": "string"
+          },
+          "electrolyzer_kwh_per_kg": {
+            "type": "number",
+            "format": "double"
+          },
+          "framework": {
+            "type": "string"
+          },
+          "granularity": {
+            "type": "string",
+            "description": "Granularité de corrélation temporelle (pilier `rfnbo`) ;\n`n/a (pilier rfnbo)` pour `low-carbon`."
+          },
+          "hourly_switchover": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Date de bascule horaire (`rfnbo`), `None` pour `low-carbon`."
+          },
+          "legal_basis": {
+            "type": "string"
+          },
+          "low_carbon_intensity_is_indicative": {
+            "type": "boolean"
+          },
+          "low_carbon_intensity_threshold_g_per_kwh": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "status": {
+            "type": "string"
+          },
+          "surplus_price_eur_mwh": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "RulesetsResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/eligibility/rulesets` — catalogue des cadres + versions.",
+        "required": [
+          "rulesets",
+          "disclaimer"
+        ],
+        "properties": {
+          "disclaimer": {
+            "type": "string"
+          },
+          "rulesets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RulesetInfo"
+            }
+          }
+        }
+      },
       "SavingsBody": {
         "type": "object",
         "description": "Économie carbone d'un créneau planifié vs « maintenant » (ADR-0014).",
@@ -3201,6 +3551,10 @@
     {
       "name": "méthodologie",
       "description": "Méthodes de calcul & facteurs (ADR-0010)"
+    },
+    {
+      "name": "éligibilité",
+      "description": "Éligibilité électrolyseur RFNBO / bas-carbone (ADR-0025/0026, neutre)"
     },
     {
       "name": "prix",

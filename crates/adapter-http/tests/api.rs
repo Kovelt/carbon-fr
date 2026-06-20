@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use carbonfr_adapter_forecast::ClimatologyForecaster;
-use carbonfr_adapter_http::{AppState, ForecastState, StreamState, router};
+use carbonfr_adapter_http::{AppState, EligibilityRepoAdapter, ForecastState, StreamState, router};
 use carbonfr_core::domain::{
     CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, GenerationMix,
     Granularity, IntensityStats, Measurement, Methodology, Neighbor, Region, RenewableModel,
@@ -1072,6 +1072,115 @@ async fn greenest_window_estimator_selector() {
     // Estimateur inconnu → 400.
     let bad = get(app(None), "/v1/intensity/greenest-window?estimator=bogus").await;
     assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+}
+
+/// Monte le routeur avec l'overlay d'éligibilité câblé (ADR-0025/0026).
+fn build_with_eligibility(repo: FakeRepo) -> axum::Router {
+    let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1")
+        .with_eligibility(Arc::new(EligibilityRepoAdapter(repo.clone())));
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    router(AppState::new(repo), forecast, StreamState::new(updates))
+}
+
+/// Série dense bas-carbone (intensité ~20) sur 14 jours, pour la prévision.
+fn low_carbon_series() -> Vec<Measurement> {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 20.0))
+        .collect()
+}
+
+#[tokio::test]
+async fn greenest_window_without_eligibility_is_backward_compatible() {
+    // Sans `?eligibility=`, la réponse ne porte AUCUN champ `eligibility`.
+    let response = get(
+        build_with_eligibility(FakeRepo {
+            series: low_carbon_series(),
+            ..Default::default()
+        }),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&window_minutes=60",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert!(body.get("eligibility").is_none());
+}
+
+#[tokio::test]
+async fn greenest_window_eligibility_low_carbon_annotates() {
+    let response = get(
+        build_with_eligibility(FakeRepo {
+            series: low_carbon_series(),
+            ..Default::default()
+        }),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&eligibility=low-carbon",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    let elig = &body["eligibility"];
+    assert_eq!(elig["framework"], "low-carbon");
+    assert_eq!(elig["ruleset_version"], "low-carbon:2025-2359");
+    // PIÈGE 1 : zone de dépôt nationale, jamais une sous-région.
+    assert_eq!(elig["bidding_zone"], "FR");
+    assert!(elig["disclaimer"].is_string());
+    assert!(elig["slots"].as_array().unwrap().iter().count() > 0);
+    // Série ~20 gCO₂eq/kWh ≪ 64 → la fenêtre retenue qualifie.
+    assert_eq!(elig["window_eligible"], true);
+    // Signal étiqueté indicatif (proxy non réglementaire).
+    let basis = elig["slots"][0]["signals"][0]["basis"].as_str().unwrap();
+    assert_eq!(basis, "indicative-non-regulatory");
+}
+
+#[tokio::test]
+async fn greenest_window_eligibility_invalid_framework_is_400() {
+    let response = get(
+        build_with_eligibility(FakeRepo {
+            series: low_carbon_series(),
+            ..Default::default()
+        }),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&eligibility=mauve",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = json_body(response).await;
+    assert_eq!(body["code"], "bad_request");
+}
+
+#[tokio::test]
+async fn greenest_window_eligibility_unwired_is_503() {
+    // `build` (sans overlay câblé) + `?eligibility=` → 503 propre.
+    let response = get(
+        app_with_series(low_carbon_series()),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&eligibility=low-carbon",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = json_body(response).await;
+    assert_eq!(body["code"], "unavailable");
+}
+
+#[tokio::test]
+async fn eligibility_rulesets_lists_served_and_planned() {
+    let response = get(app(None), "/v1/eligibility/rulesets").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    let rulesets = body["rulesets"].as_array().unwrap();
+    let versions: Vec<&str> = rulesets
+        .iter()
+        .map(|r| r["version"].as_str().unwrap())
+        .collect();
+    assert!(versions.contains(&"rfnbo:2023-1184"));
+    assert!(versions.contains(&"low-carbon:2025-2359"));
+    assert!(versions.contains(&"rfnbo:2026-revision"));
+    // Le report attendu n'est PAS servi (présent au catalogue, statut planned).
+    let revision = rulesets
+        .iter()
+        .find(|r| r["version"] == "rfnbo:2026-revision")
+        .unwrap();
+    assert_eq!(revision["status"], "planned");
+    assert!(body["disclaimer"].is_string());
 }
 
 #[tokio::test]

@@ -5,8 +5,8 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use carbonfr_core::application::{
-    CarbonAwareScheduler, FindGreenestWindow, GetConsumptionIntensity, GetCrossBorderExchanges,
-    GetCurrentIntensity, GetElectricityPrice, GetIntensityHistory, GetIntensityStats, GetWeather,
+    CarbonAwareScheduler, GetConsumptionIntensity, GetCrossBorderExchanges, GetCurrentIntensity,
+    GetElectricityPrice, GetIntensityHistory, GetIntensityStats, GetWeather,
 };
 use carbonfr_core::domain::{
     CostSource, CostTechnology, Granularity, Perimeter, Region, Subscription, ThresholdDirection,
@@ -16,6 +16,7 @@ use carbonfr_core::ports::{
     ApiKeyRepository, CrossBorderRepository, ForecastModel, IntensityRepository,
     SpotPriceRepository, SubscriptionRepository, VisitCounter, WeatherRepository,
 };
+use carbonfr_eligibility::{EligibilityFramework, resolve_ruleset};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
@@ -23,11 +24,12 @@ use time::{Duration, OffsetDateTime};
 use utoipa::IntoParams;
 
 use crate::dto::{
-    CostReferenceResponse, CreateWebhookRequest, CreatedWebhookResponse, ExchangesHistoryResponse,
-    ExchangesResponse, FactorsResponse, ForecastResponse, GreenestWindowResponse, HistoryResponse,
-    IntensityResponse, MethodologiesResponse, MixResponse, PriceHistoryResponse, PriceResponse,
-    RenewableResponse, ScheduleResponse, SlotsResponse, StatsResponse, StreamEventBody,
-    VisitStatsResponse, WeatherHistoryResponse, WeatherResponse, WebhookListResponse,
+    CostReferenceResponse, CreateWebhookRequest, CreatedWebhookResponse, EligibilityBody,
+    ExchangesHistoryResponse, ExchangesResponse, FactorsResponse, ForecastResponse,
+    GreenestWindowResponse, HistoryResponse, IntensityResponse, MethodologiesResponse, MixResponse,
+    PriceHistoryResponse, PriceResponse, RenewableResponse, RulesetsResponse, ScheduleResponse,
+    SlotsResponse, StatsResponse, StreamEventBody, VisitStatsResponse, WeatherHistoryResponse,
+    WeatherResponse, WebhookListResponse,
 };
 use crate::error::{ApiError, ProblemDetails};
 use crate::{AppState, ForecastState};
@@ -657,6 +659,38 @@ pub(crate) struct GreenestWindowQuery {
     window_minutes: Option<u32>,
     /// Estimateur : `central` (estimation, défaut) ou `prudent` (borne haute).
     estimator: Option<String>,
+    /// Cadre d'éligibilité électrolyseur : `rfnbo` ou `low-carbon` (ADR-0025/0026).
+    /// Absent ⇒ réponse historique inchangée. Axe **orthogonal** à `methodology`.
+    eligibility: Option<String>,
+    /// Version de ruleset (ex. `rfnbo:2023-1184` ou `2023-1184`). Défaut : ruleset
+    /// servi du cadre.
+    eligibility_version: Option<String>,
+    /// Override du seuil de surplus prix (€/MWh, ≥ 0).
+    surplus_price_eur_mwh: Option<f64>,
+    /// Override du seuil d'intensité bas-carbone (gCO₂eq/kWh, ]0, 1000]).
+    low_carbon_threshold_g_per_kwh: Option<f64>,
+}
+
+/// Valide les overrides d'éligibilité (bornes simples ; sinon 400).
+fn validate_eligibility_overrides(
+    surplus_price_eur_mwh: Option<f64>,
+    low_carbon_threshold_g_per_kwh: Option<f64>,
+) -> Result<(), ApiError> {
+    if let Some(p) = surplus_price_eur_mwh
+        && (!p.is_finite() || p < 0.0)
+    {
+        return Err(ApiError::bad_request(
+            "`surplus_price_eur_mwh` doit être un nombre ≥ 0",
+        ));
+    }
+    if let Some(t) = low_carbon_threshold_g_per_kwh
+        && (!t.is_finite() || t <= 0.0 || t > 1000.0)
+    {
+        return Err(ApiError::bad_request(
+            "`low_carbon_threshold_g_per_kwh` doit être dans ]0, 1000]",
+        ));
+    }
+    Ok(())
 }
 
 /// Résout l'estimateur de créneau (`central` par défaut, `prudent` sur la borne
@@ -672,7 +706,8 @@ fn resolve_estimator(raw: &Option<String>) -> Result<WindowEstimator, ApiError> 
 }
 
 /// `GET /v1/intensity/greenest-window` — créneau le plus bas-carbone à venir, sur
-/// la prévision `climatology@1` (ADR-0009).
+/// la prévision `climatology@1` (ADR-0009). Avec `?eligibility=`, annote chaque
+/// créneau d'un verdict d'éligibilité électrolyseur (ADR-0025/0026).
 #[utoipa::path(
     get,
     path = "/v1/intensity/greenest-window",
@@ -681,6 +716,7 @@ fn resolve_estimator(raw: &Option<String>) -> Result<WindowEstimator, ApiError> 
         (status = 200, description = "Créneau le plus bas-carbone", body = GreenestWindowResponse),
         (status = 400, description = "Paramètre invalide", body = ProblemDetails),
         (status = 404, description = "Série insuffisante pour déterminer un créneau", body = ProblemDetails),
+        (status = 503, description = "Overlay d'éligibilité demandé mais non câblé", body = ProblemDetails),
     ),
     tag = "prévision"
 )]
@@ -702,24 +738,88 @@ where
     }
     let estimator = resolve_estimator(&query.estimator)?;
 
-    let use_case = FindGreenestWindow::new(state.forecaster.clone());
-    let window = use_case
-        .execute(
+    // UN SEUL forecast (ADR-0026 D16) : la même série alimente la fenêtre verte
+    // ET l'overlay d'éligibilité. (On n'appelle plus `FindGreenestWindow`, qui
+    // re-prévoit en interne.) Le chemin `acv-ademe@2` reste hors greenest-window,
+    // comme avant — il n'a jamais consulté `state.consumption` ici.
+    let points = state
+        .forecaster
+        .forecast(
             region,
             &methodology,
             from,
             Duration::hours(horizon_hours as i64),
-            Duration::minutes(window_minutes as i64),
-            estimator,
         )
         .await?;
+    let window = carbonfr_core::domain::greenest_window(
+        &points,
+        Duration::minutes(window_minutes as i64),
+        estimator,
+    )
+    .ok_or_else(|| {
+        ApiError::not_found("série insuffisante pour déterminer un créneau bas-carbone")
+    })?;
+
+    let eligibility = match query.eligibility.as_deref() {
+        None => None,
+        Some(slug) => {
+            let framework = EligibilityFramework::from_slug(slug).ok_or_else(|| {
+                ApiError::bad_request(format!(
+                    "`eligibility` doit valoir `rfnbo` ou `low-carbon` (reçu : {slug})"
+                ))
+            })?;
+            validate_eligibility_overrides(
+                query.surplus_price_eur_mwh,
+                query.low_carbon_threshold_g_per_kwh,
+            )?;
+            let ruleset = resolve_ruleset(framework, query.eligibility_version.as_deref())
+                .ok_or_else(|| {
+                    ApiError::bad_request(
+                        "version de ruleset inconnue ou planifiée (non servie) pour ce cadre",
+                    )
+                })?
+                .with_overrides(
+                    query.surplus_price_eur_mwh,
+                    query.low_carbon_threshold_g_per_kwh,
+                    None,
+                );
+            // Overlay non câblé (pas de source mix/prix) ⇒ 503 plutôt qu'un verdict
+            // muet. N'arrive qu'en mauvaise config (toujours câblé en prod).
+            let repo = state.eligibility.as_ref().ok_or_else(|| {
+                ApiError::unavailable("overlay d'éligibilité non câblé (source mix/prix requise)")
+            })?;
+            let verdicts = crate::eligibility_uc::evaluate_eligibility(
+                repo.as_ref(),
+                &points,
+                &ruleset,
+                estimator,
+            )
+            .await;
+            Some(EligibilityBody::from_verdicts(
+                framework, &ruleset, &window, &verdicts,
+            )?)
+        }
+    };
 
     Ok(Json(GreenestWindowResponse::new(
         region.slug(),
         &methodology,
         &state.model,
         &window,
+        eligibility,
     )?))
+}
+
+/// `GET /v1/eligibility/rulesets` — catalogue des cadres et rulesets versionnés
+/// d'éligibilité électrolyseur (ADR-0025/0026). Vérifiabilité + neutralité.
+#[utoipa::path(
+    get,
+    path = "/v1/eligibility/rulesets",
+    responses((status = 200, description = "Rulesets d'éligibilité disponibles", body = RulesetsResponse)),
+    tag = "éligibilité"
+)]
+pub(crate) async fn eligibility_rulesets() -> Json<RulesetsResponse> {
+    Json(RulesetsResponse::catalog())
 }
 
 /// Libellé stable de l'estimateur pour les réponses.

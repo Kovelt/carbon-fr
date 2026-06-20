@@ -374,7 +374,9 @@ impl ForecastResponse {
 }
 
 /// Réponse de `GET /v1/intensity/greenest-window` : le créneau le plus
-/// bas-carbone sur l'horizon prévu (ADR-0009).
+/// bas-carbone sur l'horizon prévu (ADR-0009). Si `?eligibility=` est fourni, un
+/// bloc [`EligibilityBody`] **additif** annote chaque créneau (ADR-0025/0026) ;
+/// la fenêtre verte classique reste inchangée (rétro-compatibilité).
 #[derive(Serialize, ToSchema)]
 pub(crate) struct GreenestWindowResponse {
     region: String,
@@ -388,6 +390,9 @@ pub(crate) struct GreenestWindowResponse {
     unit: &'static str,
     /// Intensité carbone moyenne prévue sur le créneau.
     average_intensity: f64,
+    /// Overlay d'éligibilité électrolyseur (présent uniquement si `?eligibility=`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    eligibility: Option<EligibilityBody>,
 }
 
 impl GreenestWindowResponse {
@@ -396,6 +401,7 @@ impl GreenestWindowResponse {
         methodology: &str,
         model: &str,
         window: &GreenWindow,
+        eligibility: Option<EligibilityBody>,
     ) -> Result<Self, time::error::Format> {
         Ok(Self {
             region: region.to_string(),
@@ -405,7 +411,232 @@ impl GreenestWindowResponse {
             end: to_rfc3339(window.end)?,
             unit: "gCO2eq/kWh",
             average_intensity: window.average.value(),
+            eligibility,
         })
+    }
+}
+
+/// Note de neutralité servie avec chaque réponse d'éligibilité (ADR-0025).
+const ELIGIBILITY_DISCLAIMER: &str = "Support à la décision sur signaux de réseau, PAS une \
+    certification (gCO₂eq/kgH₂ et additionnalité PPA hors périmètre, donnée niveau site absente). \
+    Corrélation géographique évaluée à la zone de dépôt NATIONALE (FR = 1 zone), jamais aux \
+    sous-régions. rfnbo : la branche surplus EUA (<0,36×prix EUA) n'est pas évaluée ; l'Article 4 \
+    légal est une moyenne ANNUELLE (le signal renewable-share est instantané, proxy). low-carbon : \
+    seuil d'intensité INDICATIF (proxy non réglementaire, condition nécessaire) ; reconnaissance du \
+    nucléaire en cours côté UE. carbon-fr expose l'éligibilité au regard de chaque cadre sans \
+    trancher ; une réponse ne porte qu'un cadre (cf. /v1/eligibility/rulesets).";
+
+/// Overlay d'éligibilité d'une fenêtre (ADR-0025/0026).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct EligibilityBody {
+    /// Cadre évalué : `rfnbo` ou `low-carbon`.
+    framework: &'static str,
+    ruleset_version: &'static str,
+    ruleset_status: &'static str,
+    /// `true` si des overrides utilisateur ont été appliqués au ruleset.
+    overridden: bool,
+    /// Zone de dépôt : toujours `FR` (jamais une sous-région).
+    bidding_zone: &'static str,
+    disclaimer: &'static str,
+    /// `true` si **tous** les créneaux de la fenêtre verte retenue sont éligibles.
+    window_eligible: bool,
+    /// Meilleur créneau éligible (score le plus bas), s'il en existe un.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    best_eligible: Option<EligibleSlotBody>,
+    count_eligible: usize,
+    count_indeterminate: usize,
+    /// Verdict par créneau de l'horizon.
+    slots: Vec<EligibilitySlotBody>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct EligibleSlotBody {
+    timestamp: String,
+    intensity: f64,
+    intensity_lower: f64,
+    intensity_upper: f64,
+    score: f64,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct EligibilitySlotBody {
+    timestamp: String,
+    eligible: bool,
+    intensity: f64,
+    /// Bornes de l'intervalle de confiance (ADR-0011).
+    intensity_lower: f64,
+    intensity_upper: f64,
+    score: f64,
+    signals: Vec<EligibilitySignalBody>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct EligibilitySignalBody {
+    /// Pilier : `renewable-share`, `surplus-price` ou `low-carbon-intensity`.
+    pillar: &'static str,
+    /// `pass`, `fail` ou `indeterminate` (donnée manquante, jamais extrapolée).
+    verdict: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    threshold: Option<f64>,
+    /// `regulatory` ou `indicative-non-regulatory` (seuil bas-carbone = proxy).
+    basis: &'static str,
+}
+
+impl EligibilityBody {
+    pub(crate) fn from_verdicts(
+        framework: carbonfr_eligibility::EligibilityFramework,
+        ruleset: &carbonfr_eligibility::EligibilityRuleset,
+        window: &GreenWindow,
+        verdicts: &[carbonfr_eligibility::EligibilityVerdict],
+    ) -> Result<Self, time::error::Format> {
+        let slots = verdicts
+            .iter()
+            .map(slot_body)
+            .collect::<Result<Vec<_>, time::error::Format>>()?;
+
+        let best_eligible = carbonfr_eligibility::best_eligible(verdicts)
+            .map(|v| {
+                Ok::<_, time::error::Format>(EligibleSlotBody {
+                    timestamp: to_rfc3339(v.timestamp)?,
+                    intensity: v.carbon_intensity.value(),
+                    intensity_lower: v.intensity_lower.value(),
+                    intensity_upper: v.intensity_upper.value(),
+                    score: v.score,
+                })
+            })
+            .transpose()?;
+
+        // Éligibilité de la fenêtre verte retenue : TOUS les créneaux qui tombent
+        // dans [start, end) doivent être éligibles (et il doit en exister au moins
+        // un). Un créneau indéterminé ou absent ⇒ fenêtre non éligible.
+        let in_window: Vec<&carbonfr_eligibility::EligibilityVerdict> = verdicts
+            .iter()
+            .filter(|v| v.timestamp >= window.start && v.timestamp < window.end)
+            .collect();
+        let window_eligible = !in_window.is_empty() && in_window.iter().all(|v| v.eligible);
+
+        Ok(Self {
+            framework: framework.slug(),
+            ruleset_version: ruleset.version,
+            ruleset_status: ruleset.status.slug(),
+            overridden: ruleset.overridden,
+            bidding_zone: carbonfr_eligibility::FR_BIDDING_ZONE,
+            disclaimer: ELIGIBILITY_DISCLAIMER,
+            window_eligible,
+            best_eligible,
+            count_eligible: verdicts.iter().filter(|v| v.eligible).count(),
+            count_indeterminate: verdicts.iter().filter(|v| v.is_indeterminate()).count(),
+            slots,
+        })
+    }
+}
+
+fn slot_body(
+    v: &carbonfr_eligibility::EligibilityVerdict,
+) -> Result<EligibilitySlotBody, time::error::Format> {
+    let signals = v
+        .signals
+        .iter()
+        .map(|s| EligibilitySignalBody {
+            pillar: s.pillar().slug(),
+            verdict: match s.passed() {
+                Some(true) => "pass",
+                Some(false) => "fail",
+                None => "indeterminate",
+            },
+            value: s.value(),
+            threshold: s.threshold(),
+            basis: carbonfr_eligibility::basis_of(s.pillar()),
+        })
+        .collect();
+    Ok(EligibilitySlotBody {
+        timestamp: to_rfc3339(v.timestamp)?,
+        eligible: v.eligible,
+        intensity: v.carbon_intensity.value(),
+        intensity_lower: v.intensity_lower.value(),
+        intensity_upper: v.intensity_upper.value(),
+        score: v.score,
+        signals,
+    })
+}
+
+/// Une entrée du catalogue `GET /v1/eligibility/rulesets`.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct RulesetInfo {
+    framework: &'static str,
+    version: &'static str,
+    status: &'static str,
+    adr: &'static str,
+    /// Granularité de corrélation temporelle (pilier `rfnbo`) ;
+    /// `n/a (pilier rfnbo)` pour `low-carbon`.
+    granularity: &'static str,
+    /// Date de bascule horaire (`rfnbo`), `None` pour `low-carbon`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hourly_switchover: Option<String>,
+    article4_renewable_threshold: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    surplus_price_eur_mwh: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    low_carbon_intensity_threshold_g_per_kwh: Option<f64>,
+    low_carbon_intensity_is_indicative: bool,
+    electrolyzer_kwh_per_kg: f64,
+    legal_basis: &'static str,
+    description: &'static str,
+}
+
+/// Réponse de `GET /v1/eligibility/rulesets` — catalogue des cadres + versions.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct RulesetsResponse {
+    rulesets: Vec<RulesetInfo>,
+    disclaimer: &'static str,
+}
+
+impl RulesetsResponse {
+    /// Catalogue (source unique : `carbonfr_eligibility::ruleset_catalog`).
+    pub(crate) fn catalog() -> Self {
+        use carbonfr_eligibility::EligibilityFramework;
+        let rulesets = carbonfr_eligibility::ruleset_catalog()
+            .into_iter()
+            .map(|r| {
+                let is_rfnbo = r.framework == EligibilityFramework::Rfnbo;
+                RulesetInfo {
+                    framework: r.framework.slug(),
+                    version: r.version,
+                    status: r.status.slug(),
+                    adr: r.adr,
+                    granularity: if is_rfnbo {
+                        r.granularity.slug()
+                    } else {
+                        "n/a (pilier rfnbo)"
+                    },
+                    hourly_switchover: if is_rfnbo {
+                        let d = r.hourly_switchover;
+                        Some(format!(
+                            "{:04}-{:02}-{:02}",
+                            d.year(),
+                            u8::from(d.month()),
+                            d.day()
+                        ))
+                    } else {
+                        None
+                    },
+                    article4_renewable_threshold: r.article4_renewable_threshold,
+                    surplus_price_eur_mwh: r.surplus_price_eur_mwh,
+                    low_carbon_intensity_threshold_g_per_kwh: r
+                        .low_carbon_intensity_threshold_g_per_kwh,
+                    low_carbon_intensity_is_indicative: r.low_carbon_intensity_is_indicative,
+                    electrolyzer_kwh_per_kg: r.electrolyzer_kwh_per_kg,
+                    legal_basis: r.legal_basis,
+                    description: r.description,
+                }
+            })
+            .collect();
+        Self {
+            rulesets,
+            disclaimer: ELIGIBILITY_DISCLAIMER,
+        }
     }
 }
 

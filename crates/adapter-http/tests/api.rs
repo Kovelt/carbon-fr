@@ -432,12 +432,22 @@ async fn cost_reference_lists_dispersion_and_split_nuclear() {
     assert!(techs.contains(&"nucleaire-nouveau"));
     for e in entries {
         assert_eq!(e["kind"], "estimation");
-        // Dispersion (fourchette) pour chaque filière, jamais un point unique.
+        // Bornes cohérentes (on tolère le point unique min == max d'une 2e source).
         let r = &e["range"];
-        assert!(r["min"].as_f64().unwrap() < r["max"].as_f64().unwrap());
+        assert!(r["min"].as_f64().unwrap() <= r["max"].as_f64().unwrap());
         // Symétrie de périmètre : uniforme pour toutes les filières.
         assert_eq!(e["perimeter"], "plateau");
     }
+    // Multi-sources : le solaire a au moins 2 sources distinctes (ADEME + IRENA).
+    let solar_sources: std::collections::HashSet<&str> = entries
+        .iter()
+        .filter(|e| e["technology"] == "solaire-pv")
+        .map(|e| e["source"].as_str().unwrap())
+        .collect();
+    assert!(
+        solar_sources.len() >= 2,
+        "solaire-pv devrait être multi-sources"
+    );
     // Non-verdict : aucun écart/gap calculé.
     assert!(body.get("gap").is_none());
     assert!(entries.iter().all(|e| e.get("gap").is_none()));

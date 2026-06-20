@@ -368,12 +368,16 @@ export interface CostReferenceEntry {
   source: string;
   source_label: string;
   source_attribution: string;
+  /** Périmètre géographique : `"france"` ou `"monde"` (IRENA = mondial, souvent plus bas). */
+  geography: string;
   perimeter: string;
   /** Libellé explicitant ce que le périmètre inclut/exclut. */
   perimeter_label: string;
   /** `"accounting-amortized"` (coût comptable amorti) vs `"prospective-lcoe"`. */
   basis: string;
   basis_label: string;
+  /** Nombre de sources distinctes pour cette filière (≥ 2 = dispersion inter-sources ; 1 = mono-source). */
+  technology_source_count: number;
   vintage: number;
   /** Statut systématique : `"estimation"` (ADR-0024). */
   kind: string;

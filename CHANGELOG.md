@@ -8,6 +8,18 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté
+
+- **`/v1/cost-reference` — dispersion inter-sources (multi-sources)**. 2e source par
+  filière : **IRENA** (LCOE mondiaux 2024) pour les 5 renouvelables, **CRE** pour le
+  nucléaire existant — la fourchette mêle désormais dispersion intra-source ET
+  inter-sources. Le **nucléaire nouveau reste mono-source** (RTE) faute de 2e source
+  primaire licence-compatible (IPCC/NEA/IEA écartés pour clause NC). Deux nouveaux
+  champs par entrée : `geography` (`france`/`monde` — IRENA est mondial, souvent plus
+  bas que la France) et `technology_source_count` (≥ 2 = multi-sources). **GATE de
+  neutralité re-joué (n°3) : GREEN** (asymétrie du neuf jugée *content-blind* —
+  IRENA, la source la plus pro-EnR, est incluse ; IEA/NEA pro-pilotable exclues).
+
 ### Modifié
 
 - **`/v1/cost-reference` — licences confirmées** (recherche 2026-06-20, sources

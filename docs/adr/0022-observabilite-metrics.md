@@ -33,6 +33,7 @@ Les métriques utiles ici sont des **compteurs et des jauges** — pas d'histogr
 | `carbonfr_upstream_requests_total{source}` | counter | appels amont (`odre`/`open-meteo`/`entsoe`) — **proxy de quota** |
 | `carbonfr_poller_last_success_timestamp_seconds` | gauge | dernier cycle ayant écrit ≥ 1 ligne |
 | `carbonfr_poller_last_measurement_timestamp_seconds` | gauge | horodatage de la dernière mesure nationale connue |
+| `carbonfr_poller_last_price_timestamp_seconds` | gauge | horodatage de la dernière ingestion de prix spot (ADR-0023) |
 
 **Alerte phare** : `time() − carbonfr_poller_last_success_timestamp_seconds > 2 × intervalle de poll` ⇒ ingestion en panne.
 

@@ -101,7 +101,7 @@ Un harnais de **validation *walk-forward*** sur l'historique (consolidé/défini
 - La **prévision `acv-ademe`** (imports prévus + intensités voisines prévues) **se couple à l'axe 1** → reportée.
 - Le **ML** reste un **futur adapter** derrière le même port ; le choix de *runtime* (Rust pur vs ONNX/`tract`) **n'est pas tranché ici**.
 - `GET /v1/intensity/forecast` renvoie désormais `expected` + `lower`/`upper` + `model`, et expose le **niveau de confiance**.
-- `GET /v1/greenest-window` gagne un sélecteur optionnel d'estimateur (central / prudent), **défaut central**.
+- `GET /v1/intensity/greenest-window` gagne un sélecteur optionnel d'estimateur (central / prudent), **défaut central**.
 
 ## Conséquences
 

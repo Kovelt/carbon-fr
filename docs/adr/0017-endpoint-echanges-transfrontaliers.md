@@ -25,4 +25,4 @@ Le domaine et l'ingestion sont **inchangés** : c'est strictement une projection
 - **Pas de coût d'ingestion** : la donnée existe déjà ; l'endpoint est une exposition.
 - **Honnêteté** : `gb` (Royaume-Uni) est indisponible côté ENTSO-E depuis le Brexit → simplement absent des frontières servies (pas d'entrée fictive).
 - **Périmètre** : limité aux **6 frontières de la France** (ce qu'ENTSO-E fournit proprement pour RTE). Une éventuelle **matrice européenne pays↔pays** (toutes frontières) serait un chantier distinct (ingestion élargie + quota + ADR dédié).
-- **Série historique** : `GET /v1/exchanges/date?from=&to=` (fenêtre ≤ 366 j) sert la série derrière le même DTO par snapshot (`flows_range`), pour des courbes/animations dans le temps.
+- **Série historique** : `GET /v1/exchanges/date?from=&to=` (fenêtre ≤ 92 j, série dense) sert la série derrière le même DTO par snapshot (`flows_range`), pour des courbes/animations dans le temps.

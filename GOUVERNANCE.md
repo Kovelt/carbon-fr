@@ -56,20 +56,23 @@ C'est le même schéma que sur un **GitLab auto-hébergé** plus tard (branches 
 
 ## 5. Intégration continue (CI)
 
-Un workflow GitHub Actions exécute, à chaque PR, exactement les règles du CONTRIBUTING :
+Le workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) s'exécute à chaque PR (et sur `push` vers `main`, plus un scan quotidien des advisories) et applique exactement les règles du CONTRIBUTING :
 
-- `cargo fmt --all -- --check`
-- `cargo clippy --all-targets -- -D warnings`
-- `cargo test --workspace`
+- **lint** : `cargo fmt --all --check` + `cargo clippy --all-targets -- -D warnings` ;
+- **deny** : `cargo deny check` (licences permissives, avis RustSec, sources de confiance — `deny.toml`) ;
+- **test** : `cargo test --workspace` avec un service PostgreSQL (les tests d'intégration appliquent eux-mêmes les migrations) ;
+- **build-release** : `cargo build --release --locked` du binaire `carbonfr-server` (garantit que l'image de prod compile et que le lockfile est cohérent) ;
+- **sdk-typescript** : typecheck + build du SDK `@carbon-fr/sdk` (`sdk/typescript/`).
 
 Ces jobs deviennent les **status checks requis** de la protection de `main`. La CI applique ainsi *mécaniquement* ce que la doc décrit : plus de « on a oublié de lancer clippy ».
 
 ## 6. Versionnage & releases
 
-- **SemVer** (`MAJOR.MINOR.PATCH`). Tag git `vX.Y.Z` par release, et **GitHub Release** associée.
-- **Phase `0.x`** : tant qu'on est avant la `1.0`, les ruptures d'API sont tolérées en *minor* — ça laisse itérer sans drame, tout en restant honnête sur la stabilité.
+- **SemVer**, **version unique de workspace** (`[workspace.package] version` dans le `Cargo.toml` racine, héritée par toutes les crates via `version.workspace = true` ; pas de version par crate — ADR-0019). Tag git `vX.Y.Z` par release, qui doit **refléter** cette version (garde-fou CI dans `release.yml`).
+- **Phase `0.x`** : tant qu'on est avant la `1.0`, les ruptures internes sont tolérées en *minor* — ça laisse itérer sans drame, tout en restant honnête sur la stabilité.
 - **CHANGELOG.md** au format [Keep a Changelog](https://keepachangelog.com/fr/) : une section par version, regroupée en *Ajouté / Modifié / Corrigé / Supprimé*.
-- **Publication crates.io** (plus tard) : `cargo publish` par crate publiable (`carbonfr-core`, …). Rappel : l'URL de l'API publique, elle, est versionnée séparément dans le chemin (`/v1`, ADR-0007) — ne pas confondre version du code et version du contrat d'API.
+- **Release = image Docker, pas crates.io.** Les crates ne sont **pas** publiées sur crates.io (le service se distribue en image) : pousser un tag `vX.Y.Z` déclenche [`.github/workflows/release.yml`](.github/workflows/release.yml), qui construit et publie l'image sur **GHCR** (`ghcr.io/kovelt/carbon-fr`, publique) taguée `X.Y.Z` / `X.Y` / `latest`, puis crée la **GitHub Release** associée (notes extraites du CHANGELOG). En prod : épingler une version exacte (rollback = redéployer le tag précédent). Le **SDK TypeScript** suit son propre tag `sdk-v*` ([`release-sdk.yml`](.github/workflows/release-sdk.yml)).
+- **Quatre axes de version découplés** (ADR-0019), à ne jamais confondre : version applicative (code, ce tag), contrat d'API (`/v1`, ADR-0007), méthodologies & modèles portés par la donnée (`rte-direct`, `acv-ademe@1`/`@2`, `climatology@1`…), et SDK (`sdk-v*`). Aucun ne pilote les autres.
 - **Dépréciation** (ADR-0020) : on ne retire **jamais** un élément public (version d'API, endpoint, champ, méthodologie) sans préavis. Une dépréciation s'annonce via les en-têtes HTTP `Deprecation` (RFC 9745) + `Sunset` (RFC 8594), une section *Déprécié* du CHANGELOG et `deprecated: true` dans l'OpenAPI ; retrait au plus tôt après la fenêtre (≥ 6 mois post-1.0, ≥ 30 jours en pré-1.0).
 
 ## 7. Les fichiers de gouvernance

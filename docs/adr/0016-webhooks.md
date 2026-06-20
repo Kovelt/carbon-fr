@@ -28,8 +28,8 @@
   API requise** (le secret n'est affiché qu'à la création).
 
 **Reste ouvert** (non bloquant) : désactivation d'un abonnement après N échecs
-consécutifs, quotas chiffrés par clé (nb d'abonnements), purge des abonnements
-morts — itérations derrière les mêmes ports.
+consécutifs, purge des abonnements morts — itérations derrière les mêmes ports.
+(Quota par clé livré : `MAX_WEBHOOKS_PER_KEY = 50` abonnements, refusé au-delà.)
 
 ## Contexte
 

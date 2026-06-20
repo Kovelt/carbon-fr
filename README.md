@@ -80,7 +80,7 @@ console.log(now.intensity.value, now.intensity.unit); // 20 gCO2eq/kWh
 | `GET /v1/renewable` | Production renouvelable **estimée** depuis la météo + facteur de charge (ADR-0018) | ✅ |
 | `GET /v1/intensity/date?from=&to=` | Historique sur un intervalle (révisé/consolidé/définitif) | ✅ |
 | `GET /v1/intensity/stats?from=&to=[&interval=hour\|day]` | Résumé (moyenne/min/max) + série agrégée | ✅ |
-| `GET /v1/intensity/forecast` | Prévision d'intensité (`climatology@1`) | ✅ |
+| `GET /v1/intensity/forecast` | Prévision d'intensité (`climatology@1` ; `acv-ademe@2` via `?methodology=acv-ademe&version=2`) | ✅ |
 | `GET /v1/intensity/greenest-window` | Créneau le plus bas-carbone | ✅ |
 | `GET /v1/schedule` · `/schedule/slots` · `/intensity/below` | Scheduling carbon-aware (échéance, *lowest-k*, seuil + économie) | ✅ |
 | `GET /v1/intensity/stream` | Flux **live** (Server-Sent Events) | ✅ |
@@ -89,11 +89,13 @@ console.log(now.intensity.value, now.intensity.unit); // 20 gCO2eq/kWh
 | `GET /v1/cost-reference` | Couche comparative **LCOE** (coût de production), estimation en fourchette, jamais soustraite du marché (ADR-0024) | ✅ |
 | `POST`/`GET`/`DELETE /v1/webhooks` | Abonnements webhook signés (clé API requise) | ✅ |
 
-Tous les endpoints `/v1` acceptent `?region=<slug>` (national par défaut) et `?methodology=<id>` : **`rte-direct`** (estimation RTE, combustion directe — défaut) ou **`acv-ademe`** (cycle de vie ADEME, ADR-0008).
+Les endpoints d'**intensité** (`/intensity/now`, `/intensity/date`, `/intensity/stats`, `/mix`) acceptent `?region=<slug>` (national par défaut) et `?methodology=<id>` : **`rte-direct`** (estimation RTE, combustion directe — défaut, **national uniquement**) ou **`acv-ademe`** (cycle de vie ADEME, national + 12 régions, ADR-0008). Les endpoints de prix, coût, échanges, météo, renouvelable et catalogue (`/price`, `/cost-reference`, `/exchanges`, `/weather`, `/renewable`, `/methodologies`, `/factors`) sont **nationaux** (`/price` renvoie `400` hors national).
 
 La spécification **OpenAPI 3.1** (dérivée du code via `utoipa`) est servie sous **`GET /v1/openapi.json`**, et une **Swagger UI** sous **`GET /docs`**. Une collection **[Bruno](https://www.usebruno.com/)** versionnée (dossier [`bruno/`](bruno/)) couvre tous les endpoints (cas nominaux + erreurs).
 
-Les **erreurs** suivent **[RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)** (`application/problem+json`) : `type`/`title`/`status`/`detail` + un champ `code` court et **stable** (`no_data`, `bad_request`…) sur lequel s'aligner.
+Les **erreurs** suivent **[RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)** (`application/problem+json`) : `type`/`title`/`status`/`detail` + un champ `code` court et **stable** (`no_data`, `bad_request`…) sur lequel s'aligner. Côté disponibilité, l'API peut répondre `503` (`unavailable`) quand une donnée dérivée n'est pas encore prête — p. ex. `/v1/renewable` si le modèle n'est pas calibré, ou `/health/ready` si la base est injoignable — et `/v1/price` renvoie `404` si aucune source de prix spot n'est configurée (token ENTSO-E absent).
+
+**Tier hébergé & clés API** (ADR-0015, *opt-in*) : par défaut l'API est **anonyme et sans quota** (parité avec l'auto-hébergement). L'opérateur peut activer une **limite de débit** (`CARBONFR_RATELIMIT_ENABLED=1`) — anonyme **60 req/min**, clé *Free* **600 req/min**, en-têtes `RateLimit-*`, `429` (`rate_limited`) au dépassement. Une **clé API** (`Bearer`, requise pour les webhooks) se délivre côté serveur via la sous-commande `mint-key` : l'empreinte est stockée, la clé n'est affichée **qu'une seule fois**.
 
 Un compteur de consultation sobre est exposé (**`GET /v1/stats`**, **`POST /v1/stats/visit`**) : l'IP n'est **jamais** stockée — seule une empreinte **SHA-256 salée** sert à dédupliquer (unique par IP/jour), RGPD-friendly.
 
@@ -131,14 +133,14 @@ carbon-fr/
 │   ├── adapter-http/           # ✅ API axum + OpenAPI + auth + SSE (adapter entrant)
 │   ├── adapter-forecast/       # ✅ impl ForecastModel (climatology@1, acv-ademe@2)
 │   ├── adapter-meteo/          # ✅ impl WeatherForecastSource (Open-Meteo)
-│   ├── adapter-entsoe/         # ✅ impl CrossBorderSource (ENTSO-E)
+│   ├── adapter-entsoe/         # ✅ impl CrossBorderSource + SpotPriceSource (ENTSO-E)
 │   ├── adapter-webhook/        # ✅ impl Notifier (livraison signée, anti-SSRF)
-│   └── adapter-gbdt/           # ✅ impl ForecastModel ML (GBDT)
+│   └── adapter-gbdt/           # ✅ impl ForecastModel ML (GBDT, exploré — non servi)
 ├── bin/
 │   └── server/                 # ✅ composition root : adapters + poller
 ├── bruno/                      # collection Bruno (requêtes .bru versionnées)
 ├── sdk/typescript/             # SDK client TypeScript (@carbon-fr/sdk)
-├── deploy/                     # Caddyfile (reverse proxy TLS) + unité systemd
+├── deploy/                     # exemples self-host (Caddyfile, systemd) + README (prod Traefik)
 ├── Dockerfile                  # image de prod multi-stage
 ├── .env.example                # variables d'environnement documentées
 └── docs/
@@ -164,7 +166,7 @@ Le crate `core` se teste **entièrement en mémoire**, avec des _fakes_ impléme
 
 ## Déploiement
 
-Image de production via le [`Dockerfile`](Dockerfile) multi-stage (binaire `--release`, runtime Debian slim, utilisateur non-root). En bare-metal, une unité systemd ([`deploy/carbonfr.service`](deploy/carbonfr.service)) avec `Restart=on-failure`. Dans les deux cas, placer l'API **derrière un reverse proxy TLS** ([`deploy/Caddyfile`](deploy/Caddyfile)) et activer `CARBONFR_TRUST_PROXY=1`.
+Image de production via le [`Dockerfile`](Dockerfile) multi-stage (binaire `--release`, runtime Debian slim, utilisateur non-root). Chaque tag git `vX.Y.Z` **publie l'image sur GHCR** (`ghcr.io/kovelt/carbon-fr:X.Y.Z`, publique, ADR-0019) — en prod, épingler une version exacte. En bare-metal, une unité systemd ([`deploy/carbonfr.service`](deploy/carbonfr.service)) avec `Restart=on-failure`. Dans les deux cas, placer l'API **derrière un reverse proxy TLS** ([`deploy/Caddyfile`](deploy/Caddyfile), exemple self-host) et activer `CARBONFR_TRUST_PROXY=1`. L'**instance hébergée** (`carbon-fr-api.kovelt.fr`) tourne comme un service de la stack Kovelt **derrière Traefik** (PostgreSQL dédié) ; détails dans [`deploy/README.md`](deploy/README.md).
 
 ```bash
 docker build -t carbon-fr .
@@ -172,6 +174,8 @@ docker run -e DATABASE_URL=postgres://… -e CARBONFR_VISIT_SALT=… -p 8080:808
 ```
 
 Configuration via variables d'environnement — voir [`.env.example`](.env.example). Sondes : `GET /health` (liveness) et `GET /health/ready` (vérifie la base). Métriques **Prometheus** sous `GET /metrics` (fraîcheur du poller, volume ingéré, appels amont — à restreindre au scrapeur côté proxy en prod). Les migrations sont appliquées au démarrage.
+
+Outre le serveur, le binaire expose des **sous-commandes** *one-shot* : `backfill` (rapatrie l'historique par export de masse — prérequis de `/intensity/date`, `/intensity/stats` et de la prévision), `mint-key` (délivre une clé API), les `backtest*` / `train` (évaluation et entraînement des modèles de prévision) et `--version`.
 
 ## Méthodologie & données
 

@@ -1,6 +1,6 @@
 # ADR-0010 — Méthodologie `acv-ademe` (cycle de vie + imports, *consumption-based*)
 
-- **Statut** : Accepté (mise en œuvre **engagée** — domaine pur + endpoints de vérifiabilité livrés ; source d'import ENTSO-E à brancher)
+- **Statut** : Accepté (mise en œuvre **engagée** — domaine pur + endpoints de vérifiabilité livrés ; source d'import ENTSO-E branchée et validée live, ingestion poller + service `@2` à la lecture livrés ; cf. § État d'implémentation)
 - **Date** : 2026-06-15
 - **Raffine** : ADR-0005 (qui *engageait* `acv-ademe`) ; **fait évoluer l'ADR-0008** (de l'`acv-ademe@1` *production-based* livré vers une méthode *consumption-based*, imports ENTSO-E inclus)
 

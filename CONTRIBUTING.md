@@ -38,7 +38,7 @@ Si une contribution fait fuiter de l'infrastructure dans le domaine, elle sera r
 1. Fork + branche dédiée (`feat/…`, `fix/…`, `docs/…`).
 2. Commits clairs et articulés (un commit = une intention). Les [Conventional Commits](https://www.conventionalcommits.org/) sont appréciés mais non obligatoires.
 3. Ouvre une Pull Request en décrivant le **quoi** et le **pourquoi**, en liant l'issue / l'ADR concerné.
-4. La CI (fmt, clippy, tests) doit être verte.
+4. La CI (fmt, clippy, tests, `cargo deny`) doit être verte.
 
 ## Langue
 

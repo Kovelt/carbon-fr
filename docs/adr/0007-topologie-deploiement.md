@@ -38,3 +38,14 @@ Contraintes : souveraineté (FR/EU), auto-hébergement, coût maîtrisé, et le 
 - **API sur PC-Dada (auto-hébergement résidentiel + DuckDNS)** : écarté — IP dynamique, disponibilité moindre, inadapté à une API publique. Le VPS à IP fixe est le bon support.
 - **PostgreSQL managé externe** : superflu au volume, et s'éloigne de l'auto-hébergement souverain.
 - **Domaine dédié dès maintenant** : reporté. Le sous-domaine Kovelt sert de vitrine, reste réversible, et un domaine dédié pourra venir si la communauté le justifie.
+
+## Addendum (2026-06-20) — résolution des questions ouvertes
+
+Les choix de packaging laissés ouverts ont été tranchés à l'usage, parfois à l'inverse de la recommandation initiale :
+
+- **Forme du poller** : finalement **intégré** au process `server` (tâche de fond, pas de `bin/poller` séparé). Le flux live SSE passe par un canal mémoire `tokio::broadcast` ; une variante `bin/poller` + `LISTEN`/`NOTIFY` reste documentée pour un futur multi-instances (ADR-0014).
+- **Packaging** : **image Docker publiée sur GHCR** (`ghcr.io/kovelt/carbon-fr`, ADR-0019), déployée en conteneur sur le VPS Kovelt derrière **Traefik** + PostgreSQL dédié. Les exemples self-host (`deploy/Caddyfile`, `deploy/carbonfr.service` systemd) restent fournis.
+- **Reverse proxy** : la prod utilise **Traefik** (Caddy/nginx ne sont que des exemples self-host).
+- **Site / doc / playground** : le SSG sur o2switch n'est pas encore déployé ; la doc vit dans le repo (README, `docs/`, OpenAPI `/docs`). Sous-domaine d'API retenu : `carbon-fr-api.kovelt.fr`.
+
+Cf. ARCHITECTURE §9 et `deploy/README.md`.

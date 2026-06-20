@@ -32,3 +32,7 @@ Conséquence : notre stockage **n'est pas purement append-only**. Une même `(r�
 
 - **Conserver tous les millésimes** (clé incluant `vintage`, donc plusieurs lignes par instant) : permet d'auditer l'écart temps réel vs définitif, mais multiplie le volume et complique les lectures « meilleure version ». Écarté pour le MVP ; réintroductible plus tard si un besoin d'audit apparaît (le port le permettrait).
 - **Ignorer les révisions** (ne garder que le temps réel) : simple, mais on servirait des chiffres durablement faux par rapport aux données consolidées/définitives de RTE. Inacceptable pour une API qui se veut référence.
+
+## Addendum (2026-06-20) — rollups en tables incrémentales
+
+Le point 5 est conservé dans son intention (toute révision touchant une période agrégée recalcule les rollups concernés), mais l'implémentation est passée des **vues matérialisées** (migration `0002`) à des **tables de rollup incrémentales** rafraîchies par seau (migration `0010`). L'invariant fonctionnel est inchangé. L'index `BRIN` évoqué en Conséquences reste **reporté** (cf. addendum ADR-0004).

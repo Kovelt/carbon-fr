@@ -1,6 +1,6 @@
 # ADR-0012 — Modèle de prévision ML : `GbdtForecaster` (tout-Rust) + features météo
 
-- **Statut** : Accepté (mise en œuvre **engagée** — store météo livré ; modèle à venir)
+- **Statut** : Accepté (mise en œuvre **engagée** — store météo + framework GBDT + `bin/train` + `GbdtForecaster` livrés ; mesuré, `gbdt@1` ne bat pas `climatology@1` → **non servi** par garde de promotion ; gain ML = itération ouverte)
 - **Date** : 2026-06-15
 - **Raffine** : ADR-0011 (tranche la fourche *runtime* qu'il avait laissée ouverte)
 

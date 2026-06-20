@@ -2,9 +2,9 @@
 //! jamais dans `core`). L'unité canonique est exposée explicitement.
 
 use carbonfr_core::domain::{
-    COST_REFERENCE_DISCLAIMER, CostEstimate, CrossBorderSnapshot, ForecastPoint, GenerationMix,
-    GreenWindow, IntensityStats, Measurement, Neighbor, PriceBreakdown, RenewableModel,
-    RollupBucket, VisitStats, WeatherForecast,
+    COST_REFERENCE_DISCLAIMER, CostEstimate, CostTechnology, CrossBorderSnapshot, ForecastPoint,
+    GenerationMix, GreenWindow, IntensityStats, Measurement, Neighbor, PriceBreakdown,
+    RenewableModel, RollupBucket, VisitStats, WeatherForecast, cost_reference_catalog,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -958,6 +958,10 @@ struct CostReferenceEntry {
     source: &'static str,
     source_label: &'static str,
     source_attribution: &'static str,
+    /// Périmètre géographique des chiffres : `france` ou `monde`. Les valeurs
+    /// IRENA sont **mondiales** (souvent plus basses que les sources France) — à
+    /// ne pas lire comme un coût français.
+    geography: &'static str,
     perimeter: &'static str,
     /// Libellé explicitant ce que le périmètre inclut/exclut (non comparable
     /// pilotable/variable).
@@ -966,11 +970,15 @@ struct CostReferenceEntry {
     /// amorti) vs `prospective-lcoe` (moyen neuf). Évite la fausse commensurabilité.
     basis: &'static str,
     basis_label: &'static str,
+    /// Nombre de sources distinctes pour cette filière (≥ 2 = dispersion
+    /// inter-sources ; 1 = mono-source assumé, ex. nucléaire nouveau).
+    technology_source_count: usize,
     /// Millésime (année du rapport source).
     vintage: u32,
     /// Statut : toujours `estimation` (ADR-0024 §4).
     kind: &'static str,
-    /// Fourchette (dispersion **publiée par la source**) — jamais un point unique.
+    /// Fourchette de la source (peut être un point si la source ne publie qu'une
+    /// moyenne — la dispersion par filière vient alors de l'autre source).
     range: LcoeRangeBody,
     hypotheses: CostAssumptionsBody,
 }
@@ -995,6 +1003,18 @@ struct CostAssumptionsBody {
 
 impl CostReferenceResponse {
     pub(crate) fn from_entries(entries: &[CostEstimate]) -> Self {
+        // Nombre de sources distinctes par filière, calculé sur le catalogue
+        // **complet** (propriété de couverture, indépendante d'un filtre de requête).
+        let mut source_counts: std::collections::HashMap<
+            CostTechnology,
+            std::collections::HashSet<&'static str>,
+        > = std::collections::HashMap::new();
+        for e in cost_reference_catalog().entries() {
+            source_counts
+                .entry(e.key.technology)
+                .or_default()
+                .insert(e.key.source.slug());
+        }
         let entries = entries
             .iter()
             .map(|e| CostReferenceEntry {
@@ -1003,10 +1023,14 @@ impl CostReferenceResponse {
                 source: e.key.source.slug(),
                 source_label: e.key.source.label(),
                 source_attribution: e.key.source.attribution(),
+                geography: e.key.source.geography(),
                 perimeter: e.key.perimeter.slug(),
                 perimeter_label: e.key.perimeter.label(),
                 basis: e.basis.slug(),
                 basis_label: e.basis.label(),
+                technology_source_count: source_counts
+                    .get(&e.key.technology)
+                    .map_or(1, |s| s.len()),
                 vintage: e.key.vintage,
                 kind: "estimation",
                 range: LcoeRangeBody {

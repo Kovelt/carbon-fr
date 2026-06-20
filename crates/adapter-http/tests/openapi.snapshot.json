@@ -1648,10 +1648,12 @@
           "source",
           "source_label",
           "source_attribution",
+          "geography",
           "perimeter",
           "perimeter_label",
           "basis",
           "basis_label",
+          "technology_source_count",
           "vintage",
           "kind",
           "range",
@@ -1664,6 +1666,10 @@
           },
           "basis_label": {
             "type": "string"
+          },
+          "geography": {
+            "type": "string",
+            "description": "Périmètre géographique des chiffres : `france` ou `monde`. Les valeurs\nIRENA sont **mondiales** (souvent plus basses que les sources France) — à\nne pas lire comme un coût français."
           },
           "hypotheses": {
             "$ref": "#/components/schemas/CostAssumptionsBody"
@@ -1681,7 +1687,7 @@
           },
           "range": {
             "$ref": "#/components/schemas/LcoeRangeBody",
-            "description": "Fourchette (dispersion **publiée par la source**) — jamais un point unique."
+            "description": "Fourchette de la source (peut être un point si la source ne publie qu'une\nmoyenne — la dispersion par filière vient alors de l'autre source)."
           },
           "source": {
             "type": "string"
@@ -1697,6 +1703,11 @@
           },
           "technology_label": {
             "type": "string"
+          },
+          "technology_source_count": {
+            "type": "integer",
+            "description": "Nombre de sources distinctes pour cette filière (≥ 2 = dispersion\ninter-sources ; 1 = mono-source assumé, ex. nucléaire nouveau).",
+            "minimum": 0
           },
           "vintage": {
             "type": "integer",

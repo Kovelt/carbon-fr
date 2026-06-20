@@ -110,3 +110,34 @@ Les **licences** ont été confirmées (recherche du 2026-06-20, §licences) : p
 **Re-jeu obligatoire** de cette revue à toute modification des sources, valeurs, lexique, périmètre ou agrégation.
 
 — Revue conduite par Claude Code (évaluation adversariale multi-agents) pour Morgan (Kovelt), 2026-06-20.
+
+---
+
+## Addendum — Re-jeu n°3 du GATE (2026-06-20) : passage au multi-sources
+
+**Objet :** re-jouer le GATE après l'ajout de **2e sources** au catalogue (`cost.rs`), conformément à l'exigence de re-jeu à toute modification des sources.
+
+**Changement :** le catalogue passe de **mono-source** à **multi-sources** sur 6 des 7 filières — **IRENA** (LCOE mondiaux, USD 2024 → EUR à 0,9243) en 2e source des 5 renouvelables ; **CRE** (France, parc complet) en 2e source du nucléaire existant ; le **nucléaire nouveau reste mono-source (RTE)**. Effet : la fourchette mêle désormais dispersion intra-source ET inter-sources. Effet secondaire mesuré : IRENA (mondial) abaisse les planchers renouvelables (PV 45→30,5 ; éolien terrestre 50→26,8 ; éolien-mer 90→51,8).
+
+| Bloc | Verdict |
+|---|---|
+| Bloc 1 — Symétrie | **PASS** |
+| Bloc 2 — Non-verdict | **PASS** |
+| Bloc 3 — Provenance | **PASS** |
+| Bloc 4 — Test adverse (pro-nucléaire) | **PASS** |
+| Bloc 4 — Test adverse (anti-nucléaire) | **PASS** |
+| Bloc 4 — Test aveugle | **PASS** |
+
+**6/6 au vert ; aucune critique de bord ne mord sur un choix de conception.**
+
+**Critique pro-nucléaire (la plus forte)** : « vous avez ajouté une 2e source *moins chère* (IRENA mondial) à TOUS les renouvelables, mais laissé le nucléaire neuf mono-source à RTE 100/120/150 — l'étape de sourçage a mécaniquement élargi l'écart planchers neuf↔EnR (~2,2×→~3,7× vs PV). » **Factuellement exacte sur l'effet**, mais ne mord pas : (a) le mono-source du neuf relève d'une **asymétrie de disponibilité de licence** uniforme et **content-blind** — IPCC/NEA/IEA tous écartés pour clause NC ; le « correctif » réclamé (ajouter une contre-source basse au neuf) serait lui-même un biais ; (b) la direction n'est **pas auto-servante** : les sources écartées publient un neuf souvent *plus bas* que RTE — les exclure laisse le neuf sur un chiffre *haut* ; (c) l'écart n'est matérialisé **nulle part** (pas de champ gap/tri), et le disclaimer nomme le mono-source du neuf, le caractère mondial d'IRENA et l'absence d'écart calculé.
+
+**Critique anti-nucléaire (la plus forte)** : « l'existant amorti reçoit une 2e source iso-périmètre serrée (CRE ~60), les EnR une source hors-périmètre (IRENA mondial) ; le neuf reste non contredit. » **Interne-contradictoire** : le levier invoqué rend les **EnR moins chères**, pas le nucléaire — effet *pro*-renouvelable, inutilisable comme preuve d'un tilt pro-nucléaire.
+
+**Verdict explicite sur le « nucléaire neuf mono-source » : asymétrie de licence justifiée, non biais idéologique.** Preuve par contre-exemple : **IRENA, la source la plus pro-EnR, est INCLUSE** ; **NEA/IEA, pro-pilotable, sont EXCLUS** — un tri idéologique aurait fait l'inverse. Le mono-source laisse de plus le neuf sur la valeur la *moins flatteuse*.
+
+**Transparence renforcée (recommandation du re-jeu, implémentée).** Pour que l'asymétrie ne vive pas que dans la prose du disclaimer, chaque entrée `/v1/cost-reference` expose désormais `geography` (`france` | `monde`) et `technology_source_count` (≥ 2 = dispersion inter-sources ; 1 = mono-source) — l'asymétrie de couverture est **lisible par machine**.
+
+**Pré-conditions de gouvernance restantes (non bloquantes)** : (1) trouver une 2e source **licence-compatible pour le nucléaire neuf** (lèverait la dernière asymétrie de couverture) ; (2) une **contre-source France** pour les EnR (réduirait l'asymétrie géographique FR/mondial) ; (3) sourçage fin des hypothèses des 2e sources (CRE + IRENA portent `None`) ; (4) re-millésimer les points uniques IRENA (hydro 52,7 ; biomasse 80,4).
+
+VERDICT-GLOBAL (re-jeu n°3) : **GREEN**.

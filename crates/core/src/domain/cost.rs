@@ -23,9 +23,9 @@
 //! chiffres des rapports sont ré-encodés ici avec attribution, jamais reproduits
 //! tels quels — ADR-0024 §risques).
 
-/// Source autoritaire d'une estimation LCOE — triptyque public français
-/// (ADR-0024 §5). Aucune source n'est privilégiée par défaut ; l'équilibre
-/// méthodologique prime.
+/// Source autoritaire d'une estimation LCOE. Aucune source n'est privilégiée par
+/// défaut ; l'équilibre méthodologique prime. **Multi-sources par filière** depuis
+/// la recherche du 2026-06-20 (la fourchette devient une **dispersion inter-sources**).
 ///
 /// **Critère d'inclusion & fondement de réutilisation (recherche licences
 /// 2026-06-20).** On ne réutilise que des *chiffres-faits* — **non protégés par le
@@ -37,28 +37,39 @@
 ///   explicitement permise avec attribution) — confiance haute.
 /// - **Cour des comptes** = pas de licence ouverte nommée sur `ccomptes.fr`, mais
 ///   conditions du site **sans clause non commerciale** + **CRPA art. L321-1** et s.
-///   (réutilisation des informations publiques, y compris commerciale) — confiance
-///   moyenne.
-/// - **RTE** = mentions légales du **rapport restrictives** (accord écrit pour le
-///   « contenu ») → la réutilisation des chiffres repose **uniquement** sur « faits
-///   non protégés + extraction non substantielle », **PAS** sur une Licence Ouverte
-///   du rapport (les jeux open data RTE le sont, mais la valeur EPR2 vient du
-///   rapport) — confiance moyenne, **risque résiduel réel**.
+///   — confiance moyenne.
+/// - **RTE** = mentions légales du **rapport restrictives** → réutilisation des
+///   chiffres fondée **uniquement** sur « faits non protégés + extraction non
+///   substantielle », **PAS** sur une Licence Ouverte du rapport — confiance
+///   moyenne, **risque résiduel réel**.
+/// - **IRENA** = licence maison **permissive** (« material may be freely used,
+///   shared, copied, reproduced … provided that appropriate acknowledgement is
+///   given », **sans clause NC**, pas du Creative Commons) → réutilisation y
+///   compris commerciale — confiance haute. LCOE **mondiaux** (≠ France : Chine
+///   tire les moyennes vers le bas — c'est la dispersion recherchée, pas une erreur).
+/// - **CRE** = autorité administrative ; réutilisation des informations publiques
+///   (**CRPA art. L321-1**), sans clause NC — confiance haute.
 ///
-/// Sont **écartées** les sources dont la licence **interdit** le commercial (AIE,
-/// CC BY-NC) ou entièrement propriétaires (Lazard) — motif *licence*, indépendant
-/// du résultat. La souveraineté (France-first) est une **préférence de contexte**,
-/// jamais le motif disqualifiant. ⚠️ Recherche best-effort, **pas un avis
-/// juridique** ; pour un **palier payant** s'appuyant sur la donnée RTE, une
-/// confirmation écrite de RTE est recommandée (ADR-0024 §risques + revue de neutralité).
+/// Sont **écartées** les sources dont la licence **interdit** le commercial — motif
+/// *licence*, uniforme, indépendant du résultat (toutes vérifiées le 2026-06-20) :
+/// **AIE/IEA** et **GIEC/IPCC AR6** (CC BY-NC), **Fraunhofer ISE** (clause NC
+/// explicite), **NEA/OCDE** (licence restrictive), **Lazard** (propriétaire). La
+/// souveraineté (France-first) est une **préférence de contexte**, jamais le motif
+/// disqualifiant. ⚠️ Recherche best-effort, **pas un avis juridique** ; pour un
+/// **palier payant** s'appuyant sur la donnée RTE, une confirmation écrite de RTE
+/// est recommandée (ADR-0024 §risques + revue de neutralité).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CostSource {
-    /// ADEME — *Coûts des EnR&R en France* (renouvelables).
+    /// ADEME — *Coûts des EnR&R en France* (renouvelables, France).
     Ademe,
     /// Cour des comptes — coûts du nucléaire **existant** (coût courant économique).
     CourDesComptes,
     /// RTE — *Futurs énergétiques 2050* (nouveau nucléaire + prospectif).
     Rte,
+    /// IRENA — *Renewable Power Generation Costs in 2024* (LCOE **mondiaux** EnR).
+    Irena,
+    /// CRE — coûts du **nucléaire existant** (coût complet du parc).
+    Cre,
 }
 
 impl CostSource {
@@ -67,6 +78,8 @@ impl CostSource {
             CostSource::Ademe => "ademe",
             CostSource::CourDesComptes => "cour-des-comptes",
             CostSource::Rte => "rte",
+            CostSource::Irena => "irena",
+            CostSource::Cre => "cre",
         }
     }
 
@@ -75,6 +88,8 @@ impl CostSource {
             CostSource::Ademe => "ADEME",
             CostSource::CourDesComptes => "Cour des comptes",
             CostSource::Rte => "RTE",
+            CostSource::Irena => "IRENA",
+            CostSource::Cre => "CRE",
         }
     }
 
@@ -97,6 +112,31 @@ impl CostSource {
                  chiffres-faits ré-encodés ; valeur issue du rapport (mentions légales \
                  restrictives), non d'un jeu sous Licence Ouverte ; source citée, sens non altéré"
             }
+            CostSource::Irena => {
+                "IRENA (2025), « Renewable power generation costs in 2024 », Abu Dhabi — \
+                 LCOE MONDIAUX (moyennes pondérées + valeurs pays), USD 2024 convertis à \
+                 0,9243 EUR/USD (moyenne annuelle 2024) ; licence IRENA permissive (sans clause \
+                 NC), réutilisation y compris commerciale avec attribution ; chiffres-faits ré-encodés"
+            }
+            CostSource::Cre => {
+                "CRE, rapport sur les coûts du nucléaire existant (www.cre.fr) — coût complet \
+                 du parc, chiffres-faits ré-encodés ; réutilisation des informations publiques \
+                 (CRPA art. L321-1), source citée, sens non altéré"
+            }
+        }
+    }
+
+    /// Périmètre géographique des chiffres de la source — `"france"` ou `"monde"`
+    /// (GATE re-jeu n°3, 2026-06-20) : IRENA publie des LCOE **mondiaux**, souvent
+    /// plus bas que les sources France. Exposer la géographie rend l'asymétrie
+    /// **lisible par machine**, pour ne pas lire un plancher mondial comme un coût
+    /// français.
+    pub fn geography(self) -> &'static str {
+        match self {
+            CostSource::Ademe | CostSource::CourDesComptes | CostSource::Rte | CostSource::Cre => {
+                "france"
+            }
+            CostSource::Irena => "monde",
         }
     }
 
@@ -105,6 +145,8 @@ impl CostSource {
             CostSource::Ademe,
             CostSource::CourDesComptes,
             CostSource::Rte,
+            CostSource::Irena,
+            CostSource::Cre,
         ]
         .into_iter()
         .find(|s| s.slug() == slug)
@@ -319,34 +361,41 @@ impl CostReferenceCatalog {
 /// naïve « scandale » par l'explication du mécanisme, sans désigner de camp.
 ///
 /// La formulation a été **révisée après la revue de neutralité du 2026-06-20**
-/// (`docs/adr/0024-revue-neutralite.md`) : on ne revendique plus une « dispersion
-/// entre experts » (chaque filière est mono-source : la fourchette est interne à
-/// la source), on explicite ce que le périmètre « plateau » exclut, et on signale
-/// l'hétérogénéité des millésimes.
+/// (`docs/adr/0024-revue-neutralite.md`) puis après l'**ajout de 2e sources** par
+/// filière : on explicite que la couche est désormais **multi-sources** (la
+/// dispersion mêle écart intra-source et inter-sources), ce que le périmètre
+/// « plateau » exclut, et l'hétérogénéité des millésimes et des géographies.
 pub const COST_REFERENCE_DISCLAIMER: &str = "Le LCOE (coût moyen actualisé de l'énergie) \
 estime un coût moyen de production sur la durée de vie d'un moyen de production, sous hypothèses \
 (taux d'actualisation, durée de vie, facteur de charge, périmètre). Le prix de marché (voir \
 /v1/price) est un prix marginal de compensation horaire, fixé par la dernière unité appelée. Ces \
 deux grandeurs sont de nature différente et ne sont pas censées être égales dans un marché à \
 tarification marginale. carbon-fr ne calcule ni n'affiche aucun écart entre elles et ne formule \
-aucun jugement. PORTÉE ET LIMITES : chaque valeur est une ESTIMATION sous hypothèses, issue d'UNE \
-source citée ; la fourchette (min/médiane/max) restitue la dispersion publiée par cette source, \
-non un désaccord inter-sources. Le périmètre « plateau » couvre les coûts au niveau de la centrale \
-et exclut, de part et d'autre, les coûts système (back-up de l'intermittence, réseau, stockage) ET \
-le démantèlement et la gestion de long terme des déchets : il n'est donc PAS directement comparable \
-entre filières pilotables et variables. Les millésimes sont hétérogènes (nucléaire 2021, \
-renouvelables 2024), à interpréter avec prudence. Une hypothèse à `null` signifie « non publiée par \
-la source », jamais une dimension retirée.";
+aucun jugement. PORTÉE ET LIMITES : chaque valeur est une ESTIMATION sous hypothèses, issue d'une \
+source citée. La plupart des filières ont DEUX sources (ex. ADEME + IRENA, Cour des comptes + CRE) : \
+la fourchette affichée mêle alors la dispersion interne à une source ET l'écart entre sources. \
+Précautions : les chiffres IRENA sont des LCOE MONDIAUX (souvent plus bas que les sources France — \
+c'est la dispersion réelle, pas une erreur) ; certaines 2e sources ne fournissent qu'un point \
+(min = max), pas une fourchette propre ; le nucléaire nouveau reste à une seule source (aucune 2e \
+source primaire licence-compatible disponible). Le périmètre « plateau » couvre les coûts au niveau \
+de la centrale et exclut, de part et d'autre, les coûts système (back-up de l'intermittence, réseau, \
+stockage) ET le démantèlement et la gestion de long terme des déchets : il n'est donc PAS directement \
+comparable entre filières pilotables et variables. Les millésimes sont hétérogènes (2021 à 2024), à \
+interpréter avec prudence. Une hypothèse à `null` signifie « non publiée par la source », jamais une \
+dimension retirée.";
 
 /// Catalogue LCOE **best-effort** (€/MWh, périmètre plateau uniforme).
 ///
 /// ⚠️ Valeurs et millésimes **à confirmer/sourcer** dans les rapports cités
 /// (re-vérification et re-millésimage = charge de gouvernance continue, ADR-0024
-/// §conséquences). Chaque filière est **mono-source** : la fourchette est la
-/// dispersion *publiée par la source*, pas un désaccord inter-sources (le
-/// multi-sources par filière reste un objectif de gouvernance). Le nucléaire est
-/// scindé existant (coût comptable amorti) / nouveau (LCOE prospectif) ; toutes
-/// les filières partagent le périmètre plateau (cf. [`COST_REFERENCE_DISCLAIMER`]).
+/// §conséquences). **Multi-sources** depuis 2026-06-20 : la plupart des filières
+/// ont 2 sources (ADEME + IRENA pour les renouvelables ; Cour des comptes + CRE
+/// pour le nucléaire existant) → la fourchette mêle dispersion intra-source et
+/// inter-sources. Le **nucléaire nouveau reste mono-source** (RTE) faute de 2e
+/// source primaire licence-compatible (IPCC/NEA/IEA écartés pour clause NC). Le
+/// nucléaire est scindé existant (coût comptable amorti) / nouveau (LCOE
+/// prospectif) ; toutes les filières partagent le périmètre plateau (cf.
+/// [`COST_REFERENCE_DISCLAIMER`]).
 pub fn cost_reference_catalog() -> CostReferenceCatalog {
     let entries = vec![
         // — Nucléaire existant amorti (Cour des comptes) —
@@ -457,6 +506,85 @@ pub fn cost_reference_catalog() -> CostReferenceCatalog {
                 load_factor: Some(0.60),
             },
         },
+        // ─── 2e sources par filière (dispersion INTER-sources, recherche 2026-06-20) ───
+        // CRE = 2e source pour le nucléaire existant (coût complet du parc, vraie
+        // fourchette). IRENA = 2e source pour les 5 renouvelables (LCOE MONDIAUX,
+        // USD 2024 → EUR à 0,9243 ; valeurs plus basses que l'ADEME France = la
+        // dispersion recherchée, pas une erreur). Hypothèses non ré-encodées
+        // (résumés sans valeurs exploitables) → `default()` (tout `None`).
+        // Le nucléaire NOUVEAU reste mono-source (RTE) : aucune 2e source primaire
+        // licence-compatible trouvée (IPCC/NEA/IEA écartés pour clause NC ; chiffre
+        // EPR2 Cour des comptes non confirmé en table primaire) — asymétrie de
+        // *disponibilité de licence*, pas de résultat (documentée, ADR-0024).
+        CostEstimate {
+            key: CostReferenceKey {
+                source: CostSource::Cre,
+                technology: CostTechnology::NucleaireExistant,
+                perimeter: Perimeter::Plateau,
+                vintage: 2023,
+            },
+            basis: CostBasis::AccountingAmortized,
+            range: LcoeRange::new(57.3, 60.7, 63.4),
+            assumptions: CostAssumptions::default(),
+        },
+        CostEstimate {
+            key: CostReferenceKey {
+                source: CostSource::Irena,
+                technology: CostTechnology::SolairePv,
+                perimeter: Perimeter::Plateau,
+                vintage: 2024,
+            },
+            basis: CostBasis::ProspectiveLcoe,
+            range: LcoeRange::new(30.5, 39.7, 40.0),
+            assumptions: CostAssumptions::default(),
+        },
+        CostEstimate {
+            key: CostReferenceKey {
+                source: CostSource::Irena,
+                technology: CostTechnology::EolienTerrestre,
+                perimeter: Perimeter::Plateau,
+                vintage: 2024,
+            },
+            basis: CostBasis::ProspectiveLcoe,
+            range: LcoeRange::new(26.8, 31.4, 48.1),
+            assumptions: CostAssumptions::default(),
+        },
+        CostEstimate {
+            key: CostReferenceKey {
+                source: CostSource::Irena,
+                technology: CostTechnology::EolienMer,
+                perimeter: Perimeter::Plateau,
+                vintage: 2024,
+            },
+            basis: CostBasis::ProspectiveLcoe,
+            range: LcoeRange::new(51.8, 73.0, 74.0),
+            assumptions: CostAssumptions::default(),
+        },
+        // Hydraulique & biomasse : IRENA ne publie qu'une moyenne mondiale (point
+        // unique, min = max) dans le résumé — la 2e source ajoute un point, pas une
+        // fourchette propre (la dispersion par filière reste portée par l'ADEME).
+        CostEstimate {
+            key: CostReferenceKey {
+                source: CostSource::Irena,
+                technology: CostTechnology::Hydraulique,
+                perimeter: Perimeter::Plateau,
+                vintage: 2024,
+            },
+            basis: CostBasis::ProspectiveLcoe,
+            range: LcoeRange::new(52.7, 52.7, 52.7),
+            assumptions: CostAssumptions::default(),
+        },
+        CostEstimate {
+            key: CostReferenceKey {
+                source: CostSource::Irena,
+                technology: CostTechnology::Biomasse,
+                perimeter: Perimeter::Plateau,
+                vintage: 2024,
+            },
+            basis: CostBasis::ProspectiveLcoe,
+            range: LcoeRange::new(80.4, 80.4, 80.4),
+            assumptions: CostAssumptions::default(),
+        },
     ];
     CostReferenceCatalog { entries }
 }
@@ -495,17 +623,67 @@ mod tests {
         }
     }
 
+    const ALL_TECHS: [CostTechnology; 7] = [
+        CostTechnology::NucleaireExistant,
+        CostTechnology::NucleaireNouveau,
+        CostTechnology::SolairePv,
+        CostTechnology::EolienTerrestre,
+        CostTechnology::EolienMer,
+        CostTechnology::Hydraulique,
+        CostTechnology::Biomasse,
+    ];
+
     #[test]
-    fn every_entry_has_a_dispersion_and_uniform_perimeter() {
-        // GATE Bloc 1 : dispersion par filière + symétrie de périmètre.
+    fn ranges_consistent_uniform_perimeter_and_each_filiere_dispersed() {
+        // GATE Bloc 1 : périmètre symétrique + au moins une source à vraie
+        // fourchette par filière. On tolère `min == max` au niveau entrée (certaines
+        // 2e sources, ex. IRENA hydro/biomasse, ne publient qu'un point).
         let catalog = cost_reference_catalog();
         for e in catalog.entries() {
-            assert!(e.range.min < e.range.max, "{:?} sans dispersion", e.key);
+            assert!(
+                e.range.min <= e.range.max,
+                "{:?} : borne incohérente",
+                e.key
+            );
             assert_eq!(
                 e.key.perimeter,
                 Perimeter::Plateau,
                 "périmètre non uniforme"
             );
+        }
+        for tech in ALL_TECHS {
+            assert!(
+                catalog
+                    .entries()
+                    .iter()
+                    .any(|e| e.key.technology == tech && e.range.min < e.range.max),
+                "aucune source dispersée pour {tech:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn renewables_and_existing_nuclear_are_multi_source() {
+        // Dispersion INTER-sources : ≥ 2 sources distinctes par filière, sauf le
+        // nucléaire nouveau (mono-source assumé, faute de 2e source primaire
+        // licence-compatible — IPCC/NEA/IEA écartés pour clause NC).
+        let catalog = cost_reference_catalog();
+        let distinct_sources = |tech: CostTechnology| -> usize {
+            catalog
+                .entries()
+                .iter()
+                .filter(|e| e.key.technology == tech)
+                .map(|e| e.key.source)
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+        };
+        for tech in ALL_TECHS {
+            let n = distinct_sources(tech);
+            if tech == CostTechnology::NucleaireNouveau {
+                assert_eq!(n, 1, "nucléaire nouveau attendu mono-source (assumé)");
+            } else {
+                assert!(n >= 2, "{tech:?} devrait avoir ≥ 2 sources, a {n}");
+            }
         }
     }
 

@@ -1,0 +1,26 @@
+meta {
+  name: Erreur — cadre d'éligibilité invalide (400)
+  type: http
+  seq: 38
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/greenest-window?from=2024-01-08T00:00:00Z&eligibility=mauve
+  body: none
+  auth: none
+}
+
+params:query {
+  from: 2024-01-08T00:00:00Z
+  eligibility: mauve
+}
+
+docs {
+  Un cadre d'éligibilité inconnu renvoie 400 Problem Details (ADR-0021).
+  `eligibility` doit valoir `rfnbo` ou `low-carbon`.
+}
+
+assert {
+  res.status: eq 400
+  res.body.code: eq bad_request
+}

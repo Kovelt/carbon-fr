@@ -1,0 +1,24 @@
+meta {
+  name: Éligibilité — catalogue des rulesets
+  type: http
+  seq: 37
+}
+
+get {
+  url: {{baseUrl}}/v1/eligibility/rulesets
+  body: none
+  auth: none
+}
+
+docs {
+  Catalogue versionné des cadres d'éligibilité électrolyseur (ADR-0025/0026).
+  Deux cadres servis (rfnbo:2023-1184, low-carbon:2025-2359) + le report RFNBO
+  attendu en statut `planned` (présent pour transparence, jamais appliqué).
+  Vérifiabilité + neutralité : chaque entrée porte sa base légale.
+}
+
+assert {
+  res.status: eq 200
+  res.body.rulesets: isArray
+  res.body.disclaimer: isString
+}

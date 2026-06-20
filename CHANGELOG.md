@@ -8,6 +8,8 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.3.1] - 2026-06-20
+
 ### Modifié
 
 - **`/v1/price` — valeurs réglementaires 2026 sourcées** (remplacent les

@@ -61,7 +61,8 @@ use carbonfr_adapter_gbdt::{
     GbdtForecaster, GbdtHyperParams, build_training_examples, train_model,
 };
 use carbonfr_adapter_http::{
-    AppState, AuthConfig, AuthState, ForecastState, StreamState, enforce, key_fingerprint, router,
+    AppState, AuthConfig, AuthState, EligibilityRepoAdapter, ForecastState, StreamState, enforce,
+    key_fingerprint, router,
 };
 use carbonfr_adapter_meteo::OpenMeteoClient;
 use carbonfr_adapter_odre::OdreClient;
@@ -180,7 +181,10 @@ async fn run_server() -> anyhow::Result<()> {
     let acv_forecaster = build_calibrated_acv_forecaster(repo.clone()).await;
     let acv_model = format!("{ACV_FORECAST_ID}@{ACV_FORECAST_VERSION}");
     let forecast_state = ForecastState::new(forecaster, model)
-        .with_consumption(std::sync::Arc::new(acv_forecaster), acv_model);
+        .with_consumption(std::sync::Arc::new(acv_forecaster), acv_model)
+        // Overlay d'éligibilité électrolyseur (ADR-0025/0026) : le repo PostgreSQL
+        // fournit le mix nowcast (rte-direct) + le prix spot day-ahead.
+        .with_eligibility(std::sync::Arc::new(EligibilityRepoAdapter(repo.clone())));
 
     let renewable_model = build_calibrated_renewable_model(repo.clone()).await;
     let mut state = AppState::new(repo.clone())

@@ -29,7 +29,7 @@ carbon-fr/
 │   ├── adapter-http/         # API axum (adapter entrant, /v1) + auth/SSE       ✅
 │   ├── adapter-forecast/     # impl ForecastModel (climatology@1, acv-ademe@2)  ✅
 │   ├── adapter-meteo/        # impl WeatherForecastSource (Open-Meteo)          ✅
-│   ├── adapter-entsoe/       # impl CrossBorderSource (ENTSO-E, acv-ademe@2)    ✅
+│   ├── adapter-entsoe/       # impl CrossBorderSource + SpotPriceSource (ENTSO-E) ✅
 │   ├── adapter-webhook/      # impl Notifier (livraison signée, anti-SSRF)      ✅
 │   └── adapter-gbdt/         # impl ForecastModel ML (GBDT, gardé par backtest) ✅
 └── bin/
@@ -140,6 +140,8 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 - ADR-0020 — **politique de dépréciation** (**Accepté**) : on ne retire jamais un élément public (version d'API, endpoint, champ, méthodologie) sans préavis ; annonce via en-têtes `Deprecation` (RFC 9745) + `Sunset` (RFC 8594) + CHANGELOG + `deprecated` OpenAPI ; fenêtre ≥ 6 mois (post-1.0) / ≥ 30 j (pré-1.0). En-têtes **non implémentés tant que rien n'est déprécié** (pas de code mort) — l'utilitaire arrivera avec sa première dépréciation.
 - ADR-0021 — **format d'erreur Problem Details** (**Accepté, implémenté**) : toutes les erreurs en `application/problem+json` (RFC 9457) — `type`(=`about:blank`)/`title`/`status`/`detail` + extension **`code`** stable. Fonction unique `problem_response` (partagée handlers + middleware auth). DTO `ProblemDetails` (jamais `ErrorBody`). Le SDK lit `code`/`detail`.
 - ADR-0022 — **observabilité `/metrics`** (**Accepté, implémenté**) : endpoint Prometheus **hors `/v1`** (texte, pas dans l'OpenAPI), registre **fait maison** (`bin/server/src/metrics.rs`, atomiques) alimenté par le poller. Fraîcheur (`*_last_success_timestamp_seconds`), volume/erreurs, `upstream_requests_total{source}` (proxy quota ODRÉ), `build_info{version}`. Alerte phare = fraîcheur > 2× intervalle de poll.
+- ADR-0023 — **affichage du prix de l'électricité** (**Accepté, implémenté**) : `GET /v1/price` (+ `/price/date`) = **décomposition complète** du prix payé ancrée sur le TRV, jamais deux chiffres en regard. Composante **énergie = prix spot day-ahead ENTSO-E** (`documentType=A44`, port `SpotPriceSource`/`SpotPriceRepository`, table `spot_price`, ingéré par le poller si token ENTSO-E) ; acheminement (TURPE) + accise + TVA + résidu commercialisation = **constante de domaine versionnée** (`TrvReference::trv_2026`, best-effort 2026 **à sourcer**). Contexte : mix par filière + **technologie marginale estimée** (ordre de mérite, `estimated:true`). National. Domaine pur (`price.rs`), zéro `serde`/`sqlx` dans `core`.
+- ADR-0024 — **couche comparative LCOE** (**Accepté ; GATE de neutralité franchi le 2026-06-20**, cf. [`docs/adr/0024-revue-neutralite.md`](docs/adr/0024-revue-neutralite.md)) : `GET /v1/cost-reference` = **estimation** versionnée en **fourchette** (min/médiane/max) par filière (`cost.rs`), clé `source × technologie × périmètre × millésime`, **jamais** mise en différence avec le prix de marché. Nucléaire **scindé** existant (coût comptable amorti) / nouveau (LCOE prospectif, champ `basis`), périmètre `plateau` **uniforme et explicité** (exclut coûts système ET démantèlement/déchets), note neutre obligatoire. Sources ADEME / Cour des comptes / RTE (critère d'inclusion = **licence seule**, uniforme ; AIE/Lazard écartées pour licence). **Pré-conditions de gouvernance restantes avant publication ferme** : confirmer les licences formelles CdC/RTE, viser le multi-source par filière. Le GATE a été conduit par **évaluation adversariale multi-agents** (critiques pro **et** anti-nucléaire + audits structurels) sur la sortie réelle ; verdict RED initial → 7 correctifs → GREEN.
 
 ## Versionnement (ADR-0019)
 
@@ -203,8 +205,10 @@ Invariant : `v0.4.2` (code) ≠ `/v1` (contrat) ≠ `acv-ademe@2` (donnée) ≠ 
   - [x] **météo** (ADR-0012/0018) : `GET /v1/weather` (+ `/weather/date`), vent 100 m + irradiance (Open-Meteo CC-BY 4.0, attribué).
   - [x] **dérivation renouvelable** (ADR-0018) : `RenewableModel` + backtest (×2,4/×3,4) ; `GET /v1/renewable` (production estimée + facteur de charge, auto-calibré au démarrage). Prévision météo-pilotée **écartée** (gate `analyze-renewable-signal`).
   - [x] **déploiement** (ADR-0007) : **live** sur VPS Hetzner Kovelt (Traefik + PostgreSQL dédié), historique backfillé, backups quotidiens. Cf. mémoire de session.
-  - [x] **SDK TypeScript** (`@carbon-fr/sdk`, `sdk/typescript/`) : tous les endpoints `/v1` + SSE, zéro dépendance runtime, CI typecheck/build.
+  - [x] **SDK TypeScript** (`@carbon-fr/sdk`, `sdk/typescript/`) : tous les endpoints `/v1` + SSE, zéro dépendance runtime, CI typecheck/build. (Inclut `price()`/`priceHistory()`/`costReference()`.)
   - [x] **audit profond pré-launch** : durcissement sécurité (IP non spoofable, sel obligatoire en prod), robustesse (démarrage borné, séries denses plafonnées, pool, migration idempotente), contrat (OpenAPI/Bruno), perf.
+  - [x] **prix de l'électricité** (ADR-0023) : `GET /v1/price` (+ `/price/date`) — décomposition TRV (énergie spot ENTSO-E A44 + TURPE + accise + TVA + résidu), contexte mix + techno marginale estimée. Domaine pur (`price.rs`), ports `SpotPriceSource`/`SpotPriceRepository`, table `spot_price` (migration `0011`, validée base réelle), ingestion poller (token ENTSO-E), métrique fraîcheur `last_price`. Valeurs réglementaires best-effort 2026 **à sourcer**.
+  - [x] **couche comparative LCOE** (ADR-0024) : `GET /v1/cost-reference` — fourchette d'estimations par filière (`cost.rs`), nucléaire scindé existant/nouveau, périmètre `plateau` explicité, note neutre, jamais d'écart calculé. **GATE de neutralité franchi** par évaluation adversariale multi-agents (pro/anti-nucléaire + audits), revue datée `docs/adr/0024-revue-neutralite.md`. Reste (gouvernance) : licences formelles CdC/RTE, multi-source par filière.
 
 ### Repères d'implémentation (phases 1-2)
 

@@ -6,15 +6,15 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use carbonfr_core::application::{
     CarbonAwareScheduler, FindGreenestWindow, GetConsumptionIntensity, GetCrossBorderExchanges,
-    GetCurrentIntensity, GetIntensityHistory, GetIntensityStats, GetWeather,
+    GetCurrentIntensity, GetElectricityPrice, GetIntensityHistory, GetIntensityStats, GetWeather,
 };
 use carbonfr_core::domain::{
-    Granularity, Region, Subscription, ThresholdDirection, TimeRange, WindowEstimator,
-    validate_webhook_url,
+    CostSource, CostTechnology, Granularity, Perimeter, Region, Subscription, ThresholdDirection,
+    TimeRange, WindowEstimator, cost_reference_catalog, validate_webhook_url,
 };
 use carbonfr_core::ports::{
     ApiKeyRepository, CrossBorderRepository, ForecastModel, IntensityRepository,
-    SubscriptionRepository, VisitCounter, WeatherRepository,
+    SpotPriceRepository, SubscriptionRepository, VisitCounter, WeatherRepository,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -23,11 +23,11 @@ use time::{Duration, OffsetDateTime};
 use utoipa::IntoParams;
 
 use crate::dto::{
-    CreateWebhookRequest, CreatedWebhookResponse, ExchangesHistoryResponse, ExchangesResponse,
-    FactorsResponse, ForecastResponse, GreenestWindowResponse, HistoryResponse, IntensityResponse,
-    MethodologiesResponse, MixResponse, RenewableResponse, ScheduleResponse, SlotsResponse,
-    StatsResponse, StreamEventBody, VisitStatsResponse, WeatherHistoryResponse, WeatherResponse,
-    WebhookListResponse,
+    CostReferenceResponse, CreateWebhookRequest, CreatedWebhookResponse, ExchangesHistoryResponse,
+    ExchangesResponse, FactorsResponse, ForecastResponse, GreenestWindowResponse, HistoryResponse,
+    IntensityResponse, MethodologiesResponse, MixResponse, PriceHistoryResponse, PriceResponse,
+    RenewableResponse, ScheduleResponse, SlotsResponse, StatsResponse, StreamEventBody,
+    VisitStatsResponse, WeatherHistoryResponse, WeatherResponse, WebhookListResponse,
 };
 use crate::error::{ApiError, ProblemDetails};
 use crate::{AppState, ForecastState};
@@ -1300,4 +1300,170 @@ pub(crate) async fn factors(
             "méthodologie inconnue : {other}"
         ))),
     }
+}
+
+/// Exige le national (le prix TRV et la zone de marché spot sont nationaux) :
+/// 400 sur tout autre slug.
+fn require_national(region: &Option<String>) -> Result<(), ApiError> {
+    match resolve_region(region)? {
+        Region::National => Ok(()),
+        other => Err(ApiError::bad_request(format!(
+            "le prix de l'électricité est servi au niveau national uniquement (demandé : {})",
+            other.slug()
+        ))),
+    }
+}
+
+/// Paramètre de `GET /v1/price`.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct PriceQuery {
+    /// Région. **National uniquement** (le TRV est national) ; autre slug → 400.
+    region: Option<String>,
+}
+
+/// `GET /v1/price` — décomposition complète du prix payé (ADR-0023).
+///
+/// Énergie (spot day-ahead ENTSO-E) + acheminement (TURPE) + accise + TVA +
+/// résidu commercialisation, avec contexte (mix + technologie marginale estimée).
+/// National uniquement. `404` si le mix ou le prix spot manque (ENTSO-E non
+/// configuré).
+#[utoipa::path(
+    get,
+    path = "/v1/price",
+    params(PriceQuery),
+    responses(
+        (status = 200, description = "Décomposition courante du prix payé", body = PriceResponse),
+        (status = 400, description = "Région non nationale", body = ProblemDetails),
+        (status = 404, description = "Aucun mix ou prix spot disponible", body = ProblemDetails),
+    ),
+    tag = "prix"
+)]
+pub(crate) async fn price<R>(
+    State(state): State<AppState<R>>,
+    Query(query): Query<PriceQuery>,
+) -> Result<Json<PriceResponse>, ApiError>
+where
+    R: IntensityRepository + SpotPriceRepository + Clone + Send + Sync + 'static,
+{
+    require_national(&query.region)?;
+    let use_case = GetElectricityPrice::new(state.repo.clone(), state.repo.clone());
+    let breakdown = use_case.current(Region::National).await?;
+    Ok(Json(PriceResponse::from_breakdown(&breakdown)?))
+}
+
+/// Paramètres de `GET /v1/price/date`.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct PriceHistoryQuery {
+    /// Début de l'intervalle (RFC 3339, inclus). Requis.
+    from: Option<String>,
+    /// Fin de l'intervalle (RFC 3339, exclu). Requis.
+    to: Option<String>,
+    /// Région. **National uniquement**.
+    region: Option<String>,
+}
+
+/// `GET /v1/price/date?from=&to=` — série de décompositions de prix sur un
+/// intervalle RFC 3339 (fenêtre ≤ 92 jours), pour la primitive « cheapest +
+/// greenest window » (ADR-0023). National uniquement.
+#[utoipa::path(
+    get,
+    path = "/v1/price/date",
+    params(PriceHistoryQuery),
+    responses(
+        (status = 200, description = "Série de prix sur l'intervalle", body = PriceHistoryResponse),
+        (status = 400, description = "Bornes manquantes/invalides ou région non nationale", body = ProblemDetails),
+    ),
+    tag = "prix"
+)]
+pub(crate) async fn price_date<R>(
+    State(state): State<AppState<R>>,
+    Query(query): Query<PriceHistoryQuery>,
+) -> Result<Json<PriceHistoryResponse>, ApiError>
+where
+    R: IntensityRepository + SpotPriceRepository + Clone + Send + Sync + 'static,
+{
+    require_national(&query.region)?;
+    let from_raw = query
+        .from
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("paramètre `from` requis (RFC 3339)"))?;
+    let to_raw = query
+        .to
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("paramètre `to` requis (RFC 3339)"))?;
+    let from = parse_timestamp("from", from_raw)?;
+    let to = parse_timestamp("to", to_raw)?;
+
+    if to - from > MAX_DENSE_SERIES_SPAN {
+        return Err(ApiError::bad_request(
+            "fenêtre trop large (maximum 92 jours pour le prix)",
+        ));
+    }
+    let range = TimeRange::new(from, to)
+        .ok_or_else(|| ApiError::bad_request("`to` doit être strictement postérieur à `from`"))?;
+
+    let use_case = GetElectricityPrice::new(state.repo.clone(), state.repo.clone());
+    let breakdowns = use_case.history(Region::National, range).await?;
+    Ok(Json(PriceHistoryResponse::new(from, to, &breakdowns)?))
+}
+
+/// Paramètres de `GET /v1/cost-reference` (filtres optionnels, ADR-0024 §2).
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct CostReferenceQuery {
+    /// Source (`ademe`, `cour-des-comptes`, `rte`).
+    source: Option<String>,
+    /// Technologie (`nucleaire-existant`, `nucleaire-nouveau`, `solaire-pv`,
+    /// `eolien-terrestre`, `eolien-mer`, `hydraulique`, `biomasse`).
+    technology: Option<String>,
+    /// Périmètre (`plateau`).
+    perimeter: Option<String>,
+    /// Millésime (année du rapport source).
+    vintage: Option<u32>,
+}
+
+/// `GET /v1/cost-reference` — couche comparative LCOE (ADR-0024).
+///
+/// **Estimation** versionnée, en **fourchette** par filière (jamais un chiffre
+/// unique), **jamais** mise en différence avec le prix de marché. Ressource de
+/// référence statique, physiquement découplée de `/v1/price`.
+#[utoipa::path(
+    get,
+    path = "/v1/cost-reference",
+    params(CostReferenceQuery),
+    responses(
+        (status = 200, description = "Fourchettes LCOE par filière (estimation)", body = CostReferenceResponse),
+        (status = 400, description = "Filtre inconnu (source/technologie/périmètre)", body = ProblemDetails),
+    ),
+    tag = "prix"
+)]
+pub(crate) async fn cost_reference(
+    Query(query): Query<CostReferenceQuery>,
+) -> Result<Json<CostReferenceResponse>, ApiError> {
+    let source = match &query.source {
+        Some(s) => Some(
+            CostSource::from_slug(s)
+                .ok_or_else(|| ApiError::bad_request(format!("source inconnue : {s}")))?,
+        ),
+        None => None,
+    };
+    let technology = match &query.technology {
+        Some(t) => Some(
+            CostTechnology::from_slug(t)
+                .ok_or_else(|| ApiError::bad_request(format!("technologie inconnue : {t}")))?,
+        ),
+        None => None,
+    };
+    let perimeter = match &query.perimeter {
+        Some(p) => Some(
+            Perimeter::from_slug(p)
+                .ok_or_else(|| ApiError::bad_request(format!("périmètre inconnu : {p}")))?,
+        ),
+        None => None,
+    };
+    let catalog = cost_reference_catalog();
+    let entries = catalog.filtered(source, technology, perimeter, query.vintage);
+    Ok(Json(CostReferenceResponse::from_entries(&entries)))
 }

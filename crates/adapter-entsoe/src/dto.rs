@@ -114,6 +114,73 @@ impl FlowDocument {
     }
 }
 
+/// Point de prix d'une série day-ahead (A44) : `position` (1-based) +
+/// `price.amount` (€/MWh). Élément distinct du `Point` MW (autre nom de valeur).
+#[derive(Debug, Deserialize)]
+pub(crate) struct PricePoint {
+    pub position: u32,
+    #[serde(rename = "price.amount")]
+    pub amount: f64,
+}
+
+/// `Period` d'un document de prix : mêmes `timeInterval`/`resolution`, points de
+/// prix.
+#[derive(Debug, Deserialize)]
+pub(crate) struct PricePeriod {
+    #[serde(rename = "timeInterval")]
+    pub time_interval: TimeInterval,
+    pub resolution: String,
+    #[serde(default, rename = "Point")]
+    pub points: Vec<PricePoint>,
+}
+
+impl PricePeriod {
+    /// Développe la période en couples `(horodatage, €/MWh)`.
+    fn expand(&self) -> Result<Vec<(OffsetDateTime, f64)>, EntsoeError> {
+        let start = parse_instant(&self.time_interval.start)?;
+        let step = parse_resolution_minutes(&self.resolution)?;
+        Ok(self
+            .points
+            .iter()
+            .map(|p| {
+                let at = start + time::Duration::minutes((p.position as i64 - 1) * step);
+                (at, p.amount)
+            })
+            .collect())
+    }
+}
+
+/// `TimeSeries` d'un document de prix day-ahead (`Publication_MarketDocument`).
+#[derive(Debug, Deserialize)]
+pub(crate) struct PriceTimeSeries {
+    #[serde(default, rename = "Period")]
+    pub periods: Vec<PricePeriod>,
+}
+
+/// Document de prix day-ahead du marché de gros (`documentType=A44`).
+#[derive(Debug, Deserialize)]
+pub(crate) struct DayAheadPriceDocument {
+    #[serde(default, rename = "TimeSeries")]
+    pub series: Vec<PriceTimeSeries>,
+}
+
+impl DayAheadPriceDocument {
+    /// Série de prix `(horodatage, €/MWh)`, agrégée sur `TimeSeries`/`Period`.
+    /// Le day-ahead a **une** valeur par pas : on écrase (pas de sommation,
+    /// contrairement aux flux physiques).
+    pub(crate) fn price_series(&self) -> Result<BTreeMap<OffsetDateTime, f64>, EntsoeError> {
+        let mut out = BTreeMap::new();
+        for ts in &self.series {
+            for period in &ts.periods {
+                for (at, eur) in period.expand()? {
+                    out.insert(at, eur);
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
 /// Mix de production par filière à un horodatage donné (MW agrégés par filière).
 pub(crate) type MixByInstant = BTreeMap<OffsetDateTime, FiliereMw>;
 
@@ -246,6 +313,29 @@ mod tests {
         let doc: FlowDocument = quick_xml::de::from_str(FLOW_XML).unwrap();
         let series = doc.flow_series().unwrap();
         assert_eq!(series.get(&datetime!(2024-01-01 00:00 UTC)), Some(&1500.0));
+    }
+
+    const PRICE_XML: &str = r#"<?xml version="1.0"?>
+<Publication_MarketDocument xmlns="urn:iec62325.351:tc57wg16:451-3:publicationdocument:7:0">
+  <TimeSeries>
+    <in_Domain.mRID codingScheme="A01">10YFR-RTE------C</in_Domain.mRID>
+    <out_Domain.mRID codingScheme="A01">10YFR-RTE------C</out_Domain.mRID>
+    <Period>
+      <timeInterval><start>2024-01-01T00:00Z</start><end>2024-01-01T02:00Z</end></timeInterval>
+      <resolution>PT60M</resolution>
+      <Point><position>1</position><price.amount>42.5</price.amount></Point>
+      <Point><position>2</position><price.amount>-3.1</price.amount></Point>
+    </Period>
+  </TimeSeries>
+</Publication_MarketDocument>"#;
+
+    #[test]
+    fn parses_day_ahead_price_series_including_negative() {
+        let doc: DayAheadPriceDocument = quick_xml::de::from_str(PRICE_XML).unwrap();
+        let series = doc.price_series().unwrap();
+        assert_eq!(series.get(&datetime!(2024-01-01 00:00 UTC)), Some(&42.5));
+        // Prix négatif conservé tel quel (phénomène de marché réel).
+        assert_eq!(series.get(&datetime!(2024-01-01 01:00 UTC)), Some(&-3.1));
     }
 
     // Exemples XML **officiels** ENTSO-E (gitlab.entsoe.eu/transparency/xml-examples)

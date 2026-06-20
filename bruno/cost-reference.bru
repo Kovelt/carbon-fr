@@ -1,0 +1,29 @@
+meta {
+  name: Coût de production — LCOE (estimation)
+  type: http
+  seq: 33
+}
+
+get {
+  url: {{baseUrl}}/v1/cost-reference
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.kind: eq estimation
+  res.body.unit: eq EUR/MWh
+  res.body.disclaimer: isDefined
+  res.body.entries[0].range.min: isNumber
+  res.body.entries[0].kind: eq estimation
+}
+
+docs {
+  Couche comparative LCOE (coût de production par filière, ADR-0024) : ESTIMATION
+  versionnée en FOURCHETTE (min/médiane/max), jamais un chiffre unique, jamais mise
+  en différence avec le prix de marché. Nucléaire scindé existant/nouveau, périmètre
+  plateau uniforme (symétrie). Sources : ADEME / Cour des comptes / RTE. Valeurs
+  best-effort, à confirmer (licences + chiffres). Filtres : source, technology,
+  perimeter, vintage.
+}

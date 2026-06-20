@@ -1,0 +1,24 @@
+meta {
+  name: Erreur — source LCOE inconnue
+  type: http
+  seq: 34
+}
+
+get {
+  url: {{baseUrl}}/v1/cost-reference?source=lazard
+  body: none
+  auth: none
+  query {
+    source: lazard
+  }
+}
+
+assert {
+  res.status: eq 400
+  res.body.code: eq bad_request
+}
+
+docs {
+  Une source écartée (Lazard, AIE) ou inconnue → 400 Problem Details (RFC 9457).
+  Les sources retenues sont : ademe, cour-des-comptes, rte (ADR-0024 §5).
+}

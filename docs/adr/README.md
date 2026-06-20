@@ -32,6 +32,8 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0020](0020-politique-de-depreciation.md) | Politique de dépréciation (préavis, en-têtes `Deprecation`/`Sunset`, fenêtre de retrait) — complète ADR-0019 | Accepté |
 | [0021](0021-format-erreur-rfc9457.md) | Format d'erreur : Problem Details (RFC 9457, `application/problem+json` + code stable) | Accepté |
 | [0022](0022-observabilite-metrics.md) | Observabilité : exposition Prometheus `/metrics` (registre maison, fraîcheur poller, quota amont) | Accepté |
+| [0023](0023-affichage-prix-electricite.md) | Affichage du prix de l'électricité : décomposition ancrée TRV, endpoint `/price` (énergie spot ENTSO-E + TURPE + taxes + résidu) | Accepté |
+| [0024](0024-couche-comparative-lcoe.md) | Couche comparative LCOE (`/cost-reference`) : cadre de neutralité, fourchette multi-sources, GATE bloquant | Accepté (GATE) |
 
 ## Gabarit
 

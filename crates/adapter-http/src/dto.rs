@@ -2,8 +2,9 @@
 //! jamais dans `core`). L'unité canonique est exposée explicitement.
 
 use carbonfr_core::domain::{
-    CrossBorderSnapshot, ForecastPoint, GenerationMix, GreenWindow, IntensityStats, Measurement,
-    Neighbor, RenewableModel, RollupBucket, VisitStats, WeatherForecast,
+    COST_REFERENCE_DISCLAIMER, CostEstimate, CrossBorderSnapshot, ForecastPoint, GenerationMix,
+    GreenWindow, IntensityStats, Measurement, Neighbor, PriceBreakdown, RenewableModel,
+    RollupBucket, VisitStats, WeatherForecast,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -749,6 +750,282 @@ impl FactorsResponse {
             source: "Base Carbone ADEME (cf. ADR-0008 ; pertes T&D ADR-0010)",
             factors,
             td_loss_factor,
+        }
+    }
+}
+
+/// Avertissement best-effort sur la construction réglementaire (ADR-0023 §risques).
+const PRICE_DISCLAIMER: &str = "Décomposition ancrée sur le Tarif Réglementé de Vente \
+(empilement publié par la CRE). La composante énergie est le prix spot day-ahead (ENTSO-E), \
+factuel et horaire ; les composantes réglementaires (acheminement TURPE, accise, TVA, résidu) \
+sont des valeurs de référence versionnées, best-effort millésime 2026 et à confirmer auprès de \
+la CRE/RTE. carbon-fr ne formule aucun jugement sur ces composantes.";
+
+/// Réponse de `GET /v1/price` — décomposition complète du prix payé (ADR-0023).
+///
+/// On n'expose pas deux chiffres en regard : la **chaîne complète** est
+/// décomposée, chaque composante sourcée. Le « prix réel de l'énergie » est la
+/// composante `energie` (spot day-ahead).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PriceResponse {
+    region: String,
+    /// Horodatage (RFC 3339, UTC), aligné sur `/v1/intensity/now`.
+    timestamp: String,
+    /// Millésime de la construction réglementaire (TRV) appliquée.
+    vintage: &'static str,
+    /// Unité des montants `*_eur_mwh` (`EUR/MWh`). Les champs `*_eur_kwh` sont,
+    /// eux, en €/kWh (confort d'usage).
+    unit: &'static str,
+    currency: &'static str,
+    /// Total payé toutes taxes comprises (€/MWh).
+    total_eur_mwh: f64,
+    /// Total payé toutes taxes comprises (€/kWh) — confort d'usage.
+    total_eur_kwh: f64,
+    /// Décomposition par composante (chacune sourcée).
+    components: Vec<PriceComponentBody>,
+    /// Contexte explicatif (sans verdict) : mix + technologie marginale estimée.
+    context: PriceContextBody,
+    disclaimer: &'static str,
+}
+
+/// Une composante du prix (énergie, acheminement, accise, commercialisation, TVA).
+#[derive(Serialize, ToSchema)]
+struct PriceComponentBody {
+    /// Identifiant stable (`energie`, `acheminement`, `accise`, `commercialisation`, `tva`).
+    kind: &'static str,
+    label: &'static str,
+    amount_eur_mwh: f64,
+    /// Source / fondement réglementaire de la composante.
+    source: &'static str,
+}
+
+/// Contexte explicatif du prix (ADR-0023 §4).
+#[derive(Serialize, ToSchema)]
+struct PriceContextBody {
+    /// Mix de production par filière au même instant (parts de production).
+    mix: Vec<MixShareBody>,
+    /// Technologie marginale **estimée** (ordre de mérite), ou `null`.
+    marginal_technology: Option<MarginalTechnologyBody>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct MixShareBody {
+    filiere: &'static str,
+    label: &'static str,
+    /// Part dans la production domestique, dans `[0, 1]`.
+    share: f64,
+    output_mw: f64,
+}
+
+#[derive(Serialize, ToSchema)]
+struct MarginalTechnologyBody {
+    filiere: &'static str,
+    label: &'static str,
+    /// Toujours `true` : valeur estimée par ordre de mérite, jamais mesurée.
+    estimated: bool,
+    /// Méthode d'estimation (transparence).
+    method: &'static str,
+}
+
+impl PriceResponse {
+    pub(crate) fn from_breakdown(b: &PriceBreakdown) -> Result<Self, time::error::Format> {
+        let components = b
+            .components
+            .iter()
+            .map(|c| PriceComponentBody {
+                kind: c.kind.slug(),
+                label: c.kind.label(),
+                amount_eur_mwh: c.amount_eur_mwh,
+                source: c.kind.source(),
+            })
+            .collect();
+        let mix = b
+            .context
+            .shares
+            .iter()
+            .map(|s| MixShareBody {
+                filiere: s.filiere.slug(),
+                label: s.filiere.label(),
+                share: s.share,
+                output_mw: s.output_mw,
+            })
+            .collect();
+        let marginal_technology = b.context.marginal.map(|m| MarginalTechnologyBody {
+            filiere: m.filiere.slug(),
+            label: m.filiere.label(),
+            estimated: m.estimated,
+            method: "ordre de mérite (coût marginal court terme) sur le mix en production",
+        });
+        let total = b.total_eur_mwh();
+        Ok(Self {
+            region: b.region.slug().to_string(),
+            timestamp: to_rfc3339(b.at)?,
+            vintage: b.vintage,
+            unit: "EUR/MWh",
+            currency: "EUR",
+            total_eur_mwh: total,
+            total_eur_kwh: total / 1000.0,
+            components,
+            context: PriceContextBody {
+                mix,
+                marginal_technology,
+            },
+            disclaimer: PRICE_DISCLAIMER,
+        })
+    }
+}
+
+/// Réponse de `GET /v1/price/date` — série de décompositions sur un intervalle.
+///
+/// Points **compacts** (horodatage + énergie + total) pour ne pas gonfler une
+/// série dense ; la décomposition complète est servie par `/v1/price`. Alimente
+/// la primitive « cheapest + greenest window » (ADR-0023).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PriceHistoryResponse {
+    from: String,
+    to: String,
+    count: usize,
+    unit: &'static str,
+    currency: &'static str,
+    points: Vec<PricePointBody>,
+}
+
+#[derive(Serialize, ToSchema)]
+struct PricePointBody {
+    timestamp: String,
+    /// Composante énergie (spot day-ahead), la seule qui varie heure par heure.
+    energie_eur_mwh: f64,
+    /// Total payé toutes taxes comprises (€/MWh).
+    total_eur_mwh: f64,
+}
+
+impl PriceHistoryResponse {
+    pub(crate) fn new(
+        from: OffsetDateTime,
+        to: OffsetDateTime,
+        breakdowns: &[PriceBreakdown],
+    ) -> Result<Self, time::error::Format> {
+        let mut points = Vec::with_capacity(breakdowns.len());
+        for b in breakdowns {
+            let energie = b
+                .components
+                .iter()
+                .find(|c| c.kind == carbonfr_core::domain::PriceComponentKind::Energie)
+                .map(|c| c.amount_eur_mwh)
+                .unwrap_or(0.0);
+            points.push(PricePointBody {
+                timestamp: to_rfc3339(b.at)?,
+                energie_eur_mwh: energie,
+                total_eur_mwh: b.total_eur_mwh(),
+            });
+        }
+        Ok(Self {
+            from: to_rfc3339(from)?,
+            to: to_rfc3339(to)?,
+            count: points.len(),
+            unit: "EUR/MWh",
+            currency: "EUR",
+            points,
+        })
+    }
+}
+
+/// Réponse de `GET /v1/cost-reference` — couche comparative LCOE (ADR-0024).
+///
+/// **Estimation** systématiquement étiquetée, en **fourchette** par filière
+/// (jamais un chiffre unique), **jamais** mise en différence avec le prix de
+/// marché. La note `disclaimer` est obligatoire (ADR-0024 §3).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CostReferenceResponse {
+    unit: &'static str,
+    currency: &'static str,
+    /// Statut systématique de la couche : `estimation` (ADR-0024 §4).
+    kind: &'static str,
+    /// Note explicative neutre obligatoire (LCOE ≠ coût marginal ≠ prix payé).
+    disclaimer: &'static str,
+    count: usize,
+    entries: Vec<CostReferenceEntry>,
+}
+
+/// Une estimation LCOE (source × technologie × périmètre × millésime).
+#[derive(Serialize, ToSchema)]
+struct CostReferenceEntry {
+    technology: &'static str,
+    technology_label: &'static str,
+    source: &'static str,
+    source_label: &'static str,
+    source_attribution: &'static str,
+    perimeter: &'static str,
+    /// Libellé explicitant ce que le périmètre inclut/exclut (non comparable
+    /// pilotable/variable).
+    perimeter_label: &'static str,
+    /// Nature de la grandeur : `accounting-amortized` (coût comptable d'un parc
+    /// amorti) vs `prospective-lcoe` (moyen neuf). Évite la fausse commensurabilité.
+    basis: &'static str,
+    basis_label: &'static str,
+    /// Millésime (année du rapport source).
+    vintage: u32,
+    /// Statut : toujours `estimation` (ADR-0024 §4).
+    kind: &'static str,
+    /// Fourchette (dispersion **publiée par la source**) — jamais un point unique.
+    range: LcoeRangeBody,
+    hypotheses: CostAssumptionsBody,
+}
+
+#[derive(Serialize, ToSchema)]
+struct LcoeRangeBody {
+    min: f64,
+    median: f64,
+    max: f64,
+    unit: &'static str,
+}
+
+#[derive(Serialize, ToSchema)]
+struct CostAssumptionsBody {
+    /// Taux d'actualisation (WACC), `null` si non publié.
+    discount_rate: Option<f64>,
+    /// Durée de vie retenue (années), `null` si non publié.
+    lifetime_years: Option<u32>,
+    /// Facteur de charge, `null` si non publié.
+    load_factor: Option<f64>,
+}
+
+impl CostReferenceResponse {
+    pub(crate) fn from_entries(entries: &[CostEstimate]) -> Self {
+        let entries = entries
+            .iter()
+            .map(|e| CostReferenceEntry {
+                technology: e.key.technology.slug(),
+                technology_label: e.key.technology.label(),
+                source: e.key.source.slug(),
+                source_label: e.key.source.label(),
+                source_attribution: e.key.source.attribution(),
+                perimeter: e.key.perimeter.slug(),
+                perimeter_label: e.key.perimeter.label(),
+                basis: e.basis.slug(),
+                basis_label: e.basis.label(),
+                vintage: e.key.vintage,
+                kind: "estimation",
+                range: LcoeRangeBody {
+                    min: e.range.min,
+                    median: e.range.median,
+                    max: e.range.max,
+                    unit: "EUR/MWh",
+                },
+                hypotheses: CostAssumptionsBody {
+                    discount_rate: e.assumptions.discount_rate,
+                    lifetime_years: e.assumptions.lifetime_years,
+                    load_factor: e.assumptions.load_factor,
+                },
+            })
+            .collect::<Vec<_>>();
+        Self {
+            unit: "EUR/MWh",
+            currency: "EUR",
+            kind: "estimation",
+            disclaimer: COST_REFERENCE_DISCLAIMER,
+            count: entries.len(),
+            entries,
         }
     }
 }

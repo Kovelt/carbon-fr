@@ -17,12 +17,13 @@ mod mapping;
 use async_trait::async_trait;
 use carbonfr_core::domain::{
     CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Granularity,
-    IntensityStats, LoadRecord, Measurement, Neighbor, Region, RollupBucket, Subscription,
-    ThresholdDirection, TimeRange, VisitStats, WeatherForecast,
+    IntensityStats, LoadRecord, Measurement, Neighbor, Region, RollupBucket, SpotPrice,
+    Subscription, ThresholdDirection, TimeRange, VisitStats, WeatherForecast,
 };
 use carbonfr_core::ports::{
     ApiKeyRecord, ApiKeyRepository, ApiTier, ConsumptionRepository, CrossBorderRepository,
-    IntensityRepository, RepositoryError, SubscriptionRepository, VisitCounter, WeatherRepository,
+    IntensityRepository, RepositoryError, SpotPriceRepository, SubscriptionRepository,
+    VisitCounter, WeatherRepository,
 };
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, QueryBuilder, Row};
@@ -664,6 +665,89 @@ impl CrossBorderRepository for PgIntensityRepository {
             }
         }
         Ok(snapshots)
+    }
+}
+
+#[async_trait]
+impl SpotPriceRepository for PgIntensityRepository {
+    async fn upsert_prices(&self, prices: &[SpotPrice]) -> Result<usize, RepositoryError> {
+        // Déduplique la clé `at` (garde la dernière occurrence) : un horodatage
+        // peut être ré-ingéré, et `ON CONFLICT` interdit deux fois la même clé
+        // dans une requête.
+        let mut rows: std::collections::BTreeMap<OffsetDateTime, f64> =
+            std::collections::BTreeMap::new();
+        for price in prices {
+            rows.insert(price.at, price.eur_per_mwh);
+        }
+        if rows.is_empty() {
+            return Ok(0);
+        }
+
+        let mut written = 0usize;
+        let entries: Vec<(OffsetDateTime, f64)> = rows.into_iter().collect();
+        // 2 colonnes × 20 000 = 40 000 paramètres < 65 535.
+        for chunk in entries.chunks(20_000) {
+            let mut builder = QueryBuilder::new("INSERT INTO spot_price (at, price_eur_mwh) ");
+            builder.push_values(chunk.iter(), |mut row, (at, eur)| {
+                row.push_bind(*at).push_bind(*eur);
+            });
+            builder.push(" ON CONFLICT (at) DO UPDATE SET price_eur_mwh = EXCLUDED.price_eur_mwh");
+            let result = builder
+                .build()
+                .execute(&self.pool)
+                .await
+                .map_err(|e| backend(format!("upsert_prices : {e}")))?;
+            written += result.rows_affected() as usize;
+        }
+        Ok(written)
+    }
+
+    async fn price_at(&self, at: OffsetDateTime) -> Result<Option<SpotPrice>, RepositoryError> {
+        let row = sqlx::query(
+            // `price_eur_mwh = price_eur_mwh` exclut un éventuel NaN (NaN ≠ NaN) :
+            // sinon une ligne NaN « la plus proche » masquerait tous les prix
+            // valides antérieurs (la voie d'écriture garantit déjà la finitude).
+            "SELECT at, price_eur_mwh FROM spot_price \
+             WHERE at <= $1 AND price_eur_mwh = price_eur_mwh \
+             ORDER BY at DESC LIMIT 1",
+        )
+        .bind(at)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| backend(format!("price_at : {e}")))?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let row_at: OffsetDateTime = row.try_get("at").map_err(|e| backend(e.to_string()))?;
+        let eur: f64 = row
+            .try_get("price_eur_mwh")
+            .map_err(|e| backend(e.to_string()))?;
+        Ok(SpotPrice::new(row_at, eur))
+    }
+
+    async fn price_range(&self, range: TimeRange) -> Result<Vec<SpotPrice>, RepositoryError> {
+        let rows = sqlx::query(
+            "SELECT at, price_eur_mwh FROM spot_price \
+             WHERE at >= $1 AND at < $2 ORDER BY at ASC",
+        )
+        .bind(range.start())
+        .bind(range.end())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| backend(format!("price_range : {e}")))?;
+
+        let mut prices = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let at: OffsetDateTime = row.try_get("at").map_err(|e| backend(e.to_string()))?;
+            let eur: f64 = row
+                .try_get("price_eur_mwh")
+                .map_err(|e| backend(e.to_string()))?;
+            // Donnée hors domaine (non finie) en base → on saute la ligne.
+            if let Some(price) = SpotPrice::new(at, eur) {
+                prices.push(price);
+            }
+        }
+        Ok(prices)
     }
 }
 

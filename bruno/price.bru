@@ -1,0 +1,28 @@
+meta {
+  name: Prix — décomposition TRV
+  type: http
+  seq: 31
+}
+
+get {
+  url: {{baseUrl}}/v1/price
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.unit: eq EUR/MWh
+  res.body.currency: eq EUR
+  res.body.total_eur_mwh: isNumber
+  res.body.components: isDefined
+  res.body.disclaimer: isDefined
+}
+
+docs {
+  Décomposition complète du prix payé, ancrée sur le TRV (ADR-0023) : énergie
+  (prix spot day-ahead ENTSO-E) + acheminement (TURPE) + accise + commercialisation
+  + TVA, avec contexte (mix par filière + technologie marginale ESTIMÉE). National
+  uniquement. Requiert que le prix spot ENTSO-E (CARBONFR_ENTSOE_TOKEN) ait été
+  ingéré — sinon 404 (no_data). Valeurs réglementaires best-effort 2026 (à sourcer).
+}

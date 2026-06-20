@@ -1,0 +1,28 @@
+meta {
+  name: Prix — série (cheapest window)
+  type: http
+  seq: 32
+}
+
+get {
+  url: {{baseUrl}}/v1/price/date?from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z
+  body: none
+  auth: none
+  query {
+    from: 2026-01-01T00:00:00Z
+    to: 2026-01-02T00:00:00Z
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.unit: eq EUR/MWh
+  res.body.count: isNumber
+  res.body.points: isDefined
+}
+
+docs {
+  Série de décompositions de prix sur un intervalle (≤ 92 jours), pour la primitive
+  « cheapest + greenest window » (ADR-0023). Points compacts : horodatage + énergie
+  spot + total. National uniquement.
+}

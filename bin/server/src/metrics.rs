@@ -36,6 +36,8 @@ struct Inner {
     last_success_unix: AtomicI64,
     /// Horodatage Unix (s) de la dernière mesure nationale connue (0 si jamais).
     last_measurement_unix: AtomicI64,
+    /// Horodatage Unix (s) de la dernière ingestion de prix spot (0 si jamais).
+    last_price_unix: AtomicI64,
 }
 
 impl Metrics {
@@ -51,6 +53,7 @@ impl Metrics {
                 upstream_entsoe: AtomicU64::new(0),
                 last_success_unix: AtomicI64::new(0),
                 last_measurement_unix: AtomicI64::new(0),
+                last_price_unix: AtomicI64::new(0),
             }),
         }
     }
@@ -92,6 +95,12 @@ impl Metrics {
     pub fn set_last_measurement(&self, unix_secs: i64) {
         self.inner
             .last_measurement_unix
+            .store(unix_secs, Ordering::Relaxed);
+    }
+
+    pub fn set_last_price(&self, unix_secs: i64) {
+        self.inner
+            .last_price_unix
             .store(unix_secs, Ordering::Relaxed);
     }
 
@@ -157,6 +166,11 @@ impl Metrics {
                 "Horodatage Unix de la dernière mesure nationale connue (0 si jamais).",
                 i.last_measurement_unix.load(Ordering::Relaxed),
             ),
+            (
+                "carbonfr_poller_last_price_timestamp_seconds",
+                "Horodatage Unix de la dernière ingestion de prix spot (0 si jamais).",
+                i.last_price_unix.load(Ordering::Relaxed),
+            ),
         ] {
             let _ = writeln!(
                 out,
@@ -183,6 +197,7 @@ mod tests {
         m.inc_upstream_open_meteo();
         m.set_last_success(1_718_000_000);
         m.set_last_measurement(1_718_000_900);
+        m.set_last_price(1_718_001_800);
 
         let out = m.render();
 
@@ -199,7 +214,8 @@ mod tests {
         // Jauges de fraîcheur.
         assert!(out.contains("carbonfr_poller_last_success_timestamp_seconds 1718000000"));
         assert!(out.contains("carbonfr_poller_last_measurement_timestamp_seconds 1718000900"));
+        assert!(out.contains("carbonfr_poller_last_price_timestamp_seconds 1718001800"));
         // Chaque métrique a son TYPE.
-        assert_eq!(out.matches("# TYPE ").count(), 7);
+        assert_eq!(out.matches("# TYPE ").count(), 8);
     }
 }

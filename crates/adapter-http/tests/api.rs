@@ -12,10 +12,11 @@ use carbonfr_adapter_http::{AppState, ForecastState, StreamState, router};
 use carbonfr_core::domain::{
     CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, GenerationMix,
     Granularity, IntensityStats, Measurement, Methodology, Neighbor, Region, RenewableModel,
-    RollupBucket, TimeRange, Vintage, VisitStats, WeatherForecast,
+    RollupBucket, SpotPrice, TimeRange, Vintage, VisitStats, WeatherForecast,
 };
 use carbonfr_core::ports::{
-    CrossBorderRepository, IntensityRepository, RepositoryError, VisitCounter, WeatherRepository,
+    CrossBorderRepository, IntensityRepository, RepositoryError, SpotPriceRepository, VisitCounter,
+    WeatherRepository,
 };
 use time::{Date, Duration, OffsetDateTime};
 use tower::ServiceExt;
@@ -29,6 +30,7 @@ struct FakeRepo {
     visits: Arc<Mutex<HashSet<(String, Date)>>>,
     flows: Option<CrossBorderSnapshot>,
     flow_series: Vec<CrossBorderSnapshot>,
+    prices: Vec<SpotPrice>,
     weather: Vec<WeatherForecast>,
     /// Empreintes de clés API valides (auth webhooks).
     api_keys: std::collections::HashSet<String>,
@@ -148,6 +150,32 @@ impl CrossBorderRepository for FakeRepo {
         Ok(source
             .into_iter()
             .filter(|s| range.contains(s.at))
+            .collect())
+    }
+}
+
+#[async_trait]
+impl SpotPriceRepository for FakeRepo {
+    async fn upsert_prices(&self, _: &[SpotPrice]) -> Result<usize, RepositoryError> {
+        Ok(0)
+    }
+
+    async fn price_at(&self, at: OffsetDateTime) -> Result<Option<SpotPrice>, RepositoryError> {
+        // Dernier prix ≤ cible.
+        Ok(self
+            .prices
+            .iter()
+            .filter(|p| p.at <= at)
+            .max_by_key(|p| p.at)
+            .copied())
+    }
+
+    async fn price_range(&self, range: TimeRange) -> Result<Vec<SpotPrice>, RepositoryError> {
+        Ok(self
+            .prices
+            .iter()
+            .copied()
+            .filter(|p| range.contains(p.at))
             .collect())
     }
 }
@@ -336,6 +364,100 @@ async fn intensity_now_returns_latest() {
     assert_eq!(body["methodology"], "rte-direct");
     assert_eq!(body["vintage"], "tr");
     assert_eq!(body["timestamp"], "1970-01-01T00:00:00Z");
+}
+
+#[tokio::test]
+async fn price_decomposes_with_spot_energy() {
+    let repo = FakeRepo {
+        measurement: Some(national_measurement()),
+        prices: vec![SpotPrice::new(OffsetDateTime::UNIX_EPOCH, 72.0).unwrap()],
+        ..Default::default()
+    };
+    let response = get(build(repo), "/v1/price").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["region"], "national");
+    assert_eq!(body["unit"], "EUR/MWh");
+    let components = body["components"].as_array().unwrap();
+    let energie = components
+        .iter()
+        .find(|c| c["kind"] == "energie")
+        .expect("composante énergie");
+    assert_eq!(energie["amount_eur_mwh"], 72.0);
+    // Le total dépasse l'énergie seule (TURPE + accise + commercialisation + TVA).
+    assert!(body["total_eur_mwh"].as_f64().unwrap() > 72.0);
+    // Contexte : technologie marginale estimée = gaz (le mix national a du gaz).
+    assert_eq!(body["context"]["marginal_technology"]["filiere"], "gaz");
+    assert_eq!(body["context"]["marginal_technology"]["estimated"], true);
+    assert!(body["disclaimer"].as_str().unwrap().contains("CRE"));
+}
+
+#[tokio::test]
+async fn price_without_spot_is_404() {
+    let repo = FakeRepo {
+        measurement: Some(national_measurement()),
+        ..Default::default()
+    };
+    let response = get(build(repo), "/v1/price").await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(json_body(response).await["code"], "no_data");
+}
+
+#[tokio::test]
+async fn price_rejects_non_national_region() {
+    let repo = FakeRepo {
+        measurement: Some(national_measurement()),
+        prices: vec![SpotPrice::new(OffsetDateTime::UNIX_EPOCH, 72.0).unwrap()],
+        ..Default::default()
+    };
+    let response = get(build(repo), "/v1/price?region=bretagne").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn cost_reference_lists_dispersion_and_split_nuclear() {
+    let response = get(app(None), "/v1/cost-reference").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["kind"], "estimation");
+    // Note neutre obligatoire (LCOE ≠ coût marginal).
+    assert!(body["disclaimer"].as_str().unwrap().contains("marginal"));
+    let entries = body["entries"].as_array().unwrap();
+    let techs: Vec<&str> = entries
+        .iter()
+        .map(|e| e["technology"].as_str().unwrap())
+        .collect();
+    // Nucléaire scindé existant/nouveau (GATE Bloc 1, symétrie).
+    assert!(techs.contains(&"nucleaire-existant"));
+    assert!(techs.contains(&"nucleaire-nouveau"));
+    for e in entries {
+        assert_eq!(e["kind"], "estimation");
+        // Dispersion (fourchette) pour chaque filière, jamais un point unique.
+        let r = &e["range"];
+        assert!(r["min"].as_f64().unwrap() < r["max"].as_f64().unwrap());
+        // Symétrie de périmètre : uniforme pour toutes les filières.
+        assert_eq!(e["perimeter"], "plateau");
+    }
+    // Non-verdict : aucun écart/gap calculé.
+    assert!(body.get("gap").is_none());
+    assert!(entries.iter().all(|e| e.get("gap").is_none()));
+}
+
+#[tokio::test]
+async fn cost_reference_filters_and_rejects_unknown_source() {
+    let response = get(app(None), "/v1/cost-reference?source=ademe").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert!(
+        body["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["source"] == "ademe")
+    );
+    // Source écartée pour licence (ADR-0024) → filtre inconnu = 400.
+    let bad = get(app(None), "/v1/cost-reference?source=lazard").await;
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

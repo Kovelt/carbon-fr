@@ -9,7 +9,7 @@
 //! snapshot d'import avec des flux et des intensités voisines plausibles.
 
 use carbonfr_adapter_entsoe::EntsoeClient;
-use carbonfr_core::ports::CrossBorderSource;
+use carbonfr_core::ports::{CrossBorderSource, SpotPriceSource};
 
 #[tokio::test]
 #[ignore = "réseau + CARBONFR_ENTSOE_TOKEN requis"]
@@ -34,5 +34,21 @@ async fn recent_flows_live() {
         // Intensité voisine plausible : entre 0 et 1200 (mix charbon pur ~1000).
         assert!(f.neighbor_intensity.value() >= 0.0);
         assert!(f.neighbor_intensity.value() < 1200.0);
+    }
+}
+
+#[tokio::test]
+#[ignore = "réseau + CARBONFR_ENTSOE_TOKEN requis"]
+async fn recent_prices_live() {
+    let client = EntsoeClient::from_env().expect("CARBONFR_ENTSOE_TOKEN requis");
+    let prices = client.recent_prices().await.expect("appel ENTSO-E (A44)");
+
+    assert!(!prices.is_empty(), "aucun prix spot day-ahead récupéré");
+    for p in prices.iter().take(5) {
+        eprintln!("prix {} — {:.2} €/MWh", p.at, p.eur_per_mwh);
+    }
+    // Plausibilité : prix de gros FR borné (peut être négatif, < 4000 €/MWh cap).
+    for p in &prices {
+        assert!(p.eur_per_mwh > -1000.0 && p.eur_per_mwh < 5000.0);
     }
 }

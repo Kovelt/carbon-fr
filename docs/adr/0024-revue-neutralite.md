@@ -1,0 +1,96 @@
+# Revue de neutralité — Couche comparative LCOE (ADR-0024)
+
+- **Date :** 2026-06-20
+- **Objet :** franchissement du *GATE de neutralité* de l'ADR-0024 (`GET /v1/cost-reference`)
+- **Évalué :** la **sortie réellement servie** (`crates/core/src/domain/cost.rs`, `crates/adapter-http/src/dto.rs`), pas la seule spécification
+- **Méthode :** évaluation adversariale multi-agents — un critique militant de **chaque bord** (pro- et anti-nucléaire) + des auditeurs structurels par bloc du GATE, rejoués sur la sortie réelle. Deux passages (RED → correctifs → re-test).
+- **Statut :** **neutralité confirmée (GREEN sur tous les blocs de neutralité)** ; *publication ferme* conditionnée à deux pré-conditions de gouvernance (licences, multi-source) — voir §5.
+
+> Cette revue est l'artefact exigé par le GATE de l'ADR-0024 (« franchir le GATE produit une revue de neutralité datée et signée, re-jouée à chaque modification »). Elle est **re-jouable** : toute modification des sources, du lexique, de l'agrégation ou du périmètre impose de la rejouer.
+
+---
+
+## 1. Déroulé
+
+**Passage 1 (RED).** Les deux tests adverses (pro/anti-nucléaire) passaient déjà sans mordre sur la conception — la *mécanique* de l'endpoint était saine. Mais trois auditeurs structurels ont relevé des défauts réels, **dans la table de référence et sa documentation**, pas dans l'API :
+
+- **Bloc 3 (Provenance) — FAIL :** le disclaimer revendiquait une « dispersion réelle entre experts » alors que chaque filière est **mono-source** (la fourchette est interne à une étude) ; le critère d'exclusion (AIE/Lazard) mêlait licence et souveraineté de façon non uniforme ; la revue datée n'existait pas.
+- **Asymétrie de périmètre (Blocs 1/2) :** le périmètre « plateau » était asserté uniforme mais **non documenté** — il n'explicitait pas qu'il exclut, des deux côtés, les coûts système (back-up, réseau, stockage) **et** le démantèlement / les déchets.
+- **Fausse commensurabilité (Bloc 1) :** un **coût comptable amorti** (nucléaire existant) et un **LCOE prospectif** (moyens neufs) étaient rangés sous un libellé identique.
+
+**Correctifs (P1–P7, 2026-06-20).** Voir §4.
+
+**Passage 2 (re-test sur la sortie corrigée).** Les six sous-blocs ont été rejoués. Résultat : §2.
+
+---
+
+## 2. Tableau pass/fail par bloc (état après correctifs)
+
+| Bloc | Verdict | Mord sur la conception |
+|---|---|---|
+| Bloc 1 — Symétrie | **PASS** | non |
+| Bloc 2 — Non-verdict | **PASS** | non |
+| Bloc 3 — Provenance | **PASS** (après création de la présente revue) | — |
+| Bloc 4 — Test adverse (pro-nucléaire) | **PASS** | non |
+| Bloc 4 — Test adverse (anti-nucléaire) | **PASS** | non |
+| Bloc 4 — Test aveugle | **PASS** | non |
+
+Au passage 2, le seul item encore au rouge était le **point (c) du Bloc 3 — l'existence même de cette revue datée**, citée par l'ADR et par `cost.rs` alors qu'elle n'était pas encore écrite. **Le présent document lève ce point.** Les deux incohérences de texte résiduelles (un commentaire `cost.rs` et le §1 de l'ADR revendiquant encore « multi-sources / entre experts ») ont été corrigées dans le même temps.
+
+---
+
+## 3. Les deux charges les plus fortes (test adverse) et leur réfutation
+
+C'est le cœur du critère « critiquable par les deux camps » : le passage exige que les deux charges ne se répondent **que** par « on montre la fourchette complète et le périmètre, on ne conclut pas ».
+
+### Charge anti-nucléaire (la plus mordante)
+
+« carbon-fr blanchit le nucléaire : la **seule** entrée à base avantageuse (`accounting-amortized`, "parc existant amorti", médiane 60 €/MWh) est le nucléaire ; toutes les EnR sont servies en `prospective-lcoe` "neuf cher". Le périmètre `plateau` **exclut** démantèlement et déchets de long terme — exactement le poste qui plombe le vrai coût nucléaire. Structure, base et périmètre convergent : plaidoyer pro-nucléaire déguisé en JSON. »
+
+**Réfutation.** (1) Le nucléaire **neuf** (`nucleaire-nouveau`, RTE, 100/120/150) est présent à même proéminence et porte la **médiane pilotable la plus élevée** du catalogue : la version chère est donnée. (2) La médiane du nucléaire existant (60) = celle du PV ; la médiane pilotable la plus basse est en réalité l'**hydraulique (50)** — aucun avantage chiffré ne désigne le nucléaire. (3) Le champ `basis` **étiquette** la non-commensurabilité au lieu de la cacher : l'outil dit lui-même que ce chiffre n'est pas un LCOE comparable. (4) L'exclusion démantèlement/déchets est **nommée et symétrique** ; l'inclure pour le seul nucléaire **violerait** le piège prioritaire du GATE (symétrie de périmètre) et ferait basculer l'outil dans l'anti-nucléaire. La charge attaque la position neutre elle-même.
+
+### Charge pro-nucléaire (symétrique, la plus mordante)
+
+« Le périmètre `plateau` exclut les coûts système (back-up, réseau, stockage) — précisément le surcoût d'intégration de l'intermittence (load factor PV 0,14, éolien 0,25) que la sortie affiche elle-même. Il retire au pilotable son seul avantage structurel et flatte les variables. Et le nucléaire neuf est figé sur l'estimation RTE haute, sans contre-source basse. »
+
+**Réfutation.** (1) Le classement implicite 120>110>65>60 existe dans les **nombres** mais n'est jamais matérialisé : `filtered()` ne réordonne ni n'agrège, aucun champ `gap`/`rank`/`cheapest`, et `range.max` du nucléaire neuf (150) **chevauche** l'éolien en mer (140) — la dispersion publiée interdit tout verdict ponctuel. (2) Le périmètre est **explicitement** signalé comme excluant back-up/réseau/stockage **ET** démantèlement/déchets « de part et d'autre », et le disclaimer dit « PAS directement comparable entre filières pilotables et variables » : l'asymétrie d'effet est nommée, pas masquée. (3) Le mono-source est assumé et frappe **symétriquement** (ADEME seule côté EnR).
+
+**Symétrie tenue.** Les deux charges se réclament mutuellement l'inverse et s'effondrent toutes deux sur les mêmes garde-fous. **Aucune ne mord sur un défaut de conception corrigeable.** Le seul angle résiduel des deux bords — le mono-source par filière — est assumé, signalé et frappe les deux camps de la même façon ; il est traité en pré-condition de gouvernance (§5), pas en biais directionnel.
+
+---
+
+## 4. État des correctifs P1–P7
+
+| # | Correctif | État |
+|---|---|---|
+| P1 | Disclaimer : retrait de la revendication « dispersion entre experts » → « dispersion **publiée par la source** » + limite mono-source assumée | **Levé** (servi) |
+| P2 | Critère d'inclusion/exclusion **uniformisé** sur la **licence seule** ; souveraineté = préférence de contexte, jamais disqualifiant | **Levé** |
+| P3 | Sémantique `null = non publié par la source` exposée dans le disclaimer | **Levé** |
+| P4 | Périmètre `plateau` **explicité bilatéralement** (back-up/intermittence **et** démantèlement/déchets) + « non comparable pilotable/variable » | **Levé** (lève l'asymétrie nominale) |
+| P5 | Champ `basis`/`basis_label` distinguant **coût comptable amorti** vs **LCOE prospectif** | **Levé** |
+| P6 | Hétérogénéité des millésimes (nucléaire 2021, renouvelables 2024) signalée dans le disclaimer | **Levé** |
+| P7 | Cohérence des textes non servis (commentaire `cost.rs`, §1 de l'ADR) avec la réalité mono-source | **Levé** |
+
+---
+
+## 5. Pré-conditions de gouvernance restantes (avant *publication ferme*)
+
+Ces points ne sont **pas** des défauts de neutralité (la sortie est honnête sur chacun) ; ce sont des engagements de gouvernance que l'ADR-0024 portait déjà :
+
+1. **Licences formelles à confirmer** — Cour des comptes et RTE sont des rapports d'institutions publiques dont on ré-encode les *chiffres-faits* ; la licence formelle de réutilisation des rapports reste **à confirmer** avant publication ferme (analogue à la vérification Open-Meteo et au facteur T&D « à sourcer »). ADEME est déjà en Licence Ouverte.
+2. **Valeurs best-effort à sourcer** — les fourchettes et millésimes sont des estimations best-effort à re-vérifier dans les rapports cités (charge de gouvernance continue).
+3. **Multi-source par filière (cible)** — viser au moins une contre-source pour le nucléaire neuf **et** pour le PV/éolien, pour passer d'une dispersion intra-source à une dispersion inter-sources. Non bloquant pour la neutralité de la sortie actuelle (mono-source assumé et déclaré).
+
+Tant que (1) n'est pas levé, la couche est **servie avec la mention explicite « valeurs et licences à confirmer »** dans le disclaimer ; une instance en production qui exige des licences confirmées peut ne pas l'exposer (Alternative D reste le défaut légitime).
+
+---
+
+## 6. Verdict
+
+**Le GATE de neutralité est franchi.** Les six blocs passent ; surtout, **aucune des deux critiques de bord ne mord sur un choix de conception corrigeable** — le critère central « critiquable par les deux camps » est satisfait de façon symétrique. La mécanique est saine par construction : découplage physique de `/v1/price`, aucun champ d'écart, fourchette partout, aucun tri ni lexique évaluatif, base et périmètre explicités, provenance à critère uniforme.
+
+Restent des **pré-conditions de gouvernance** (licences formelles, sourçage fin, multi-source), documentées et signalées dans la sortie — elles conditionnent la *publication ferme*, pas la neutralité.
+
+**Re-jeu obligatoire** de cette revue à toute modification des sources, valeurs, lexique, périmètre ou agrégation.
+
+— Revue conduite par Claude Code (évaluation adversariale multi-agents) pour Morgan (Kovelt), 2026-06-20.

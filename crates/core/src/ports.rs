@@ -9,7 +9,7 @@ use time::{Date, Duration, OffsetDateTime};
 
 use crate::domain::{
     CrossBorderSnapshot, ForecastPoint, Granularity, IntensityStats, LoadRecord, Measurement,
-    Region, RollupBucket, Subscription, TimeRange, VisitStats, WeatherForecast,
+    Region, RollupBucket, SpotPrice, Subscription, TimeRange, VisitStats, WeatherForecast,
 };
 
 /// Erreur de récupération depuis une source amont (ODRÉ, ou source de secours).
@@ -209,6 +209,32 @@ pub trait CrossBorderRepository: Send + Sync {
         &self,
         range: TimeRange,
     ) -> Result<Vec<CrossBorderSnapshot>, RepositoryError>;
+}
+
+/// Port sortant : source du **prix spot day-ahead** de l'électricité (ADR-0023).
+///
+/// Fournit, au pas horaire, le prix de gros day-ahead (€/MWh) de la zone de
+/// marché française — la composante **énergie** de la décomposition du prix TRV.
+/// Source européenne (ENTSO-E) pour la souveraineté ; jamais appelée par requête
+/// utilisateur — le poller l'ingère, comme ODRÉ.
+#[async_trait]
+pub trait SpotPriceSource: Send + Sync {
+    /// Prix spot **récents** (national), du plus ancien au plus récent.
+    async fn recent_prices(&self) -> Result<Vec<SpotPrice>, SourceError>;
+}
+
+/// Port sortant : store du **prix spot day-ahead** (ADR-0023), aligné sur le pas
+/// du mix pour la décomposition de prix à la lecture.
+#[async_trait]
+pub trait SpotPriceRepository: Send + Sync {
+    /// Insère/met à jour des prix spot (clé `at`).
+    async fn upsert_prices(&self, prices: &[SpotPrice]) -> Result<usize, RepositoryError>;
+
+    /// Prix spot au plus proche de `at` (≤ `at`), s'il existe.
+    async fn price_at(&self, at: OffsetDateTime) -> Result<Option<SpotPrice>, RepositoryError>;
+
+    /// Prix spot dont l'horodatage tombe dans `range`, triés par `at` croissant.
+    async fn price_range(&self, range: TimeRange) -> Result<Vec<SpotPrice>, RepositoryError>;
 }
 
 /// Niveau d'accès d'un appelant authentifié (ADR-0015). L'**anonyme** n'est pas

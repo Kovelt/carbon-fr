@@ -287,6 +287,112 @@ export interface FactorsResponse {
   td_loss_factor: number | null;
 }
 
+/** Une composante du prix (`GET /v1/price`). */
+export interface PriceComponent {
+  /** `energie` | `acheminement` | `accise` | `commercialisation` | `tva`. */
+  kind: string;
+  label: string;
+  amount_eur_mwh: number;
+  source: string;
+}
+
+export interface PriceMixShare {
+  filiere: string;
+  label: string;
+  /** Part dans la production domestique, dans `[0, 1]`. */
+  share: number;
+  output_mw: number;
+}
+
+export interface PriceMarginalTechnology {
+  filiere: string;
+  label: string;
+  /** Toujours `true` : estimée par ordre de mérite, jamais mesurée. */
+  estimated: boolean;
+  method: string;
+}
+
+export interface PriceContext {
+  mix: PriceMixShare[];
+  marginal_technology: PriceMarginalTechnology | null;
+}
+
+/** `GET /v1/price` — décomposition complète du prix payé (TRV, ADR-0023). */
+export interface PriceResponse {
+  region: string;
+  timestamp: string;
+  vintage: string;
+  unit: string;
+  currency: string;
+  total_eur_mwh: number;
+  total_eur_kwh: number;
+  components: PriceComponent[];
+  context: PriceContext;
+  disclaimer: string;
+}
+
+/** Un point d'une série de prix (`GET /v1/price/date`). */
+export interface PricePoint {
+  timestamp: string;
+  energie_eur_mwh: number;
+  total_eur_mwh: number;
+}
+
+/** `GET /v1/price/date`. */
+export interface PriceHistoryResponse {
+  from: string;
+  to: string;
+  count: number;
+  unit: string;
+  currency: string;
+  points: PricePoint[];
+}
+
+/** Fourchette LCOE (estimation, `GET /v1/cost-reference`). */
+export interface LcoeRange {
+  min: number;
+  median: number;
+  max: number;
+  unit: string;
+}
+
+export interface CostAssumptions {
+  discount_rate: number | null;
+  lifetime_years: number | null;
+  load_factor: number | null;
+}
+
+export interface CostReferenceEntry {
+  technology: string;
+  technology_label: string;
+  source: string;
+  source_label: string;
+  source_attribution: string;
+  perimeter: string;
+  /** Libellé explicitant ce que le périmètre inclut/exclut. */
+  perimeter_label: string;
+  /** `"accounting-amortized"` (coût comptable amorti) vs `"prospective-lcoe"`. */
+  basis: string;
+  basis_label: string;
+  vintage: number;
+  /** Statut systématique : `"estimation"` (ADR-0024). */
+  kind: string;
+  range: LcoeRange;
+  hypotheses: CostAssumptions;
+}
+
+/** `GET /v1/cost-reference` — couche comparative LCOE (estimation, ADR-0024). */
+export interface CostReferenceResponse {
+  unit: string;
+  currency: string;
+  /** Statut systématique : `"estimation"`. */
+  kind: string;
+  /** Note neutre obligatoire (LCOE ≠ coût marginal ≠ prix payé). */
+  disclaimer: string;
+  count: number;
+  entries: CostReferenceEntry[];
+}
+
 /** `GET /v1/stats` et `POST /v1/stats/visit`. */
 export interface VisitStatsResponse {
   unique: number;

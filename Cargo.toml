@@ -23,7 +23,7 @@ strip = "debuginfo"
 # Version applicative unique du workspace (ADR-0019). Toutes les crates en
 # héritent (`version.workspace = true`) ; un tag git `vX.Y.Z` doit la refléter
 # et déclenche la publication de l'image Docker taguée (release.yml).
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Kovelt/carbon-fr"

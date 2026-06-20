@@ -683,6 +683,16 @@
               "type": "number",
               "format": "double"
             }
+          },
+          {
+            "name": "electrolyzer_kwh_per_kg",
+            "in": "query",
+            "description": "Override de la consommation électrolyseur (kWh/kgH₂, ]0, 200]) — **recale**\nle seuil bas-carbone dérivé (sauf si un seuil explicite est aussi fourni).",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
           }
         ],
         "responses": {
@@ -2993,9 +3003,7 @@
           "status",
           "adr",
           "granularity",
-          "article4_renewable_threshold",
           "low_carbon_intensity_is_indicative",
-          "electrolyzer_kwh_per_kg",
           "legal_basis",
           "description"
         ],
@@ -3004,15 +3012,23 @@
             "type": "string"
           },
           "article4_renewable_threshold": {
-            "type": "number",
-            "format": "double"
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Seuil renouvelable de l'exception Article 4 (`rfnbo` uniquement)."
           },
           "description": {
             "type": "string"
           },
           "electrolyzer_kwh_per_kg": {
-            "type": "number",
-            "format": "double"
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Consommation électrolyseur qui dérive le seuil (`low-carbon` uniquement)."
           },
           "framework": {
             "type": "string"

@@ -186,6 +186,7 @@ export class CarbonFr {
     eligibilityVersion?: string;
     surplusPriceEurMwh?: number;
     lowCarbonThresholdGPerKwh?: number;
+    electrolyzerKwhPerKg?: number;
   } = {}) {
     return this.get<GreenestWindowResponse>("/v1/intensity/greenest-window", {
       region: opts.region,
@@ -198,6 +199,7 @@ export class CarbonFr {
       eligibility_version: opts.eligibilityVersion,
       surplus_price_eur_mwh: opts.surplusPriceEurMwh,
       low_carbon_threshold_g_per_kwh: opts.lowCarbonThresholdGPerKwh,
+      electrolyzer_kwh_per_kg: opts.electrolyzerKwhPerKg,
     });
   }
 

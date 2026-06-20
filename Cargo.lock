@@ -216,6 +216,7 @@ dependencies = [
  "axum",
  "carbonfr-adapter-forecast",
  "carbonfr-core",
+ "carbonfr-eligibility",
  "serde",
  "serde_json",
  "sha2",
@@ -284,6 +285,14 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
+]
+
+[[package]]
+name = "carbonfr-eligibility"
+version = "0.3.2"
+dependencies = [
+ "carbonfr-core",
+ "time",
 ]
 
 [[package]]

@@ -74,13 +74,20 @@ fn rfnbo_signals(slot: &SlotInput, ruleset: &EligibilityRuleset) -> Vec<Eligibil
     }
 
     // Surplus prix (pilier actif seulement si le ruleset porte un seuil).
+    // L'exception surplus de l'art. 4 est une DISJONCTION : prix ≤ seuil OU
+    // prix < 0,36×prix EUA. Seule la branche prix est câblée (pas de flux EUA).
+    // Donc on ne peut émettre qu'un PASS certain (prix ≤ seuil) ; un prix au-dessus
+    // ne prouve PAS l'échec de l'exception (la branche EUA reste possible) → on
+    // émet `Indeterminate`, jamais un échec ferme (sur-affirmerait un négatif).
     match (ruleset.surplus_price_eur_mwh, slot.spot_price_eur_mwh) {
-        (Some(threshold), Some(price)) => signals.push(EligibilitySignal::SurplusPrice {
-            spot_price_eur_mwh: price,
-            threshold,
-            passed: price <= threshold,
-        }),
-        (Some(_), None) => signals.push(EligibilitySignal::Indeterminate {
+        (Some(threshold), Some(price)) if price <= threshold => {
+            signals.push(EligibilitySignal::SurplusPrice {
+                spot_price_eur_mwh: price,
+                threshold,
+                passed: true,
+            })
+        }
+        (Some(_), _) => signals.push(EligibilitySignal::Indeterminate {
             pillar: Pillar::SurplusPrice,
         }),
         (None, _) => {}
@@ -128,7 +135,10 @@ fn low_carbon_signals(slot: &SlotInput, ruleset: &EligibilityRuleset) -> Vec<Eli
 ///
 /// `low-carbon` : l'intensité elle-même (homogène avec `greenest-window`).
 /// `rfnbo` : favorise une forte part renouvelable et un prix bas ; une donnée
-/// manquante reçoit une pénalité maximale (créneaux certains classés devant).
+/// manquante reçoit une **forte** pénalité (tend à reléguer les créneaux
+/// incertains). C'est une heuristique de **classement**, pas un ordre total
+/// garanti entre certain et incertain ; le seul score consommé par l'overlay est
+/// `best_eligible`, qui ne classe que des créneaux `eligible`.
 fn score(slot: &SlotInput, ruleset: &EligibilityRuleset) -> f64 {
     match ruleset.framework {
         EligibilityFramework::LowCarbon => slot.intensity.value(),
@@ -272,11 +282,20 @@ mod tests {
     }
 
     #[test]
-    fn rfnbo_ineligible_when_both_grid_exceptions_fail() {
+    fn rfnbo_indeterminate_when_renewable_fails_and_price_above_surplus() {
+        // Part renouvelable connue < seuil (échec) ET prix > seuil : la branche EUA
+        // (non câblée) pourrait encore valider le surplus → INDÉTERMINÉ, pas un
+        // « certain non-éligible » (on ne sur-affirme jamais un négatif, finding 5).
         let r = EligibilityRuleset::rfnbo_2023_1184();
         let v = evaluate_slot(&slot(20.0, 2.0, Some(0.30), Some(80.0)), &r, "FR");
         assert!(!v.eligible);
-        assert!(!v.is_indeterminate()); // part ET prix connus → certain
+        assert!(v.is_indeterminate());
+        // Le pilier prix n'émet jamais d'échec ferme (seulement pass ou indéterminé).
+        assert!(
+            !v.signals
+                .iter()
+                .any(|s| matches!(s, EligibilitySignal::SurplusPrice { passed: false, .. }))
+        );
     }
 
     #[test]

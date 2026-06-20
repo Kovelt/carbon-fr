@@ -8,15 +8,17 @@ use async_trait::async_trait;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use carbonfr_adapter_forecast::ClimatologyForecaster;
-use carbonfr_adapter_http::{AppState, EligibilityRepoAdapter, ForecastState, StreamState, router};
+use carbonfr_adapter_http::{
+    AppState, EligibilityRepo, EligibilityRepoAdapter, ForecastState, StreamState, router,
+};
 use carbonfr_core::domain::{
-    CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, GenerationMix,
-    Granularity, IntensityStats, Measurement, Methodology, Neighbor, Region, RenewableModel,
-    RollupBucket, SpotPrice, TimeRange, Vintage, VisitStats, WeatherForecast,
+    CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, ForecastPoint,
+    GenerationMix, Granularity, IntensityStats, Measurement, Methodology, Neighbor, Region,
+    RenewableModel, RollupBucket, SpotPrice, TimeRange, Vintage, VisitStats, WeatherForecast,
 };
 use carbonfr_core::ports::{
-    CrossBorderRepository, IntensityRepository, RepositoryError, SpotPriceRepository, VisitCounter,
-    WeatherRepository,
+    CrossBorderRepository, ForecastError, ForecastModel, IntensityRepository, RepositoryError,
+    SpotPriceRepository, VisitCounter, WeatherRepository,
 };
 use time::{Date, Duration, OffsetDateTime};
 use tower::ServiceExt;
@@ -1074,6 +1076,30 @@ async fn greenest_window_estimator_selector() {
     assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
 }
 
+/// Forecaster-espion : compte les appels à `forecast()` (invariant mono-forecast,
+/// ADR-0026 D16) en déléguant au vrai `ClimatologyForecaster`.
+#[derive(Clone)]
+struct SpyForecaster {
+    inner: ClimatologyForecaster<FakeRepo>,
+    calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl ForecastModel for SpyForecaster {
+    async fn forecast(
+        &self,
+        region: Region,
+        methodology_id: &str,
+        from: OffsetDateTime,
+        horizon: Duration,
+    ) -> Result<Vec<ForecastPoint>, ForecastError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner
+            .forecast(region, methodology_id, from, horizon)
+            .await
+    }
+}
+
 /// Monte le routeur avec l'overlay d'éligibilité câblé (ADR-0025/0026).
 fn build_with_eligibility(repo: FakeRepo) -> axum::Router {
     let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1")
@@ -1125,12 +1151,43 @@ async fn greenest_window_eligibility_low_carbon_annotates() {
     // PIÈGE 1 : zone de dépôt nationale, jamais une sous-région.
     assert_eq!(elig["bidding_zone"], "FR");
     assert!(elig["disclaimer"].is_string());
-    assert!(elig["slots"].as_array().unwrap().iter().count() > 0);
-    // Série ~20 gCO₂eq/kWh ≪ 64 → la fenêtre retenue qualifie.
+    let slots = elig["slots"].as_array().unwrap();
+    assert!(!slots.is_empty());
+    // Série ~20 gCO₂eq/kWh ≪ 64 → tous les créneaux qualifient, aucun indéterminé.
     assert_eq!(elig["window_eligible"], true);
-    // Signal étiqueté indicatif (proxy non réglementaire).
-    let basis = elig["slots"][0]["signals"][0]["basis"].as_str().unwrap();
-    assert_eq!(basis, "indicative-non-regulatory");
+    assert_eq!(elig["count_eligible"].as_u64().unwrap(), slots.len() as u64);
+    assert_eq!(elig["count_indeterminate"].as_u64().unwrap(), 0);
+    // Signal cherché PAR PILIER (pas par index) + étiqueté indicatif (proxy).
+    let lc = slots[0]["signals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["pillar"] == "low-carbon-intensity")
+        .expect("signal low-carbon-intensity");
+    assert_eq!(lc["verdict"], "pass");
+    assert_eq!(lc["basis"], "indicative-non-regulatory");
+}
+
+#[tokio::test]
+async fn greenest_window_eligibility_low_carbon_high_intensity_not_eligible() {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    // Série ~120 gCO₂eq/kWh ≫ 64 → la borne basse dépasse le seuil → non éligible.
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 120.0))
+        .collect();
+    let response = get(
+        build_with_eligibility(FakeRepo {
+            series,
+            ..Default::default()
+        }),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&eligibility=low-carbon",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let elig = &json_body(response).await["eligibility"];
+    assert_eq!(elig["window_eligible"], false);
+    assert_eq!(elig["count_eligible"].as_u64().unwrap(), 0);
 }
 
 #[tokio::test]
@@ -1181,6 +1238,182 @@ async fn eligibility_rulesets_lists_served_and_planned() {
         .unwrap();
     assert_eq!(revision["status"], "planned");
     assert!(body["disclaimer"].is_string());
+}
+
+#[tokio::test]
+async fn eligibility_adapter_price_freshness_is_strictly_one_hour() {
+    // Vérifie le filtre de fraîcheur du prix (PIÈGE 2, ADR-0026 D7) directement
+    // sur l'adaptateur — le bug initial (whole_hours) tolérait jusqu'à ~2 h.
+    let t = OffsetDateTime::UNIX_EPOCH + Duration::hours(100);
+    let repo = FakeRepo {
+        prices: vec![SpotPrice::new(t - Duration::minutes(30), 12.0).unwrap()],
+        ..Default::default()
+    };
+    let adapter = EligibilityRepoAdapter(repo);
+    // 30 min d'ancienneté → frais.
+    assert_eq!(adapter.spot_price_at(t).await, Some(12.0));
+    // 90 min d'ancienneté (> 1 h) → périmé → None (le bug le laissait passer).
+    assert_eq!(adapter.spot_price_at(t + Duration::minutes(60)).await, None);
+    // Pile 1 h 59 d'ancienneté → périmé (whole_hours l'acceptait à tort).
+    assert_eq!(
+        adapter
+            .spot_price_at(t - Duration::minutes(30) + Duration::minutes(119))
+            .await,
+        None
+    );
+}
+
+#[tokio::test]
+async fn greenest_window_eligibility_rfnbo_price_makes_eligible() {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 60.0))
+        .collect();
+    // Prix day-ahead bas (≤ 20 €/MWh) couvrant densément la fenêtre de prévision
+    // → le pilier surplus passe → éligible (disjonction), même sans mix futur.
+    let prices: Vec<SpotPrice> = (0..=24 * 4)
+        .map(|i: i32| SpotPrice::new(from + step * i, 8.0).unwrap())
+        .collect();
+    let response = get(
+        build_with_eligibility(FakeRepo {
+            series,
+            prices,
+            ..Default::default()
+        }),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&eligibility=rfnbo",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let elig = &json_body(response).await["eligibility"];
+    assert_eq!(elig["framework"], "rfnbo");
+    assert_eq!(elig["window_eligible"], true);
+    assert!(elig["count_eligible"].as_u64().unwrap() > 0);
+    // Le pilier surplus-prix passe ; aucun verdict ferme « fail » du prix (EUA non câblée).
+    let signals = elig["slots"][0]["signals"].as_array().unwrap();
+    let surplus = signals
+        .iter()
+        .find(|s| s["pillar"] == "surplus-price")
+        .expect("signal surplus-price");
+    assert_eq!(surplus["verdict"], "pass");
+}
+
+#[tokio::test]
+async fn greenest_window_eligibility_rfnbo_indeterminate_without_price_or_mix() {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 60.0))
+        .collect();
+    // Pas de prix, pas de mix nowcast couvrant le futur → part renouvelable None +
+    // surplus indéterminé → tous les créneaux indéterminés, jamais « certain fail ».
+    let response = get(
+        build_with_eligibility(FakeRepo {
+            series,
+            ..Default::default()
+        }),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&eligibility=rfnbo",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let elig = &json_body(response).await["eligibility"];
+    assert_eq!(elig["window_eligible"], false);
+    assert_eq!(elig["count_eligible"].as_u64().unwrap(), 0);
+    assert!(elig["count_indeterminate"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn greenest_window_eligibility_planned_ruleset_is_400() {
+    // Le ruleset `planned` (report attendu, non en vigueur) n'est jamais résolu.
+    for version in ["2026-revision", "9999"] {
+        let response = get(
+            build_with_eligibility(FakeRepo {
+                series: low_carbon_series(),
+                ..Default::default()
+            }),
+            &format!(
+                "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&eligibility=rfnbo&eligibility_version={version}"
+            ),
+        )
+        .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "version={version}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn greenest_window_eligibility_override_out_of_range_is_400() {
+    let cases = [
+        "surplus_price_eur_mwh=-1",
+        "low_carbon_threshold_g_per_kwh=2000",
+        "electrolyzer_kwh_per_kg=0",
+    ];
+    for q in cases {
+        let response = get(
+            build_with_eligibility(FakeRepo {
+                series: low_carbon_series(),
+                ..Default::default()
+            }),
+            &format!(
+                "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&eligibility=low-carbon&{q}"
+            ),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "param={q}");
+        assert_eq!(json_body(response).await["code"], "bad_request");
+    }
+}
+
+#[tokio::test]
+async fn greenest_window_eligibility_overridden_kwh_recales_threshold() {
+    // Conso plus efficace (40 kWh/kg) → seuil dérivé plus haut (3384/40 ≈ 85) → un
+    // créneau ~75 g, non éligible à 64, devient éligible. `overridden` est exposé.
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 75.0))
+        .collect();
+    let response = get(
+        build_with_eligibility(FakeRepo {
+            series,
+            ..Default::default()
+        }),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&eligibility=low-carbon&electrolyzer_kwh_per_kg=40",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let elig = &json_body(response).await["eligibility"];
+    assert_eq!(elig["overridden"], true);
+    assert_eq!(elig["window_eligible"], true);
+}
+
+#[tokio::test]
+async fn greenest_window_eligibility_uses_a_single_forecast_call() {
+    // Invariant mono-forecast (ADR-0026 D16) : la fenêtre verte ET l'éligibilité
+    // partagent UN SEUL appel forecast().
+    let repo = FakeRepo {
+        series: low_carbon_series(),
+        ..Default::default()
+    };
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let spy = SpyForecaster {
+        inner: ClimatologyForecaster::new(repo.clone()),
+        calls: calls.clone(),
+    };
+    let forecast = ForecastState::new(spy, "climatology@1")
+        .with_eligibility(Arc::new(EligibilityRepoAdapter(repo.clone())));
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    let app = router(AppState::new(repo), forecast, StreamState::new(updates));
+    let response = get(
+        app,
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&eligibility=low-carbon",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

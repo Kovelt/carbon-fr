@@ -157,8 +157,12 @@ pub struct EligibilityVerdict {
 
 impl EligibilityVerdict {
     /// `true` si non éligible **mais** un pilier reste indéterminé : le verdict
-    /// pourrait basculer si la donnée manquante devenait disponible. Distinct du
-    /// « définitivement non éligible » (tous les piliers connus ont échoué).
+    /// pourrait basculer si la donnée manquante (ou une voie non évaluée) devenait
+    /// disponible. Pour `rfnbo`, le pilier surplus n'émet jamais d'échec ferme (la
+    /// branche EUA n'est pas câblée) → un créneau non éligible y est typiquement
+    /// indéterminé plutôt que « définitivement non éligible » (on ne sur-affirme
+    /// pas un négatif). Le cas certain-non-éligible n'existe que si tous les piliers
+    /// du cadre ont émis un échec ferme.
     pub fn is_indeterminate(&self) -> bool {
         !self.eligible
             && self

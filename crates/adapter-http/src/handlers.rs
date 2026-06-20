@@ -669,12 +669,16 @@ pub(crate) struct GreenestWindowQuery {
     surplus_price_eur_mwh: Option<f64>,
     /// Override du seuil d'intensité bas-carbone (gCO₂eq/kWh, ]0, 1000]).
     low_carbon_threshold_g_per_kwh: Option<f64>,
+    /// Override de la consommation électrolyseur (kWh/kgH₂, ]0, 200]) — **recale**
+    /// le seuil bas-carbone dérivé (sauf si un seuil explicite est aussi fourni).
+    electrolyzer_kwh_per_kg: Option<f64>,
 }
 
 /// Valide les overrides d'éligibilité (bornes simples ; sinon 400).
 fn validate_eligibility_overrides(
     surplus_price_eur_mwh: Option<f64>,
     low_carbon_threshold_g_per_kwh: Option<f64>,
+    electrolyzer_kwh_per_kg: Option<f64>,
 ) -> Result<(), ApiError> {
     if let Some(p) = surplus_price_eur_mwh
         && (!p.is_finite() || p < 0.0)
@@ -688,6 +692,13 @@ fn validate_eligibility_overrides(
     {
         return Err(ApiError::bad_request(
             "`low_carbon_threshold_g_per_kwh` doit être dans ]0, 1000]",
+        ));
+    }
+    if let Some(k) = electrolyzer_kwh_per_kg
+        && (!k.is_finite() || k <= 0.0 || k > 200.0)
+    {
+        return Err(ApiError::bad_request(
+            "`electrolyzer_kwh_per_kg` doit être dans ]0, 200]",
         ));
     }
     Ok(())
@@ -771,6 +782,7 @@ where
             validate_eligibility_overrides(
                 query.surplus_price_eur_mwh,
                 query.low_carbon_threshold_g_per_kwh,
+                query.electrolyzer_kwh_per_kg,
             )?;
             let ruleset = resolve_ruleset(framework, query.eligibility_version.as_deref())
                 .ok_or_else(|| {
@@ -781,7 +793,7 @@ where
                 .with_overrides(
                     query.surplus_price_eur_mwh,
                     query.low_carbon_threshold_g_per_kwh,
-                    None,
+                    query.electrolyzer_kwh_per_kg,
                 );
             // Overlay non câblé (pas de source mix/prix) ⇒ 503 plutôt qu'un verdict
             // muet. N'arrive qu'en mauvaise config (toujours câblé en prod).

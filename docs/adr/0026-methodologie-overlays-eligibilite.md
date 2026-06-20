@@ -59,7 +59,7 @@ Forces en présence :
 
 11. **Mono-forecast** (D16) : un **seul** appel `forecast()` alimente la fenêtre verte ET l'éligibilité (plus de re-prévision interne via `FindGreenestWindow`).
 
-12. **API = extension `?eligibility=`** sur `GET /v1/intensity/greenest-window` (axe **orthogonal** à `methodology`, réponse rétro-compatible) + **catalogue** `GET /v1/eligibility/rulesets`. **Pas** d'endpoint `/electrolyzer/*`.
+12. **API = extension `?eligibility=`** sur `GET /v1/intensity/greenest-window` (axe **orthogonal** à `methodology`, réponse rétro-compatible) + **catalogue** `GET /v1/eligibility/rulesets`. **Pas** d'endpoint `/electrolyzer/*`. Overrides bornés exposés : `eligibility_version`, `surplus_price_eur_mwh` (≥ 0), `low_carbon_threshold_g_per_kwh` (]0, 1000]), `electrolyzer_kwh_per_kg` (]0, 200], **recale** le seuil dérivé — D4).
 
 13. **Hors périmètre confirmé** (donnée niveau site absente) : gCO₂eq/kgH₂, certification, additionnalité PPA (et son *grandfathering* < 2028-01-01) — exposé dans le `disclaimer`.
 

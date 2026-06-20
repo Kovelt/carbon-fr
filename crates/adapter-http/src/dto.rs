@@ -575,13 +575,17 @@ pub(crate) struct RulesetInfo {
     /// Date de bascule horaire (`rfnbo`), `None` pour `low-carbon`.
     #[serde(skip_serializing_if = "Option::is_none")]
     hourly_switchover: Option<String>,
-    article4_renewable_threshold: f64,
+    /// Seuil renouvelable de l'exception Article 4 (`rfnbo` uniquement).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    article4_renewable_threshold: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     surplus_price_eur_mwh: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     low_carbon_intensity_threshold_g_per_kwh: Option<f64>,
     low_carbon_intensity_is_indicative: bool,
-    electrolyzer_kwh_per_kg: f64,
+    /// Consommation électrolyseur qui dérive le seuil (`low-carbon` uniquement).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    electrolyzer_kwh_per_kg: Option<f64>,
     legal_basis: &'static str,
     description: &'static str,
 }
@@ -622,12 +626,23 @@ impl RulesetsResponse {
                     } else {
                         None
                     },
-                    article4_renewable_threshold: r.article4_renewable_threshold,
+                    // Champs propres au cadre : masqués hors de leur cadre pour ne
+                    // pas servir une valeur dénuée de sens (ex. seuil renouvelable
+                    // 0 % pour low-carbon, conso pour rfnbo).
+                    article4_renewable_threshold: if is_rfnbo {
+                        Some(r.article4_renewable_threshold)
+                    } else {
+                        None
+                    },
                     surplus_price_eur_mwh: r.surplus_price_eur_mwh,
                     low_carbon_intensity_threshold_g_per_kwh: r
                         .low_carbon_intensity_threshold_g_per_kwh,
                     low_carbon_intensity_is_indicative: r.low_carbon_intensity_is_indicative,
-                    electrolyzer_kwh_per_kg: r.electrolyzer_kwh_per_kg,
+                    electrolyzer_kwh_per_kg: if is_rfnbo {
+                        None
+                    } else {
+                        Some(r.electrolyzer_kwh_per_kg)
+                    },
                     legal_basis: r.legal_basis,
                     description: r.description,
                 }
@@ -1498,5 +1513,130 @@ impl WebhookListResponse {
             count: webhooks.len(),
             webhooks,
         }
+    }
+}
+
+#[cfg(test)]
+mod eligibility_tests {
+    use super::*;
+    use carbonfr_core::domain::{CarbonIntensity, GreenWindow};
+    use carbonfr_eligibility::{
+        EligibilityFramework, EligibilityRuleset, EligibilitySignal, EligibilityVerdict, Pillar,
+    };
+    use time::{Duration, OffsetDateTime};
+
+    fn ci(g: f64) -> CarbonIntensity {
+        CarbonIntensity::new(g).expect("intensité")
+    }
+
+    /// Verdict synthétique low-carbon : éligible / non éligible / indéterminé.
+    fn verdict(at: OffsetDateTime, eligible: bool, indeterminate: bool) -> EligibilityVerdict {
+        let signals = if indeterminate {
+            vec![EligibilitySignal::Indeterminate {
+                pillar: Pillar::LowCarbonIntensity,
+            }]
+        } else {
+            vec![EligibilitySignal::LowCarbonIntensity {
+                intensity_g_per_kwh: 20.0,
+                threshold: 64.0,
+                indicative: true,
+                passed: eligible,
+            }]
+        };
+        EligibilityVerdict {
+            timestamp: at,
+            bidding_zone: "FR",
+            framework: EligibilityFramework::LowCarbon,
+            ruleset_version: "low-carbon:2025-2359",
+            eligible,
+            signals,
+            carbon_intensity: ci(20.0),
+            intensity_lower: ci(15.0),
+            intensity_upper: ci(25.0),
+            score: 20.0,
+        }
+    }
+
+    fn window(start: OffsetDateTime, end: OffsetDateTime) -> GreenWindow {
+        GreenWindow {
+            start,
+            end,
+            average: ci(20.0),
+        }
+    }
+
+    fn build(w: &GreenWindow, verdicts: &[EligibilityVerdict]) -> EligibilityBody {
+        EligibilityBody::from_verdicts(
+            EligibilityFramework::LowCarbon,
+            &EligibilityRuleset::low_carbon_2025_2359(),
+            w,
+            verdicts,
+        )
+        .expect("formatage")
+    }
+
+    #[test]
+    fn window_eligible_when_all_slots_in_window_are_eligible() {
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let step = Duration::minutes(30);
+        let verdicts = [
+            verdict(t0, true, false),
+            verdict(t0 + step, true, false),
+            verdict(t0 + step * 4, false, false), // hors fenêtre
+        ];
+        let body = build(&window(t0, t0 + step * 2), &verdicts);
+        assert!(body.window_eligible);
+        assert_eq!(body.count_eligible, 2);
+        assert_eq!(body.count_indeterminate, 0);
+    }
+
+    #[test]
+    fn window_not_eligible_if_a_slot_in_window_is_indeterminate() {
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let step = Duration::minutes(30);
+        let verdicts = [verdict(t0, true, false), verdict(t0 + step, false, true)];
+        let body = build(&window(t0, t0 + step * 2), &verdicts);
+        assert!(!body.window_eligible);
+        assert!(body.count_indeterminate >= 1);
+    }
+
+    #[test]
+    fn window_not_eligible_when_no_verdict_falls_in_window() {
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let step = Duration::minutes(30);
+        let verdicts = [verdict(t0 + step * 10, true, false)];
+        let body = build(&window(t0, t0 + step * 2), &verdicts);
+        assert!(!body.window_eligible);
+    }
+
+    #[test]
+    fn window_bounds_are_half_open_start_inclusive_end_exclusive() {
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let step = Duration::minutes(30);
+        // Fenêtre [t0, t0+step) : le créneau pile à `end` est EXCLU (ne pénalise pas).
+        let verdicts = [
+            verdict(t0, true, false),         // à start → inclus
+            verdict(t0 + step, false, false), // à end → exclu
+        ];
+        let body = build(&window(t0, t0 + step), &verdicts);
+        assert!(
+            body.window_eligible,
+            "le créneau à `end` est exclu et ne doit pas rendre la fenêtre non éligible"
+        );
+    }
+
+    #[test]
+    fn best_eligible_is_lowest_score_among_eligible_only() {
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let step = Duration::minutes(30);
+        let mut a = verdict(t0, true, false);
+        a.score = 50.0;
+        let mut b = verdict(t0 + step, true, false);
+        b.score = 10.0;
+        let mut c = verdict(t0 + step * 2, false, false);
+        c.score = 1.0; // meilleur score MAIS non éligible → ignoré
+        let body = build(&window(t0, t0 + step * 4), &[a, b, c]);
+        let best = body.best_eligible.expect("un éligible");
+        assert_eq!(best.score, 10.0);
     }
 }

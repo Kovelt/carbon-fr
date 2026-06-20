@@ -8,6 +8,22 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté
+
+- **Prix de l'électricité** (ADR-0023) : `GET /v1/price` et `GET /v1/price/date` —
+  décomposition complète du prix payé ancrée sur le **TRV**. Composante énergie =
+  **prix spot day-ahead ENTSO-E** (`documentType=A44`) ; + acheminement (TURPE) +
+  accise + TVA + résidu commercialisation (constantes de domaine versionnées,
+  best-effort 2026 *à sourcer*) ; contexte : mix par filière + technologie
+  marginale **estimée**. National. Table `spot_price` (migration `0011`), ingérée
+  par le poller si `CARBONFR_ENTSOE_TOKEN`. SDK : `price()` / `priceHistory()`.
+- **Couche comparative LCOE** (ADR-0024) : `GET /v1/cost-reference` — coût de
+  production par filière en **fourchette** (estimation), nucléaire scindé
+  existant/nouveau, **jamais** mis en différence avec le prix de marché. *GATE de
+  neutralité* franchi par évaluation adversariale (revue datée
+  `docs/adr/0024-revue-neutralite.md`). SDK : `costReference()`. Reste, avant
+  publication ferme : confirmer les licences CdC/RTE, multi-source par filière.
+
 ## [0.2.1] - 2026-06-17
 
 Aucun changement fonctionnel du service (image identique à 0.2.0 côté binaire).

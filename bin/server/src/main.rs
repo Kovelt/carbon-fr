@@ -79,7 +79,8 @@ use carbonfr_core::domain::{
 use carbonfr_core::ports::{
     ApiKeyRepository, ApiTier, ConsumptionRepository, ConsumptionSource, CrossBorderRepository,
     CrossBorderSource, Eco2mixArchive, Eco2mixSource, IntensityRepository, Notifier,
-    SubscriptionRepository, WeatherForecastSource, WeatherRepository, WebhookDelivery,
+    SpotPriceRepository, SpotPriceSource, SubscriptionRepository, WeatherForecastSource,
+    WeatherRepository, WebhookDelivery,
 };
 use metrics::Metrics;
 use time::format_description::well_known::Rfc3339;
@@ -1280,11 +1281,12 @@ fn spawn_poller<S, W, C, R>(
 where
     S: Eco2mixSource + ConsumptionSource + Clone + 'static,
     W: WeatherForecastSource + 'static,
-    C: CrossBorderSource + 'static,
+    C: CrossBorderSource + SpotPriceSource + 'static,
     R: IntensityRepository
         + ConsumptionRepository
         + WeatherRepository
         + CrossBorderRepository
+        + SpotPriceRepository
         + Clone
         + 'static,
 {
@@ -1365,6 +1367,21 @@ where
                     }
                     Ok(_) => {}
                     Err(err) => warn!(error = %err, "échec de récupération ENTSO-E"),
+                }
+
+                // Prix spot day-ahead (ENTSO-E A44, ADR-0023) — composante énergie
+                // de `/v1/price`. Même token. Échec non bloquant.
+                metrics.inc_upstream_entsoe();
+                match entsoe.recent_prices().await {
+                    Ok(prices) if !prices.is_empty() => match repo.upsert_prices(&prices).await {
+                        Ok(n) => {
+                            metrics.set_last_price(OffsetDateTime::now_utc().unix_timestamp());
+                            info!(prices = n, "ingestion prix spot day-ahead (ENTSO-E)");
+                        }
+                        Err(err) => warn!(error = %err, "échec d'écriture du prix spot"),
+                    },
+                    Ok(_) => {}
+                    Err(err) => warn!(error = %err, "échec de récupération du prix spot ENTSO-E"),
                 }
             }
 

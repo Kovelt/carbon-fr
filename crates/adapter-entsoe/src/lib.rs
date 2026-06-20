@@ -12,11 +12,16 @@
 //! token (`CARBONFR_ENTSOE_TOKEN`) est requis ; **jamais appelée par requête
 //! utilisateur** — le poller l'ingère.
 //!
-//! Chemins XML, codes EIC et URL de base **validés contre l'API live** le
-//! 2026-06-16 (test `tests/live.rs`, `--ignored`) : 5 frontières actives
-//! (BE/DE/ES/IT/CH), flux et intensités voisines plausibles. La frontière GB est
-//! indisponible côté ENTSO-E depuis le Brexit — dégradation propre (frontière
-//! simplement absente des snapshots, pas d'erreur).
+//! Chemins XML, codes EIC et URL de base (flux A11 / génération A75) **validés
+//! contre l'API live** le 2026-06-16 (test `tests/live.rs`, `--ignored`) : 5
+//! frontières actives (BE/DE/ES/IT/CH), flux et intensités voisines plausibles.
+//! La frontière GB est indisponible côté ENTSO-E depuis le Brexit — dégradation
+//! propre (frontière simplement absente des snapshots, pas d'erreur).
+//!
+//! Implémente aussi [`SpotPriceSource`](carbonfr_core::ports::SpotPriceSource) :
+//! le **prix spot day-ahead** de la zone FR (`documentType=A44`, ADR-0023),
+//! composante énergie de la décomposition du prix. ⚠️ Le chemin A44 reste **à
+//! valider live** (`recent_prices_live`, `--ignored`).
 
 mod codes;
 mod dto;
@@ -26,16 +31,16 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use carbonfr_core::domain::{
     CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, EmissionFactors,
-    GenerationMix, Neighbor, acv_ademe_intensity,
+    GenerationMix, Neighbor, SpotPrice, acv_ademe_intensity,
 };
-use carbonfr_core::ports::{CrossBorderSource, SourceError};
+use carbonfr_core::ports::{CrossBorderSource, SourceError, SpotPriceSource};
 use thiserror::Error;
 use time::format_description::FormatItem;
 use time::macros::format_description;
 use time::{Duration, OffsetDateTime};
 
 use codes::{FR_EIC, neighbor_eic};
-use dto::{FiliereMw, FlowDocument, GenerationDocument};
+use dto::{DayAheadPriceDocument, FiliereMw, FlowDocument, GenerationDocument};
 
 const DEFAULT_BASE_URL: &str = "https://web-api.tp.entsoe.eu/api";
 /// Fenêtre récente interrogée à chaque cycle (heures).
@@ -44,8 +49,13 @@ const DEFAULT_WINDOW_HOURS: i64 = 6;
 const DOC_PHYSICAL_FLOW: &str = "A11";
 /// `documentType` génération par type de production.
 const DOC_GENERATION: &str = "A75";
+/// `documentType` prix day-ahead du marché de gros (ADR-0023).
+const DOC_DAY_AHEAD_PRICE: &str = "A44";
 /// `processType` génération réalisée.
 const PROCESS_REALISED: &str = "A16";
+/// Fenêtre **avant** maintenant couverte par l'ingestion de prix : le day-ahead
+/// publie les heures à venir (utile à la primitive « cheapest window », ADR-0023).
+const PRICE_LOOKAHEAD_HOURS: i64 = 24;
 
 /// Format `periodStart`/`periodEnd` ENTSO-E : `yyyyMMddHHmm` (UTC).
 const PERIOD_FMT: &[FormatItem<'static>] = format_description!("[year][month][day][hour][minute]");
@@ -167,6 +177,48 @@ impl EntsoeClient {
         Ok(out)
     }
 
+    /// Prix spot day-ahead de la zone de marché FR → série €/MWh par horodatage.
+    /// `in_Domain` = `out_Domain` = FR (le prix de la zone française, ADR-0023).
+    async fn day_ahead_price_series(
+        &self,
+        start: &str,
+        end: &str,
+    ) -> Result<BTreeMap<OffsetDateTime, f64>, EntsoeError> {
+        let xml = self
+            .fetch(&[
+                ("documentType", DOC_DAY_AHEAD_PRICE),
+                ("in_Domain", FR_EIC),
+                ("out_Domain", FR_EIC),
+                ("periodStart", start),
+                ("periodEnd", end),
+            ])
+            .await?;
+        let doc: DayAheadPriceDocument = quick_xml::de::from_str(&xml)
+            .map_err(|e| EntsoeError::Parse(format!("prix day-ahead : {e}")))?;
+        doc.price_series()
+    }
+
+    /// Assemble les prix spot récents (et à venir, day-ahead) de la zone FR.
+    async fn collect_recent_prices(&self) -> Result<Vec<SpotPrice>, EntsoeError> {
+        let now = OffsetDateTime::now_utc();
+        let from = now - Duration::hours(self.window_hours);
+        let to = now + Duration::hours(PRICE_LOOKAHEAD_HOURS);
+        let start = from
+            .format(PERIOD_FMT)
+            .map_err(|e| EntsoeError::Parse(e.to_string()))?;
+        let end = to
+            .format(PERIOD_FMT)
+            .map_err(|e| EntsoeError::Parse(e.to_string()))?;
+
+        let series = self.day_ahead_price_series(&start, &end).await?;
+        // `SpotPrice::new` écarte les valeurs non finies ; les prix négatifs sont
+        // conservés (phénomène de marché réel). BTreeMap → tri croissant garanti.
+        Ok(series
+            .into_iter()
+            .filter_map(|(at, eur)| SpotPrice::new(at, eur))
+            .collect())
+    }
+
     /// Flux physique d'une direction (out → in) → série MW par horodatage.
     async fn flow_series(
         &self,
@@ -267,6 +319,13 @@ impl EntsoeClient {
 impl CrossBorderSource for EntsoeClient {
     async fn recent_flows(&self) -> Result<Vec<CrossBorderSnapshot>, SourceError> {
         Ok(self.collect_recent().await?)
+    }
+}
+
+#[async_trait]
+impl SpotPriceSource for EntsoeClient {
+    async fn recent_prices(&self) -> Result<Vec<SpotPrice>, SourceError> {
+        Ok(self.collect_recent_prices().await?)
     }
 }
 

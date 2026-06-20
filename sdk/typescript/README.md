@@ -77,6 +77,8 @@ const cf = new CarbonFr({
 | `weather` · `weatherHistory` | `GET /v1/weather[/date]` |
 | `renewable` | `GET /v1/renewable` |
 | `methodologies` · `factors` | méthodes & facteurs |
+| `price` · `priceHistory` | `GET /v1/price[/date]` (décomposition TRV) |
+| `costReference` | `GET /v1/cost-reference` (LCOE, estimation) |
 | `visitStats` · `recordVisit` | compteur RGPD-friendly |
 | `createWebhook` · `listWebhooks` · `deleteWebhook` | webhooks (clé API) |
 | `stream` | `GET /v1/intensity/stream` (SSE) |

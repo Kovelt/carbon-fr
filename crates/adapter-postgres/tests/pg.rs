@@ -16,12 +16,12 @@
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_core::domain::{
     CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, GenerationMix,
-    Granularity, LoadRecord, Measurement, Methodology, Neighbor, Region, TimeRange, Vintage,
-    WeatherForecast,
+    Granularity, LoadRecord, Measurement, Methodology, Neighbor, Region, SpotPrice, TimeRange,
+    Vintage, WeatherForecast,
 };
 use carbonfr_core::ports::{
     ApiKeyRepository, ApiTier, ConsumptionRepository, CrossBorderRepository, IntensityRepository,
-    VisitCounter, WeatherRepository,
+    SpotPriceRepository, VisitCounter, WeatherRepository,
 };
 use time::{Date, Duration, Month, OffsetDateTime};
 
@@ -698,6 +698,70 @@ async fn cross_border_snapshot_roundtrips_and_picks_nearest() {
     assert_eq!(snapshots[0].at, t0);
     assert_eq!(snapshots[1].at, t1);
     assert_eq!(snapshots[0].flows.flows.len(), 2);
+}
+
+#[tokio::test]
+async fn spot_price_roundtrips_and_picks_nearest() {
+    let Some(repo) = setup("test-pg-spot").await else {
+        return;
+    };
+    // Fenêtre lointaine et dédiée, pour l'isolation entre tests parallèles.
+    let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(6300);
+    let t1 = t0 + Duration::hours(1);
+    let t2 = t0 + Duration::hours(2);
+    sqlx::query("DELETE FROM spot_price WHERE at >= $1 AND at <= $2")
+        .bind(t0)
+        .bind(t2)
+        .execute(repo.pool())
+        .await
+        .expect("nettoyage spot_price");
+
+    let written = repo
+        .upsert_prices(&[
+            SpotPrice::new(t0, 42.5).unwrap(),
+            SpotPrice::new(t1, -3.1).unwrap(), // prix négatif conservé
+        ])
+        .await
+        .unwrap();
+    assert_eq!(written, 2);
+
+    // Pile sur t1 → le prix négatif.
+    let at_t1 = repo.price_at(t1).await.unwrap().expect("prix t1");
+    assert_eq!(at_t1.at, t1);
+    assert_eq!(at_t1.eur_per_mwh, -3.1);
+
+    // Entre t0 et t1 → le plus proche ≤, donc t0.
+    let between = repo
+        .price_at(t0 + Duration::minutes(30))
+        .await
+        .unwrap()
+        .expect("prix ≤ cible");
+    assert_eq!(between.at, t0);
+    assert_eq!(between.eur_per_mwh, 42.5);
+
+    // Avant tout prix → None.
+    assert!(
+        repo.price_at(t0 - Duration::hours(1))
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // Ré-ingestion du même horodatage → mise à jour, pas de doublon.
+    let rewritten = repo
+        .upsert_prices(&[SpotPrice::new(t0, 50.0).unwrap()])
+        .await
+        .unwrap();
+    assert_eq!(rewritten, 1);
+    let updated = repo.price_at(t0).await.unwrap().unwrap();
+    assert_eq!(updated.eur_per_mwh, 50.0, "valeur mise à jour");
+
+    // price_range : les deux créneaux, triés croissants.
+    let window = TimeRange::new(t0, t1 + Duration::minutes(1)).unwrap();
+    let prices = repo.price_range(window).await.unwrap();
+    assert_eq!(prices.len(), 2);
+    assert_eq!(prices[0].at, t0);
+    assert_eq!(prices[1].at, t1);
 }
 
 #[tokio::test]

@@ -65,6 +65,78 @@
         }
       }
     },
+    "/v1/cost-reference": {
+      "get": {
+        "tags": [
+          "prix"
+        ],
+        "summary": "`GET /v1/cost-reference` — couche comparative LCOE (ADR-0024).",
+        "description": "**Estimation** versionnée, en **fourchette** par filière (jamais un chiffre\nunique), **jamais** mise en différence avec le prix de marché. Ressource de\nréférence statique, physiquement découplée de `/v1/price`.",
+        "operationId": "cost_reference",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Source (`ademe`, `cour-des-comptes`, `rte`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "technology",
+            "in": "query",
+            "description": "Technologie (`nucleaire-existant`, `nucleaire-nouveau`, `solaire-pv`,\n`eolien-terrestre`, `eolien-mer`, `hydraulique`, `biomasse`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "perimeter",
+            "in": "query",
+            "description": "Périmètre (`plateau`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "vintage",
+            "in": "query",
+            "description": "Millésime (année du rapport source).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fourchettes LCOE par filière (estimation)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostReferenceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Filtre inconnu (source/technologie/périmètre)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/exchanges": {
       "get": {
         "tags": [
@@ -898,6 +970,119 @@
         }
       }
     },
+    "/v1/price": {
+      "get": {
+        "tags": [
+          "prix"
+        ],
+        "summary": "`GET /v1/price` — décomposition complète du prix payé (ADR-0023).",
+        "description": "Énergie (spot day-ahead ENTSO-E) + acheminement (TURPE) + accise + TVA +\nrésidu commercialisation, avec contexte (mix + technologie marginale estimée).\nNational uniquement. `404` si le mix ou le prix spot manque (ENTSO-E non\nconfiguré).",
+        "operationId": "price",
+        "parameters": [
+          {
+            "name": "region",
+            "in": "query",
+            "description": "Région. **National uniquement** (le TRV est national) ; autre slug → 400.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Décomposition courante du prix payé",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Région non nationale",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Aucun mix ou prix spot disponible",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/price/date": {
+      "get": {
+        "tags": [
+          "prix"
+        ],
+        "summary": "`GET /v1/price/date?from=&to=` — série de décompositions de prix sur un\nintervalle RFC 3339 (fenêtre ≤ 92 jours), pour la primitive « cheapest +\ngreenest window » (ADR-0023). National uniquement.",
+        "operationId": "price_date",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "description": "Région. **National uniquement**.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Série de prix sur l'intervalle",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PriceHistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bornes manquantes/invalides ou région non nationale",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/renewable": {
       "get": {
         "tags": [
@@ -1424,6 +1609,141 @@
   },
   "components": {
     "schemas": {
+      "CostAssumptionsBody": {
+        "type": "object",
+        "properties": {
+          "discount_rate": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Taux d'actualisation (WACC), `null` si non publié."
+          },
+          "lifetime_years": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Durée de vie retenue (années), `null` si non publié.",
+            "minimum": 0
+          },
+          "load_factor": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Facteur de charge, `null` si non publié."
+          }
+        }
+      },
+      "CostReferenceEntry": {
+        "type": "object",
+        "description": "Une estimation LCOE (source × technologie × périmètre × millésime).",
+        "required": [
+          "technology",
+          "technology_label",
+          "source",
+          "source_label",
+          "source_attribution",
+          "perimeter",
+          "perimeter_label",
+          "basis",
+          "basis_label",
+          "vintage",
+          "kind",
+          "range",
+          "hypotheses"
+        ],
+        "properties": {
+          "basis": {
+            "type": "string",
+            "description": "Nature de la grandeur : `accounting-amortized` (coût comptable d'un parc\namorti) vs `prospective-lcoe` (moyen neuf). Évite la fausse commensurabilité."
+          },
+          "basis_label": {
+            "type": "string"
+          },
+          "hypotheses": {
+            "$ref": "#/components/schemas/CostAssumptionsBody"
+          },
+          "kind": {
+            "type": "string",
+            "description": "Statut : toujours `estimation` (ADR-0024 §4)."
+          },
+          "perimeter": {
+            "type": "string"
+          },
+          "perimeter_label": {
+            "type": "string",
+            "description": "Libellé explicitant ce que le périmètre inclut/exclut (non comparable\npilotable/variable)."
+          },
+          "range": {
+            "$ref": "#/components/schemas/LcoeRangeBody",
+            "description": "Fourchette (dispersion **publiée par la source**) — jamais un point unique."
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_attribution": {
+            "type": "string"
+          },
+          "source_label": {
+            "type": "string"
+          },
+          "technology": {
+            "type": "string"
+          },
+          "technology_label": {
+            "type": "string"
+          },
+          "vintage": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Millésime (année du rapport source).",
+            "minimum": 0
+          }
+        }
+      },
+      "CostReferenceResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/cost-reference` — couche comparative LCOE (ADR-0024).\n\n**Estimation** systématiquement étiquetée, en **fourchette** par filière\n(jamais un chiffre unique), **jamais** mise en différence avec le prix de\nmarché. La note `disclaimer` est obligatoire (ADR-0024 §3).",
+        "required": [
+          "unit",
+          "currency",
+          "kind",
+          "disclaimer",
+          "count",
+          "entries"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currency": {
+            "type": "string"
+          },
+          "disclaimer": {
+            "type": "string",
+            "description": "Note explicative neutre obligatoire (LCOE ≠ coût marginal ≠ prix payé)."
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CostReferenceEntry"
+            }
+          },
+          "kind": {
+            "type": "string",
+            "description": "Statut systématique de la couche : `estimation` (ADR-0024 §4)."
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
       "CreateWebhookRequest": {
         "type": "object",
         "description": "Corps de `POST /v1/webhooks` (ADR-0016).",
@@ -1886,6 +2206,57 @@
           }
         }
       },
+      "LcoeRangeBody": {
+        "type": "object",
+        "required": [
+          "min",
+          "median",
+          "max",
+          "unit"
+        ],
+        "properties": {
+          "max": {
+            "type": "number",
+            "format": "double"
+          },
+          "median": {
+            "type": "number",
+            "format": "double"
+          },
+          "min": {
+            "type": "number",
+            "format": "double"
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "MarginalTechnologyBody": {
+        "type": "object",
+        "required": [
+          "filiere",
+          "label",
+          "estimated",
+          "method"
+        ],
+        "properties": {
+          "estimated": {
+            "type": "boolean",
+            "description": "Toujours `true` : valeur estimée par ordre de mérite, jamais mesurée."
+          },
+          "filiere": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "description": "Méthode d'estimation (transparence)."
+          }
+        }
+      },
       "MethodologiesResponse": {
         "type": "object",
         "description": "Réponse de `GET /v1/methodologies` — catalogue des méthodes + versions.",
@@ -2036,6 +2407,205 @@
           },
           "unit": {
             "type": "string"
+          }
+        }
+      },
+      "MixShareBody": {
+        "type": "object",
+        "required": [
+          "filiere",
+          "label",
+          "share",
+          "output_mw"
+        ],
+        "properties": {
+          "filiere": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "output_mw": {
+            "type": "number",
+            "format": "double"
+          },
+          "share": {
+            "type": "number",
+            "format": "double",
+            "description": "Part dans la production domestique, dans `[0, 1]`."
+          }
+        }
+      },
+      "PriceComponentBody": {
+        "type": "object",
+        "description": "Une composante du prix (énergie, acheminement, accise, commercialisation, TVA).",
+        "required": [
+          "kind",
+          "label",
+          "amount_eur_mwh",
+          "source"
+        ],
+        "properties": {
+          "amount_eur_mwh": {
+            "type": "number",
+            "format": "double"
+          },
+          "kind": {
+            "type": "string",
+            "description": "Identifiant stable (`energie`, `acheminement`, `accise`, `commercialisation`, `tva`)."
+          },
+          "label": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "description": "Source / fondement réglementaire de la composante."
+          }
+        }
+      },
+      "PriceContextBody": {
+        "type": "object",
+        "description": "Contexte explicatif du prix (ADR-0023 §4).",
+        "required": [
+          "mix"
+        ],
+        "properties": {
+          "marginal_technology": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MarginalTechnologyBody",
+                "description": "Technologie marginale **estimée** (ordre de mérite), ou `null`."
+              }
+            ]
+          },
+          "mix": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MixShareBody"
+            },
+            "description": "Mix de production par filière au même instant (parts de production)."
+          }
+        }
+      },
+      "PriceHistoryResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/price/date` — série de décompositions sur un intervalle.\n\nPoints **compacts** (horodatage + énergie + total) pour ne pas gonfler une\nsérie dense ; la décomposition complète est servie par `/v1/price`. Alimente\nla primitive « cheapest + greenest window » (ADR-0023).",
+        "required": [
+          "from",
+          "to",
+          "count",
+          "unit",
+          "currency",
+          "points"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currency": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PricePointBody"
+            }
+          },
+          "to": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string"
+          }
+        }
+      },
+      "PricePointBody": {
+        "type": "object",
+        "required": [
+          "timestamp",
+          "energie_eur_mwh",
+          "total_eur_mwh"
+        ],
+        "properties": {
+          "energie_eur_mwh": {
+            "type": "number",
+            "format": "double",
+            "description": "Composante énergie (spot day-ahead), la seule qui varie heure par heure."
+          },
+          "timestamp": {
+            "type": "string"
+          },
+          "total_eur_mwh": {
+            "type": "number",
+            "format": "double",
+            "description": "Total payé toutes taxes comprises (€/MWh)."
+          }
+        }
+      },
+      "PriceResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/price` — décomposition complète du prix payé (ADR-0023).\n\nOn n'expose pas deux chiffres en regard : la **chaîne complète** est\ndécomposée, chaque composante sourcée. Le « prix réel de l'énergie » est la\ncomposante `energie` (spot day-ahead).",
+        "required": [
+          "region",
+          "timestamp",
+          "vintage",
+          "unit",
+          "currency",
+          "total_eur_mwh",
+          "total_eur_kwh",
+          "components",
+          "context",
+          "disclaimer"
+        ],
+        "properties": {
+          "components": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PriceComponentBody"
+            },
+            "description": "Décomposition par composante (chacune sourcée)."
+          },
+          "context": {
+            "$ref": "#/components/schemas/PriceContextBody",
+            "description": "Contexte explicatif (sans verdict) : mix + technologie marginale estimée."
+          },
+          "currency": {
+            "type": "string"
+          },
+          "disclaimer": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "description": "Horodatage (RFC 3339, UTC), aligné sur `/v1/intensity/now`."
+          },
+          "total_eur_kwh": {
+            "type": "number",
+            "format": "double",
+            "description": "Total payé toutes taxes comprises (€/kWh) — confort d'usage."
+          },
+          "total_eur_mwh": {
+            "type": "number",
+            "format": "double",
+            "description": "Total payé toutes taxes comprises (€/MWh)."
+          },
+          "unit": {
+            "type": "string",
+            "description": "Unité des montants `*_eur_mwh` (`EUR/MWh`). Les champs `*_eur_kwh` sont,\neux, en €/kWh (confort d'usage)."
+          },
+          "vintage": {
+            "type": "string",
+            "description": "Millésime de la construction réglementaire (TRV) appliquée."
           }
         }
       },
@@ -2620,6 +3190,10 @@
     {
       "name": "méthodologie",
       "description": "Méthodes de calcul & facteurs (ADR-0010)"
+    },
+    {
+      "name": "prix",
+      "description": "Prix de l'électricité & couche LCOE (ADR-0023/0024)"
     },
     {
       "name": "prévision",

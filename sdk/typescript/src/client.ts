@@ -1,4 +1,5 @@
 import type {
+  CostReferenceResponse,
   CreateWebhookRequest,
   CreatedWebhookResponse,
   ProblemDetails,
@@ -6,6 +7,8 @@ import type {
   ExchangesHistoryResponse,
   ExchangesResponse,
   FactorsResponse,
+  PriceHistoryResponse,
+  PriceResponse,
   ForecastResponse,
   GreenestWindowResponse,
   HistoryResponse,
@@ -290,6 +293,41 @@ export class CarbonFr {
     return this.get<FactorsResponse>("/v1/factors", {
       methodology: opts.methodology,
       version: opts.version,
+    });
+  }
+
+  // ─── Prix (ADR-0023/0024) ───────────────────────────────────────────────
+
+  /** Décomposition du prix payé (TRV : énergie spot + TURPE + accise + TVA + résidu). */
+  price() {
+    return this.get<PriceResponse>("/v1/price");
+  }
+
+  /** Série de décompositions de prix (primitive « cheapest + greenest window »). */
+  priceHistory(opts: { from: string; to: string }) {
+    return this.get<PriceHistoryResponse>("/v1/price/date", {
+      from: opts.from,
+      to: opts.to,
+    });
+  }
+
+  /**
+   * Couche comparative LCOE (coût de production) — **estimation** versionnée en
+   * fourchette, jamais soustraite du prix de marché (ADR-0024).
+   */
+  costReference(
+    opts: {
+      source?: string;
+      technology?: string;
+      perimeter?: string;
+      vintage?: number;
+    } = {},
+  ) {
+    return this.get<CostReferenceResponse>("/v1/cost-reference", {
+      source: opts.source,
+      technology: opts.technology,
+      perimeter: opts.perimeter,
+      vintage: opts.vintage,
     });
   }
 

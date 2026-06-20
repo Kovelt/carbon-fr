@@ -6,6 +6,7 @@
 //! ces types (ex. [`greenest_window`]).
 
 mod calculator;
+mod cost;
 mod cross_border;
 mod factors;
 mod forecast;
@@ -17,6 +18,7 @@ mod load;
 mod measurement;
 mod methodology;
 mod metrics;
+mod price;
 mod region;
 mod renewable;
 mod schedule;
@@ -30,6 +32,10 @@ mod window;
 
 pub use calculator::{
     AcvAdemeConsumption, AcvAdemeProduction, MethodologyCalculator, MethodologyContext, RteDirect,
+};
+pub use cost::{
+    COST_REFERENCE_DISCLAIMER, CostAssumptions, CostBasis, CostEstimate, CostReferenceCatalog,
+    CostReferenceKey, CostSource, CostTechnology, LcoeRange, Perimeter, cost_reference_catalog,
 };
 pub use cross_border::{CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Neighbor};
 pub use factors::{
@@ -45,6 +51,10 @@ pub use load::LoadRecord;
 pub use measurement::{GenerationMix, Measurement, MeasurementKey};
 pub use methodology::{Methodology, Vintage};
 pub use metrics::{ErrorAccumulator, ErrorMetrics};
+pub use price::{
+    Filiere, MarginalTechnology, MixShare, PriceBreakdown, PriceComponent, PriceComponentKind,
+    PriceContext, SpotPrice, TrvReference, price_breakdown, price_series,
+};
 pub use region::Region;
 pub use renewable::{RenewableModel, RenewableSample, calibrate as calibrate_renewable};
 pub use schedule::{

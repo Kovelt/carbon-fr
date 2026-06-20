@@ -85,6 +85,8 @@ console.log(now.intensity.value, now.intensity.unit); // 20 gCO2eq/kWh
 | `GET /v1/schedule` · `/schedule/slots` · `/intensity/below` | Scheduling carbon-aware (échéance, *lowest-k*, seuil + économie) | ✅ |
 | `GET /v1/intensity/stream` | Flux **live** (Server-Sent Events) | ✅ |
 | `GET /v1/methodologies` · `/factors` | Catalogue des méthodes + table des facteurs (vérifiabilité) | ✅ |
+| `GET /v1/price` · `/price/date` | Décomposition du prix payé ancrée sur le TRV (énergie spot ENTSO-E + TURPE + taxes + résidu, ADR-0023) | ✅ |
+| `GET /v1/cost-reference` | Couche comparative **LCOE** (coût de production), estimation en fourchette, jamais soustraite du marché (ADR-0024) | ✅ |
 | `POST`/`GET`/`DELETE /v1/webhooks` | Abonnements webhook signés (clé API requise) | ✅ |
 
 Tous les endpoints `/v1` acceptent `?region=<slug>` (national par défaut) et `?methodology=<id>` : **`rte-direct`** (estimation RTE, combustion directe — défaut) ou **`acv-ademe`** (cycle de vie ADEME, ADR-0008).
@@ -188,7 +190,7 @@ Configuration via variables d'environnement — voir [`.env.example`](.env.examp
 - [x] **Phase 2 — Historique & régional** : backfill par export de masse · `/intensity/date` · rollups + `/intensity/stats` · régional via `acv-ademe` (12 régions) · OpenAPI 3.1 + Bruno.
 - [x] **Phase 3 — Prévision** : `climatology@1` (backtest, calibration des intervalles) → `/forecast` + `/greenest-window`.
 - [x] **Phase 4 — Enrichissement & usage** : `acv-ademe@2` consumption-based (ENTSO-E) · prévision `acv-ademe` · scheduling carbon-aware + SSE · clés API + quota · webhooks signés. *(ML GBDT exploré, gardé par backtest ; raffinements ouverts.)*
-- [x] **Phase 5 — Enrichissement, déploiement & SDK** : échanges transfrontaliers (`/v1/exchanges`), météo (`/v1/weather`), dérivation renouvelable (`/v1/renewable`) ; **déployé** sur VPS FR/EU (Traefik + PostgreSQL) ; **SDK TypeScript** (`@carbon-fr/sdk`).
+- [x] **Phase 5 — Enrichissement, déploiement & SDK** : échanges transfrontaliers (`/v1/exchanges`), météo (`/v1/weather`), dérivation renouvelable (`/v1/renewable`) ; **prix de l'électricité** (`/v1/price`, décomposition TRV, ADR-0023) + **couche comparative LCOE** (`/v1/cost-reference`, ADR-0024) ; **déployé** sur VPS FR/EU (Traefik + PostgreSQL) ; **SDK TypeScript** (`@carbon-fr/sdk`).
 - [ ] **À venir** : SDK Rust ; site statique (o2switch) ; `UsageMeter` persistant.
 
 ## Contribuer

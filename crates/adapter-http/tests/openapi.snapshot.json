@@ -173,7 +173,7 @@
         "tags": [
           "échanges"
         ],
-        "summary": "`GET /v1/exchanges/date?from=&to=` — série historique des échanges\ntransfrontaliers sur un intervalle RFC 3339 (fenêtre ≤ 366 jours), au pas\nquart d'heure (ADR-0017).",
+        "summary": "`GET /v1/exchanges/date?from=&to=` — série historique des échanges\ntransfrontaliers sur un intervalle RFC 3339 (fenêtre ≤ 92 jours, série dense),\nau pas quart d'heure (ADR-0017).",
         "operationId": "exchanges_date",
         "parameters": [
           {
@@ -1406,7 +1406,7 @@
         "tags": [
           "météo"
         ],
-        "summary": "`GET /v1/weather/date?from=&to=` — série météo historique (vent + irradiance)\nsur un intervalle RFC 3339 (fenêtre ≤ 366 jours), ADR-0012/0018.",
+        "summary": "`GET /v1/weather/date?from=&to=` — série météo historique (vent + irradiance)\nsur un intervalle RFC 3339 (fenêtre ≤ 92 jours, série dense), ADR-0012/0018.",
         "operationId": "weather_date",
         "parameters": [
           {

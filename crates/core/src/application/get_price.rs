@@ -22,7 +22,8 @@ use super::ApplicationError;
 const ANCHOR_METHODOLOGY: &str = "rte-direct";
 
 /// Fraîcheur maximale du prix spot servi en « courant ». Le day-ahead est au pas
-/// horaire et publié chaque jour ; au-delà de cette tolérance, le prix le plus
+/// quart d'heure (MTU 15 min, validé live 2026-06-20) et publié chaque jour ;
+/// au-delà de cette tolérance, le prix le plus
 /// récent disponible est considéré **périmé** (ENTSO-E muet) → `NotFound` plutôt
 /// que servir un prix d'il y a plusieurs jours comme s'il était courant.
 const MAX_SPOT_STALENESS: Duration = Duration::hours(6);
@@ -84,7 +85,7 @@ impl<R: IntensityRepository, P: SpotPriceRepository> GetElectricityPrice<R, P> {
             .range(region, ANCHOR_METHODOLOGY, range)
             .await?;
         // On élargit la borne basse de 24 h pour capter le prix « au plus proche
-        // ≤ » des premiers créneaux (le spot day-ahead est au pas horaire).
+        // ≤ » des premiers créneaux (le spot day-ahead est au pas quart d'heure).
         let price_range =
             TimeRange::new(range.start() - Duration::hours(24), range.end()).unwrap_or(range);
         let spots = self.spot.price_range(price_range).await?;

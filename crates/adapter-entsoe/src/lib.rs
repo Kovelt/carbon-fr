@@ -20,8 +20,10 @@
 //!
 //! Implémente aussi [`SpotPriceSource`](carbonfr_core::ports::SpotPriceSource) :
 //! le **prix spot day-ahead** de la zone FR (`documentType=A44`, ADR-0023),
-//! composante énergie de la décomposition du prix. ⚠️ Le chemin A44 reste **à
-//! valider live** (`recent_prices_live`, `--ignored`).
+//! composante énergie de la décomposition du prix. Chemin A44 **validé contre
+//! l'API live le 2026-06-20** (`recent_prices_live`, `--ignored`) : zone FR,
+//! résolution **PT15M** (pas quart d'heure, MTU 15 min de la cible européenne),
+//! prix plausibles. Le parseur développe correctement les positions au pas 15 min.
 
 mod codes;
 mod dto;

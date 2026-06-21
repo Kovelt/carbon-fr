@@ -36,9 +36,21 @@ Si une contribution fait fuiter de l'infrastructure dans le domaine, elle sera r
 ## Processus de contribution
 
 1. Fork + branche dédiée (`feat/…`, `fix/…`, `docs/…`).
-2. Commits clairs et articulés (un commit = une intention). Les [Conventional Commits](https://www.conventionalcommits.org/) sont appréciés mais non obligatoires.
-3. Ouvre une Pull Request en décrivant le **quoi** et le **pourquoi**, en liant l'issue / l'ADR concerné.
-4. La CI (fmt, clippy, tests, `cargo deny`) doit être verte.
+2. Commits clairs et articulés (un commit = une intention). Les [Conventional Commits](https://www.conventionalcommits.org/) sont appréciés mais non obligatoires. Les commits **signés** (GPG/SSH) sont **recommandés**, sans être exigés.
+3. Ouvre une Pull Request en décrivant le **quoi** et le **pourquoi**, en liant l'issue / l'ADR concerné (un gabarit de PR est proposé automatiquement).
+4. La CI doit être **verte sur les cinq contrôles** : `fmt + clippy`, `cargo-deny (licences + advisories)`, `tests (avec PostgreSQL)`, `build release` et `SDK TypeScript`.
+
+## Revue & fusion — `main` est protégée
+
+La branche `main` est verrouillée par un *ruleset* GitHub (voir [ADR-0027](docs/adr/0027-politique-contribution-verrouillage-branche.md)). Concrètement :
+
+- **aucun push direct** sur `main` : tout passe par une Pull Request ;
+- **CI verte obligatoire** (les cinq contrôles ci-dessus) et **branche à jour** avec `main` (un rebase peut être nécessaire avant fusion) ;
+- **conversations résolues** avant fusion ;
+- **historique linéaire** : fusion en **squash** ou **rebase** (pas de *merge commit*) ;
+- force-push et suppression de `main` interdits ; la règle s'applique **sans exception**, mainteneur compris.
+
+En phase solo, aucune approbation humaine n'est exigée (un mainteneur ne peut pas approuver sa propre PR) : la relecture se fait via le diff. **Dès la première contribution externe**, une approbation du mainteneur (Code Owner, via [`CODEOWNERS`](.github/CODEOWNERS)) deviendra obligatoire — c'est la Phase B d'ADR-0027.
 
 ## Langue
 

@@ -37,6 +37,7 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0024-revue](0024-revue-neutralite.md) | Revue de neutralité — Couche comparative LCOE (ADR-0024), évaluation adversariale multi-agents | Neutralité confirmée (GREEN) |
 | [0025](0025-extension-hydrogene-carbon-aware.md) | Extension hydrogène : couche carbon-aware « électrolyseur » & cadres d'éligibilité RFNBO / bas-carbone | Accepté (couche A implémentée) |
 | [0026](0026-methodologie-overlays-eligibilite.md) | Méthodologie des overlays d'éligibilité électrolyseur : rulesets versionnés rfnbo/low-carbon, seuils sourcés, pièges 1 & 2 | Accepté |
+| [0027](0027-politique-contribution-verrouillage-branche.md) | Politique de contribution & verrouillage de `main` (ruleset Phase A solo → Phase B ouverte, `bypass_actors` vide) | Accepté |
 
 ## Gabarit
 

@@ -156,9 +156,11 @@ Le « pourquoi » des choix vit dans [`docs/adr/`](docs/adr/). Lire au minimum :
 3. **Méthodologies & modèles** — version **portée par la donnée** (`rte-direct`, `acv-ademe@1`/`@2`, `climatology@1`, `gbdt@1`), **immuable une fois publiée** (ADR-0005/0006/0009).
 4. **SDK** — `@carbon-fr/sdk`, tag `sdk-v*`, suit le **contrat d'API** (pas le code serveur).
 
-Invariant : `v0.3.2` (code) ≠ `/v1` (contrat) ≠ `acv-ademe@2` (donnée) ≠ `sdk-v0.1.0` (client).
+Invariant : `v0.4.0` (code) ≠ `/v1` (contrat) ≠ `acv-ademe@2` (donnée) ≠ `sdk-v0.1.0` (client).
 
 **Release applicative** : `git tag vX.Y.Z` (doit refléter la version du workspace — garde-fou CI) → le workflow `release.yml` construit et **publie l'image sur GHCR** taguée `X.Y.Z`/`X.Y`/`latest` (`ghcr.io/kovelt/carbon-fr`, publique). Le binaire expose sa version au démarrage (log) et via `--version`. En prod : **épingler une version exacte** (rollback = redéployer le tag précédent). La version OpenAPI servie sur `/docs` est câblée sur `CARGO_PKG_VERSION`.
+
+**Release courante : `v0.4.0`** (2026-06-21) — couche A « électrolyseur » (éligibilité carbon-aware RFNBO/bas-carbone, ADR-0025/0026) + verrouillage de `main` (ADR-0027). Image GHCR `ghcr.io/kovelt/carbon-fr:0.4.0` publiée **et déployée en prod** (VPS Kovelt). Précédente : `v0.3.2`.
 
 ## État d'avancement
 

@@ -8,6 +8,57 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté
+
+- **Couche A « électrolyseur » — éligibilité carbon-aware** (ADR-0025/0026) : overlay
+  d'**éligibilité au niveau réseau** par créneau, sous deux cadres neutres et versionnés —
+  `rfnbo` (renouvelable, Règl. délégués UE 2023/1184-1185) et `low-carbon` (bas-carbone
+  inclusif nucléaire/CCS, acte délégué 2025/2359) — exposé en **extension rétro-compatible**
+  de `GET /v1/intensity/greenest-window` (`?eligibility=rfnbo|low-carbon`, axe **orthogonal**
+  à `methodology`) + catalogue `GET /v1/eligibility/rulesets`. Nouveau crate domaine **pur**
+  `carbonfr-eligibility` (zéro IO). `rfnbo` = *disjonction* (part renouvelable instantanée
+  ≥ 0,90 **OU** prix day-ahead ≤ 20 €/MWh — proxies explicitement étiquetés) ; `low-carbon` =
+  intensité ≤ seuil **dérivé** `round(3384/53) ≈ 64 gCO₂eq/kWh` (proxy `indicative`,
+  `indeterminate` si le seuil tombe dans l'intervalle de prévision). Zone de dépôt toujours
+  `FR` ; prix jamais extrapolé au-delà du day-ahead. **SDK TypeScript** + Bruno mis à jour.
+  Hors périmètre (disclaimer de neutralité) : gCO₂eq/kgH₂, certification, additionnalité PPA.
+
+### Documentation
+
+- **ADR-0025 — extension hydrogène carbon-aware** (couche A « électrolyseur ») : ADR de
+  cadrage + brief d'implémentation intégrés (renumérotés depuis « 0015 », déjà pris ;
+  cross-refs réalignées). *Documentation seule* — l'implémentation est livrée à part (cf.
+  *Ajouté* ci-dessus).
+- **Audit & mise à jour exhaustive de la documentation** vers l'état réel de l'API (v0.3.2,
+  contrat `/v1`) : `ARCHITECTURE.md` (5 → 9 crates + `bin/server`, 11 ports réels, roadmap =
+  5 phases livrées, déploiement Traefik/GHCR, rollups incrémentaux, §Sources complétée) ;
+  `README.md` (corrige l'affirmation « tous les endpoints acceptent `?region=`/`?methodology=` »,
+  ajoute tier hébergé/clés API, états 503/404, sous-commandes) ; addenda datés sur plusieurs
+  ADR ; `CLAUDE.md`, `GOUVERNANCE.md`, READMEs `deploy`/`bruno`/`sdk`, `.env.example`.
+- **ADR-0024 — contre-source France (renouvelables) recherchée puis écartée** : une 2ᵉ source
+  française (Cour des comptes EnR mars 2026 + appels d'offres CRE) a été recherchée et vérifiée
+  pour réduire l'asymétrie géographique, mais le **GATE de neutralité (re-jeu n°4) est revenu
+  ROUGE** (non-commensurabilité grande/petite hydro ; test aveugle : enrichir les seuls
+  renouvelables rend la famille devinable, le rééquilibrage nucléaire étant bloqué par les
+  licences NC). Au titre du **Principe 0** d'ADR-0024 (« si la neutralité n'est pas garantie,
+  ne pas livrer »), le changement est **annulé** ; l'état GREEN (v0.3.2) est conservé.
+  `cost.rs` inchangé. Trace : ADR-0024 §1 + addendum re-jeu n°4.
+
+### Gouvernance
+
+- **Politique de contribution & verrouillage de `main`** (ADR-0027) : `main` est
+  désormais protégée par un **ruleset GitHub** appliqué (Phase A — solo) — PR
+  obligatoire (zéro push direct), **5 status checks stricts** requis (`fmt + clippy`,
+  `cargo-deny (licences + advisories)`, `tests (avec PostgreSQL)`, `build release`,
+  `SDK TypeScript`), conversations résolues, historique linéaire (squash/rebase),
+  force-push & suppression de `main` interdits, `bypass_actors` **vide** (zéro
+  exception, mainteneur admin compris). État déclaratif versionné dans
+  [`.github/ruleset-main-phaseA.json`](.github/ruleset-main-phaseA.json). Ajout de
+  `.github/CODEOWNERS` (inerte en Phase A, prêt pour la Phase B) et des gabarits
+  **PR / issue** ; `GOUVERNANCE.md`, `CONTRIBUTING.md` et `README.md` alignés. La
+  **Phase B** (1 approbation + revue Code Owners) s'activera à la première
+  contribution externe (checklist dans l'ADR).
+
 ## [0.3.2] - 2026-06-20
 
 ### Ajouté

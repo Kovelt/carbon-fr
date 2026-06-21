@@ -8,6 +8,12 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.4.0] - 2026-06-21
+
+Nouvelle fonctionnalité **couche A « électrolyseur »** (éligibilité carbon-aware
+RFNBO / bas-carbone) ; **gouvernance** du dépôt durcie (verrouillage de `main`,
+ADR-0027) ; documentation alignée sur l'état réel de l'API.
+
 ### Ajouté
 
 - **Couche A « électrolyseur » — éligibilité carbon-aware** (ADR-0025/0026) : overlay

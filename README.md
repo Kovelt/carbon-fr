@@ -199,7 +199,7 @@ Outre le serveur, le binaire expose des **sous-commandes** *one-shot* : `backfil
 
 ## Contribuer
 
-Les contributions sont les bienvenues — lire d'abord **[CONTRIBUTING.md](CONTRIBUTING.md)** et les conventions de code dans **[CLAUDE.md](CLAUDE.md)**. En résumé : `cargo fmt` + `cargo clippy -D warnings` doivent passer, le `core` reste sans IO, et toute décision structurante passe par un ADR.
+Les contributions sont les bienvenues — lire d'abord **[CONTRIBUTING.md](CONTRIBUTING.md)** et les conventions de code dans **[CLAUDE.md](CLAUDE.md)**. En résumé : `cargo fmt` + `cargo clippy -D warnings` doivent passer, le `core` reste sans IO, et toute décision structurante passe par un ADR. La branche `main` est **protégée** (PR obligatoire, CI verte, historique linéaire — pas de push direct ; voir [ADR-0027](docs/adr/0027-politique-contribution-verrouillage-branche.md)).
 
 ## Licence
 

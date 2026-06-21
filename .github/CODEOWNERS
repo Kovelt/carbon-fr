@@ -1,0 +1,17 @@
+# CODEOWNERS — propriété de revue (ADR-0027)
+#
+# En Phase A (solo), ce fichier est INERTE : le ruleset `protect-main` n'exige
+# pas encore la revue des Code Owners (require_code_owner_review = false). Il
+# prépare la Phase B (première contribution externe), où la revue d'un owner
+# deviendra obligatoire — cf. la checklist de transition d'ADR-0027.
+#
+# Le mainteneur est owner de TOUT le dépôt.
+*                        @morgan-voltz
+
+# Chemins critiques explicités (domaine pur, méthodologie, gouvernance) :
+# resteront réservés au mainteneur même lorsque la périphérie sera déléguée.
+/crates/core/            @morgan-voltz
+/crates/eligibility/     @morgan-voltz
+/deny.toml               @morgan-voltz
+/docs/adr/               @morgan-voltz
+/.github/                @morgan-voltz

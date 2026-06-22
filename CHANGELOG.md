@@ -8,6 +8,18 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.4.1] - 2026-06-22
+
+Correctif d'ergonomie de l'API : la racine de version ne renvoie plus un 404.
+
+### Modifié
+
+- **`GET /v1` redirige (307) vers `/docs`** au lieu de renvoyer un `404`. `/v1` est un
+  préfixe de version, pas un endpoint de données — aucune route n'y était montée. La
+  redirection oriente l'utilisateur qui tape l'URL de base vers la documentation
+  interactive (catalogue des routes). Redirection *temporaire* : `/docs` reste un détail
+  d'implémentation, non gravé en cache navigateur.
+
 ## [0.4.0] - 2026-06-21
 
 Nouvelle fonctionnalité **couche A « électrolyseur »** (éligibilité carbon-aware

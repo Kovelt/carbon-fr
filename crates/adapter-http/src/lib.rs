@@ -313,6 +313,7 @@ where
             "/v1/webhooks/{id}",
             axum::routing::delete(handlers::delete_webhook::<R>),
         )
+        .route("/v1", get(handlers::v1_index))
         .route("/v1/openapi.json", get(carbonfr_openapi::openapi))
         .route("/docs", get(carbonfr_openapi::swagger_ui))
         .route("/health", get(handlers::health))

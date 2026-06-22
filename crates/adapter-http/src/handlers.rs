@@ -1318,6 +1318,13 @@ where
     Ok(Json((&stats).into()))
 }
 
+/// `GET /v1` — index de la version d'API : redirige vers la documentation
+/// interactive (`/docs`). `/v1` n'est pas un endpoint de données ; cette
+/// redirection évite un 404 sec et oriente vers le catalogue des routes.
+pub(crate) async fn v1_index() -> axum::response::Redirect {
+    axum::response::Redirect::temporary("/docs")
+}
+
 /// `GET /health` — sonde de disponibilité (hors contrat d'API versionné).
 #[utoipa::path(
     get,

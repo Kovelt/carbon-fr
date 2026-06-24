@@ -32,7 +32,7 @@ jobs:
     name: Build + push image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Garde-fou : le tag (vX.Y.Z) doit correspondre à la version du workspace
       # (`[workspace.package] version`). Sinon on publierait une image mal nommée.
@@ -83,7 +83,7 @@ jobs:
     permissions:
       contents: write # créer/éditer une Release (le job `image` n'a, lui, que read+packages)
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Extraire les notes du CHANGELOG
         run: |

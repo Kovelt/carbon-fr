@@ -8,6 +8,16 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Sécurité
+
+- **Dépendances mises à jour sur advisories RustSec** (porte `cargo-deny` de la CI) :
+  `quick-xml` 0.40.1 → **0.41.0** (RUSTSEC-2026-0194 : vérification des attributs
+  dupliqués en temps quadratique ; RUSTSEC-2026-0195 : allocation non bornée des
+  déclarations d'espaces de noms dans `NsReader` — deux DoS sur XML non fiable,
+  `adapter-entsoe` parse les réponses ENTSO-E) et `anyhow` 1.0.102 → **1.0.103**
+  (RUSTSEC-2026-0190 : *unsoundness* de `Error::downcast_mut()` après `context()`).
+  Aucun changement d'API : compilation, tests et parsing des fixtures ENTSO-E inchangés.
+
 ## [0.4.1] - 2026-06-22
 
 Correctif d'ergonomie de l'API : la racine de version ne renvoie plus un 404.

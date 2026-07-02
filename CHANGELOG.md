@@ -8,6 +8,11 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.4.2] - 2026-07-02
+
+Release patch de sécurité : mise à jour de dépendances sur advisories RustSec
+(aucun changement fonctionnel ni d'API).
+
 ### Sécurité
 
 - **Dépendances mises à jour sur advisories RustSec** (porte `cargo-deny` de la CI) :

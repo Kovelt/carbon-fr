@@ -64,6 +64,10 @@ tokio = { version = "1.52.3", features = ["macros", "rt"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
 tower-http = { version = "0.7.0", features = ["trace", "cors"] }
 quick-xml = { version = "0.41.0", features = ["serialize"] }
+# Analyse d'URL WHATWG (identique à celle de reqwest) — calcul pur, pas d'IO :
+# utilisé par la validation anti-SSRF des webhooks pour voir exactement l'hôte
+# que le client contactera (ADR-0016).
+url = "2.5"
 sqlx = { version = "0.8.6", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls-ring",

@@ -13,6 +13,9 @@ thiserror = { workspace = true }
 time = { workspace = true }
 # Calcul pur (signature HMAC des webhooks, ADR-0016) — pas d'IO.
 sha2 = { workspace = true }
+# Analyse d'URL WHATWG pour la validation anti-SSRF (même analyseur que reqwest,
+# ADR-0016) — calcul pur, pas d'IO (au même titre que sha2).
+url = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

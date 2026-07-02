@@ -21,6 +21,35 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   (le même analyseur WHATWG que reqwest), de sorte que l'hôte validé est
   exactement celui qui sera contacté. Corrige aussi la plage IETF `192.0.0.0/24`
   (seule l'adresse `.0` était filtrée). Aucun changement d'API.
+- **Fuite du token ENTSO-E dans les logs corrigée** (audit F06). À chaque erreur
+  réseau vers la Transparency Platform, `e.to_string()` propageait l'URL complète
+  de la requête — qui porte le `securityToken` en query-string — dans un `warn!`
+  du poller, donc dans les logs (surtout `CARBONFR_LOG_FORMAT=json` agrégé). Seule
+  la **nature** de l'erreur est désormais journalisée, jamais l'URL (même blindage
+  que le DSN Postgres).
+- **DoS de l'overlay d'éligibilité corrigé** (audit F05). `GET /v1/intensity/greenest-window?eligibility=…`
+  (anonyme, sans rate-limit par défaut) faisait jusqu'à **288 requêtes prix
+  séquentielles** (une par créneau) vers le pool Postgres partagé, permettant
+  d'affamer le poller et les autres routes. Un **seul** aller-retour couvre
+  désormais tous les créneaux, et **aucun** prix n'est requêté pour un cadre sans
+  pilier prix (`low-carbon`).
+
+### Corrigé
+
+- **Éligibilité électrolyseur — seuil bas-carbone dérivé borné** (audit F03). Un
+  `electrolyzer_kwh_per_kg` absurde (ex. `0.53`, erreur d'unité) dérivait un seuil
+  d'intensité gigantesque (~6385 gCO₂eq/kWh) qui échappait à la borne `]0, 1000]`
+  du seuil direct et rendait le pilier `low-carbon` trivialement toujours vrai. La
+  validation HTTP est resserrée à `[10, 200]` (borne physique) et le seuil dérivé
+  est plafonné dans le crate de domaine (défense en profondeur).
+- **`GET /v1/weather/date` & `/v1/exchanges/date` — paramètres sans effet retirés**
+  (audit F04). Ces deux endpoints documentaient et acceptaient `region`,
+  `methodology` et `version` alors qu'ils les **ignorent** (la météo est nationale,
+  les échanges n'ont pas de méthodologie). `region=bretagne` renvoyait 200 avec les
+  données nationales au lieu du 400 « région inconnue » de `/v1/intensity/date`. Ils
+  utilisent désormais une struct dédiée `from`/`to` uniquement (OpenAPI mis à jour).
+
+## [0.4.2] - 2026-07-02
 
 Release patch de sécurité : mise à jour de dépendances sur advisories RustSec
 (aucun changement fonctionnel ni d'API).

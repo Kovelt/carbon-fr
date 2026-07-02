@@ -8,6 +8,7 @@
 use std::net::IpAddr;
 
 use sha2::{Digest, Sha256};
+use url::{Host, Url};
 
 use crate::domain::Region;
 
@@ -91,39 +92,46 @@ pub enum WebhookUrlError {
 /// HTTPS, l'absence d'*userinfo*, et — pour un hôte **littéral IP** — qu'il n'est
 /// pas privé/loopback/link-local/réservé. La **re-validation à la résolution
 /// DNS** (TOCTOU) est faite par l'adapter de livraison au moment de l'appel.
+///
+/// L'analyse de l'hôte passe par [`url::Url`] — **le même analyseur (WHATWG) que
+/// reqwest**. C'est essentiel : un `str::parse::<IpAddr>()` ne reconnaît que la
+/// forme décimale pointée, alors que reqwest/`url` normalisent aussi les formes
+/// décimale entière (`2130706433`), octale (`0177…`), hexadécimale (`0x7f…`) et
+/// courte (`127.1`) en `Host::Ipv4`. Un tel hôte est ensuite contacté par reqwest
+/// **sans passer par le resolver anti-SSRF** (hyper ne résout pas un littéral IP).
+/// Valider avec un analyseur différent laissait donc un contournement total
+/// (audit 2026-07, F01). On inspecte ici exactement l'hôte que le client joindra.
 pub fn validate_webhook_url(url: &str) -> Result<(), WebhookUrlError> {
-    let rest = url
-        .strip_prefix("https://")
-        .ok_or(WebhookUrlError::NotHttps)?;
-    if rest.is_empty() {
-        return Err(WebhookUrlError::Malformed);
+    let parsed = Url::parse(url).map_err(|_| WebhookUrlError::Malformed)?;
+    if parsed.scheme() != "https" {
+        return Err(WebhookUrlError::NotHttps);
     }
-    // Autorité = avant le premier '/', '?' ou '#'.
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     // Pas d'userinfo (`user:pass@host`) : vecteur d'ambiguïté/contournement.
-    if authority.contains('@') {
+    if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(WebhookUrlError::ForbiddenHost);
     }
-    // Hôte sans le port. IPv6 littéral entre crochets : `[::1]:443`.
-    let host = if let Some(end) = authority.strip_prefix('[') {
-        end.split(']').next().unwrap_or("")
-    } else {
-        authority.split(':').next().unwrap_or("")
-    };
-    if host.is_empty() {
-        return Err(WebhookUrlError::Malformed);
+    match parsed.host() {
+        None => Err(WebhookUrlError::Malformed),
+        // Littéraux IP (toutes formes reconnues par WHATWG) → plages interdites.
+        Some(Host::Ipv4(v4)) if !is_public_ip(IpAddr::V4(v4)) => {
+            Err(WebhookUrlError::ForbiddenHost)
+        }
+        Some(Host::Ipv6(v6)) if !is_public_ip(IpAddr::V6(v6)) => {
+            Err(WebhookUrlError::ForbiddenHost)
+        }
+        // Nom d'hôte → localhost refusé ici ; les autres noms sont revalidés à la
+        // résolution DNS par l'adapter de livraison (anti-rebinding).
+        Some(Host::Domain(domain)) => {
+            let lower = domain.to_ascii_lowercase();
+            if lower == "localhost" || lower.ends_with(".localhost") {
+                Err(WebhookUrlError::ForbiddenHost)
+            } else {
+                Ok(())
+            }
+        }
+        // IP publiques (v4/v6) : acceptées.
+        Some(_) => Ok(()),
     }
-    let lower = host.to_ascii_lowercase();
-    if lower == "localhost" || lower.ends_with(".localhost") {
-        return Err(WebhookUrlError::ForbiddenHost);
-    }
-    // Hôte littéral IP → vérification des plages interdites.
-    if let Ok(ip) = host.parse::<IpAddr>()
-        && !is_public_ip(ip)
-    {
-        return Err(WebhookUrlError::ForbiddenHost);
-    }
-    Ok(())
 }
 
 /// Hôte (sans port) d'une URL `https://…`, pour la re-résolution DNS côté
@@ -161,7 +169,7 @@ pub fn is_public_ip(ip: IpAddr) -> bool {
                 // 100.64.0.0/10 (CGNAT) ; 169.254 déjà couvert par link_local.
                 || (o[0] == 100 && (64..=127).contains(&o[1]))
                 // 192.0.0.0/24 IETF, 198.18.0.0/15 benchmarking.
-                || o == [192, 0, 0, 0]
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)
                 || (o[0] == 198 && (18..=19).contains(&o[1]))
                 // 240.0.0.0/4 réservé (classe E ; 255.255.255.255 déjà broadcast).
                 || o[0] >= 240)
@@ -324,6 +332,16 @@ mod tests {
             "https://[2002:a00:1::1]/hook", // 6to4 encapsulant 10.0.0.1
             "https://[64:ff9b::a00:1]/hook", // NAT64 vers 10.0.0.1
             "https://[::ffff:127.0.0.1]/hook", // IPv4-mapped loopback
+            // Encodages IP alternatifs de 127.0.0.1, normalisés en IP par reqwest
+            // mais que `str::parse::<IpAddr>()` ne reconnaissait pas (F01 audit) :
+            "https://2130706433/hook",   // décimal entier
+            "https://0x7f.0.0.1/hook",   // hexadécimal
+            "https://017700000001/hook", // octal
+            "https://127.1/hook",        // forme courte
+            // Décimal entier de 169.254.169.254 (métadonnées cloud, VPS Hetzner).
+            "https://2852039166/latest/meta-data",
+            // 192.0.0.0/24 IETF : tout le /24 doit être refusé, pas seulement .0 (F23).
+            "https://192.0.0.9/hook",
         ] {
             assert_eq!(
                 validate_webhook_url(bad),

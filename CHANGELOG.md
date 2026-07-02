@@ -8,7 +8,19 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
-## [0.4.2] - 2026-07-02
+### Sécurité
+
+- **SSRF webhooks — contournement du filtre d'IP par encodage alternatif corrigé**
+  (audit F01/F23). `validate_webhook_url` détectait un hôte « littéral IP » avec
+  `str::parse::<IpAddr>()`, qui ne reconnaît que la forme décimale pointée. Les
+  formes décimale entière (`2130706433`), octale, hexadécimale et courte (`127.1`)
+  étaient traitées comme des noms de domaine, mais reqwest les normalise en IP et
+  s'y connecte **sans** passer par le resolver anti-SSRF — un porteur de clé API
+  pouvait ainsi faire joindre par le serveur des services internes (loopback,
+  `169.254.169.254`, autres conteneurs). L'analyse passe désormais par `url::Url`
+  (le même analyseur WHATWG que reqwest), de sorte que l'hôte validé est
+  exactement celui qui sera contacté. Corrige aussi la plage IETF `192.0.0.0/24`
+  (seule l'adresse `.0` était filtrée). Aucun changement d'API.
 
 Release patch de sécurité : mise à jour de dépendances sur advisories RustSec
 (aucun changement fonctionnel ni d'API).

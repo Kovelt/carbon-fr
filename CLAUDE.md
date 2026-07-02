@@ -160,7 +160,7 @@ Invariant : `v0.4.0` (code) ≠ `/v1` (contrat) ≠ `acv-ademe@2` (donnée) ≠ 
 
 **Release applicative** : `git tag vX.Y.Z` (doit refléter la version du workspace — garde-fou CI) → le workflow `release.yml` construit et **publie l'image sur GHCR** taguée `X.Y.Z`/`X.Y`/`latest` (`ghcr.io/kovelt/carbon-fr`, publique). Le binaire expose sa version au démarrage (log) et via `--version`. En prod : **épingler une version exacte** (rollback = redéployer le tag précédent). La version OpenAPI servie sur `/docs` est câblée sur `CARGO_PKG_VERSION`.
 
-**Release courante : `v0.4.1`** (2026-06-22) — correctif d'ergonomie : `GET /v1` redirige (307) vers `/docs` au lieu d'un 404. Image GHCR `ghcr.io/kovelt/carbon-fr:0.4.1` publiée **et déployée en prod** (VPS Kovelt). Précédente : `v0.4.0` (couche A « électrolyseur », ADR-0025/0026 + verrouillage de `main`, ADR-0027).
+**Release courante : `v0.4.2`** (2026-07-02) — patch de sécurité : dépendances mises à jour sur advisories RustSec (`quick-xml` 0.41.0, RUSTSEC-2026-0194/0195 ; `anyhow` 1.0.103, RUSTSEC-2026-0190), aucun changement fonctionnel. Image GHCR `ghcr.io/kovelt/carbon-fr:0.4.2` publiée **et déployée en prod** (VPS Kovelt). Précédente : `v0.4.1` (`GET /v1` → 307 `/docs`).
 
 ## État d'avancement
 

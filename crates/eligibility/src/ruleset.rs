@@ -26,6 +26,13 @@ pub const LOW_CARBON_BUDGET_G_PER_KG: f64 =
 /// la fourchette industrielle 50–55. **[FAIT]** (fourchette). Paramétrable.
 pub const DEFAULT_ELECTROLYZER_KWH_PER_KG: f64 = 53.0;
 
+/// Plafond de sûreté du seuil d'intensité bas-carbone (gCO₂eq/kWh). Au-delà, le
+/// seuil n'a plus de sens (aucune intensité électrique réelle ne l'approche) et
+/// rendrait le pilier trivialement toujours vrai. Miroir de la borne `]0, 1000]`
+/// appliquée au seuil direct côté HTTP : garantit qu'un seuil **dérivé** d'une
+/// consommation absurde ne peut pas la contourner (audit F03).
+pub const MAX_LOW_CARBON_INTENSITY_THRESHOLD: f64 = 1000.0;
+
 /// Seuil **d'intensité électrique** bas-carbone dérivé, en gCO₂eq/kWh.
 ///
 /// **[ESTIMATION — proxy carbon-fr, NON réglementaire]** : c'est une *condition
@@ -242,8 +249,13 @@ impl EligibilityRuleset {
             if self.low_carbon_intensity_threshold_g_per_kwh.is_some()
                 && low_carbon_intensity_threshold_g_per_kwh.is_none()
             {
-                self.low_carbon_intensity_threshold_g_per_kwh =
-                    Some(low_carbon_intensity_threshold(kwh));
+                // Défense en profondeur : plafonner le seuil dérivé au même
+                // maximum que le seuil direct (validé `]0, 1000]` côté HTTP), pour
+                // qu'un `kwh` absurde ne produise pas un seuil hors contrat même si
+                // ce crate pur est appelé sans la validation HTTP (audit F03).
+                self.low_carbon_intensity_threshold_g_per_kwh = Some(
+                    low_carbon_intensity_threshold(kwh).min(MAX_LOW_CARBON_INTENSITY_THRESHOLD),
+                );
             }
             changed = true;
         }
@@ -375,6 +387,17 @@ mod tests {
         assert_eq!(r.low_carbon_intensity_threshold_g_per_kwh, Some(68.0));
         assert!(r.overridden);
         assert_eq!(r.electrolyzer_kwh_per_kg, 50.0);
+    }
+
+    #[test]
+    fn absurd_kwh_derives_capped_threshold_not_gigantic() {
+        // kwh absurde (erreur d'unité) : le seuil dérivé serait round(3384/0.53)
+        // ≈ 6385 sans garde ; il est plafonné au maximum de sûreté (audit F03).
+        let r = EligibilityRuleset::low_carbon_2025_2359().with_overrides(None, None, Some(0.53));
+        assert_eq!(
+            r.low_carbon_intensity_threshold_g_per_kwh,
+            Some(MAX_LOW_CARBON_INTENSITY_THRESHOLD)
+        );
     }
 
     #[test]

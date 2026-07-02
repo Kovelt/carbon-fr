@@ -214,35 +214,6 @@
             "schema": {
               "type": "string"
             }
-          },
-          {
-            "name": "region",
-            "in": "query",
-            "description": "Slug de région. National par défaut.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "methodology",
-            "in": "query",
-            "description": "Méthodologie. Défaut `rte-direct`.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "version",
-            "in": "query",
-            "description": "Version de la méthode (`acv-ademe` : `2` = consommation, national).",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
-            }
           }
         ],
         "responses": {
@@ -687,7 +658,7 @@
           {
             "name": "electrolyzer_kwh_per_kg",
             "in": "query",
-            "description": "Override de la consommation électrolyseur (kWh/kgH₂, ]0, 200]) — **recale**\nle seuil bas-carbone dérivé (sauf si un seuil explicite est aussi fourni).",
+            "description": "Override de la consommation électrolyseur (kWh/kgH₂, [10, 200]) — **recale**\nle seuil bas-carbone dérivé (sauf si un seuil explicite est aussi fourni).",
             "required": false,
             "schema": {
               "type": "number",
@@ -1504,35 +1475,6 @@
             "required": false,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "name": "region",
-            "in": "query",
-            "description": "Slug de région. National par défaut.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "methodology",
-            "in": "query",
-            "description": "Méthodologie. Défaut `rte-direct`.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "version",
-            "in": "query",
-            "description": "Version de la méthode (`acv-ademe` : `2` = consommation, national).",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
             }
           }
         ],

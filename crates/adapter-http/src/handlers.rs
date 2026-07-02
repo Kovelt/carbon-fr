@@ -224,7 +224,7 @@ where
 #[utoipa::path(
     get,
     path = "/v1/exchanges/date",
-    params(HistoryQuery),
+    params(DateRangeQuery),
     responses(
         (status = 200, description = "Série historique des échanges", body = ExchangesHistoryResponse),
         (status = 400, description = "Bornes manquantes ou invalides", body = ProblemDetails),
@@ -233,7 +233,7 @@ where
 )]
 pub(crate) async fn exchanges_date<R>(
     State(state): State<AppState<R>>,
-    Query(query): Query<HistoryQuery>,
+    Query(query): Query<DateRangeQuery>,
 ) -> Result<Json<ExchangesHistoryResponse>, ApiError>
 where
     R: IntensityRepository + CrossBorderRepository + Clone + Send + Sync + 'static,
@@ -289,7 +289,7 @@ where
 #[utoipa::path(
     get,
     path = "/v1/weather/date",
-    params(HistoryQuery),
+    params(DateRangeQuery),
     responses(
         (status = 200, description = "Série météo historique", body = WeatherHistoryResponse),
         (status = 400, description = "Bornes manquantes ou invalides", body = ProblemDetails),
@@ -298,7 +298,7 @@ where
 )]
 pub(crate) async fn weather_date<R>(
     State(state): State<AppState<R>>,
-    Query(query): Query<HistoryQuery>,
+    Query(query): Query<DateRangeQuery>,
 ) -> Result<Json<WeatherHistoryResponse>, ApiError>
 where
     R: WeatherRepository + Clone + Send + Sync + 'static,
@@ -370,6 +370,21 @@ pub(crate) struct HistoryQuery {
     methodology: Option<String>,
     /// Version de la méthode (`acv-ademe` : `2` = consommation, national).
     version: Option<u32>,
+}
+
+/// Paramètres d'un endpoint de série datée **sans dimension région/méthodologie**
+/// (`/v1/weather/date`, `/v1/exchanges/date`) : bornes temporelles uniquement.
+/// La météo est structurellement nationale et les échanges n'ont pas de
+/// méthodologie interrogeable — exposer `region`/`methodology`/`version` ici
+/// (via `HistoryQuery`) documentait et acceptait des paramètres sans effet
+/// (audit F04).
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct DateRangeQuery {
+    /// Début de l'intervalle (RFC 3339, inclus). Requis.
+    from: Option<String>,
+    /// Fin de l'intervalle (RFC 3339, exclu). Requis.
+    to: Option<String>,
 }
 
 /// `GET /v1/intensity/date?from=&to=&region=` — série historique sur un
@@ -669,7 +684,7 @@ pub(crate) struct GreenestWindowQuery {
     surplus_price_eur_mwh: Option<f64>,
     /// Override du seuil d'intensité bas-carbone (gCO₂eq/kWh, ]0, 1000]).
     low_carbon_threshold_g_per_kwh: Option<f64>,
-    /// Override de la consommation électrolyseur (kWh/kgH₂, ]0, 200]) — **recale**
+    /// Override de la consommation électrolyseur (kWh/kgH₂, [10, 200]) — **recale**
     /// le seuil bas-carbone dérivé (sauf si un seuil explicite est aussi fourni).
     electrolyzer_kwh_per_kg: Option<f64>,
 }
@@ -695,10 +710,15 @@ fn validate_eligibility_overrides(
         ));
     }
     if let Some(k) = electrolyzer_kwh_per_kg
-        && (!k.is_finite() || k <= 0.0 || k > 200.0)
+        && (!k.is_finite() || !(10.0..=200.0).contains(&k))
     {
+        // Borne inférieure **physique** : la consommation d'un électrolyseur ne
+        // descend pas sous ~33 kWh/kg (minimum thermodynamique) — la fourchette
+        // industrielle est 50-55. Sans plancher réaliste, une valeur absurde
+        // (ex. 0,53, erreur d'unité) dérivait un seuil bas-carbone gigantesque
+        // qui rendait le pilier trivialement toujours vrai (audit F03).
         return Err(ApiError::bad_request(
-            "`electrolyzer_kwh_per_kg` doit être dans ]0, 200]",
+            "`electrolyzer_kwh_per_kg` doit être dans [10, 200]",
         ));
     }
     Ok(())

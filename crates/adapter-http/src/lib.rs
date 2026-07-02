@@ -131,6 +131,16 @@ pub trait EligibilityRepo: Send + Sync {
     /// Prix spot day-ahead (€/MWh) **frais** au créneau `at` (filtre d'ancienneté
     /// appliqué : pas d'extrapolation du dernier day-ahead sur le futur).
     async fn spot_price_at(&self, at: time::OffsetDateTime) -> Option<f64>;
+
+    /// Prix spot day-ahead (€/MWh) sur un intervalle, **triés par horodatage
+    /// croissant**. Un **seul** aller-retour pour tous les créneaux (vs une requête
+    /// par créneau, audit F05) : la garde de fraîcheur (« ≤ 1 h, pas
+    /// d'extrapolation ») est appliquée en mémoire par l'appelant. `Vec` vide si
+    /// indisponible.
+    async fn spot_prices_range(
+        &self,
+        range: carbonfr_core::domain::TimeRange,
+    ) -> Vec<(time::OffsetDateTime, f64)>;
 }
 
 /// Adaptateur d'un repository concret (`R: IntensityRepository +
@@ -174,6 +184,21 @@ where
                 age >= time::Duration::ZERO && age <= time::Duration::hours(1)
             })
             .map(|p| p.eur_per_mwh)
+    }
+
+    async fn spot_prices_range(
+        &self,
+        range: carbonfr_core::domain::TimeRange,
+    ) -> Vec<(time::OffsetDateTime, f64)> {
+        // Prix bruts de l'intervalle (tri croissant garanti par le repository) ;
+        // la garde de fraîcheur ≤ 1 h est appliquée à la lecture par l'appelant.
+        self.0
+            .price_range(range)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| (p.at, p.eur_per_mwh))
+            .collect()
     }
 }
 

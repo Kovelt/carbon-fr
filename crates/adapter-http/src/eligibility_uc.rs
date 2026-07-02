@@ -13,10 +13,11 @@
 //! - **Prix = day-ahead frais** (PIÈGE 2) : la fraîcheur est filtrée par
 //!   l'implémentation de `spot_price_at` ; au-delà du day-ahead, `None`.
 
-use carbonfr_core::domain::{ForecastPoint, WindowEstimator};
+use carbonfr_core::domain::{ForecastPoint, TimeRange, WindowEstimator};
 use carbonfr_eligibility::{
     EligibilityRuleset, EligibilityVerdict, FR_BIDDING_ZONE, SlotInput, evaluate, renewable_share,
 };
+use time::{Duration, OffsetDateTime};
 
 /// Évalue l'éligibilité de chaque créneau prévu, en enrichissant `points` du mix
 /// nowcast et du prix spot. **Best-effort** : une donnée absente devient
@@ -35,9 +36,20 @@ pub(crate) async fn evaluate_eligibility(
         .and_then(|m| m.mix.as_ref())
         .and_then(renewable_share);
 
+    // F05 : le pilier prix n'existe que pour les cadres qui portent un seuil de
+    // surplus (rfnbo) ; pour `low-carbon` (`surplus_price_eur_mwh = None`), on ne
+    // requête **aucun** prix. Quand il en faut, on fait **un seul** aller-retour
+    // couvrant tous les créneaux (au lieu d'une requête par créneau — jusqu'à 288
+    // sur un horizon 72 h au pas 15 min) ; la fraîcheur est filtrée en mémoire.
+    let prices = if ruleset.surplus_price_eur_mwh.is_some() {
+        fetch_prices_once(repo, points).await
+    } else {
+        Vec::new()
+    };
+
     let mut slots = Vec::with_capacity(points.len());
     for p in points {
-        let spot = repo.spot_price_at(p.at).await;
+        let spot = freshest_price(&prices, p.at);
         // D4 : la part renouvelable observée ne vaut que pour le nowcast/historique.
         let is_nowcast = now_at.map(|t| p.at <= t).unwrap_or(false);
         let renewable = if is_nowcast { now_share } else { None };
@@ -56,6 +68,40 @@ pub(crate) async fn evaluate_eligibility(
     }
 
     evaluate(&slots, ruleset, FR_BIDDING_ZONE)
+}
+
+/// Un **seul** aller-retour prix couvrant tous les créneaux. La borne basse
+/// `premier − 1 h` capture un prix légèrement antérieur au premier créneau, dans
+/// la limite de fraîcheur appliquée par [`freshest_price`].
+async fn fetch_prices_once(
+    repo: &dyn crate::EligibilityRepo,
+    points: &[ForecastPoint],
+) -> Vec<(OffsetDateTime, f64)> {
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
+        return Vec::new();
+    };
+    match TimeRange::new(
+        first.at - Duration::hours(1),
+        last.at + Duration::minutes(1),
+    ) {
+        Some(range) => repo.spot_prices_range(range).await,
+        None => Vec::new(),
+    }
+}
+
+/// Prix day-ahead **frais** au créneau `at` : le plus récent tel que
+/// `price.at ≤ at` et `at − price.at ≤ 1 h` (pas d'extrapolation au-delà du
+/// day-ahead, PIÈGE 2). Même sémantique que `spot_price_at`, appliquée en mémoire
+/// sur la série déjà chargée. `prices` triés par horodatage croissant.
+fn freshest_price(prices: &[(OffsetDateTime, f64)], at: OffsetDateTime) -> Option<f64> {
+    prices
+        .iter()
+        .rev()
+        .find(|(t, _)| {
+            let age = at - *t;
+            age >= Duration::ZERO && age <= Duration::hours(1)
+        })
+        .map(|(_, eur)| *eur)
 }
 
 #[cfg(test)]
@@ -80,6 +126,20 @@ mod tests {
         }
         async fn spot_price_at(&self, _at: OffsetDateTime) -> Option<f64> {
             self.price
+        }
+        async fn spot_prices_range(&self, range: TimeRange) -> Vec<(OffsetDateTime, f64)> {
+            // Prix horaires constants sur l'intervalle (tri croissant) : chaque
+            // créneau trouve ainsi un prix frais (≤ 1 h) via `freshest_price`.
+            let Some(eur) = self.price else {
+                return Vec::new();
+            };
+            let mut out = Vec::new();
+            let mut t = range.start();
+            while t <= range.end() {
+                out.push((t, eur));
+                t += Duration::hours(1);
+            }
+            out
         }
     }
 
@@ -188,5 +248,69 @@ mod tests {
         let r = EligibilityRuleset::rfnbo_2023_1184();
         let verdicts = evaluate_eligibility(&repo, &points, &r, WindowEstimator::Central).await;
         assert!(verdicts[0].eligible); // surplus prix suffit
+    }
+
+    /// F05 : le prix ne doit être lu qu'une fois (batch), et pas du tout pour un
+    /// cadre sans pilier prix — plus jamais une requête par créneau.
+    #[tokio::test]
+    async fn low_carbon_makes_no_price_query_rfnbo_batches_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingRepo {
+            calls: AtomicUsize,
+        }
+        #[async_trait::async_trait]
+        impl crate::EligibilityRepo for CountingRepo {
+            async fn latest_national_mix(&self) -> Option<Measurement> {
+                None
+            }
+            async fn spot_price_at(&self, _at: OffsetDateTime) -> Option<f64> {
+                None
+            }
+            async fn spot_prices_range(&self, _range: TimeRange) -> Vec<(OffsetDateTime, f64)> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Vec::new()
+            }
+        }
+
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        // 8 créneaux : l'ancien code aurait fait 8 requêtes prix séquentielles.
+        let points: Vec<ForecastPoint> = (0i64..8)
+            .map(|i| point(t0 + Duration::hours(i), 50.0))
+            .collect();
+
+        // low-carbon : aucun pilier prix → zéro requête.
+        let lc = CountingRepo {
+            calls: AtomicUsize::new(0),
+        };
+        let _ = evaluate_eligibility(
+            &lc,
+            &points,
+            &EligibilityRuleset::low_carbon_2025_2359(),
+            WindowEstimator::Central,
+        )
+        .await;
+        assert_eq!(
+            lc.calls.load(Ordering::SeqCst),
+            0,
+            "low-carbon ne doit requêter aucun prix"
+        );
+
+        // rfnbo : pilier prix → un SEUL aller-retour (batch), pas un par créneau.
+        let rf = CountingRepo {
+            calls: AtomicUsize::new(0),
+        };
+        let _ = evaluate_eligibility(
+            &rf,
+            &points,
+            &EligibilityRuleset::rfnbo_2023_1184(),
+            WindowEstimator::Central,
+        )
+        .await;
+        assert_eq!(
+            rf.calls.load(Ordering::SeqCst),
+            1,
+            "rfnbo doit faire un seul batch prix, pas une requête par créneau"
+        );
     }
 }

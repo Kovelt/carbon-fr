@@ -102,6 +102,27 @@ pub struct EntsoeClient {
     window_hours: i64,
 }
 
+/// Description d'une erreur réseau reqwest **sans l'URL** (audit F06).
+///
+/// `reqwest::Error::to_string()` embarque l'URL complète de la requête, qui porte
+/// le `securityToken` ENTSO-E en query-string → propager `e.to_string()` fait
+/// **fuiter le token en clair dans les logs** (surtout `CARBONFR_LOG_FORMAT=json`
+/// agrégé). On ne conserve donc que la **nature** de l'erreur, jamais l'URL. Même
+/// blindage que celui déjà appliqué au DSN Postgres.
+fn describe_http_error(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        "délai de requête dépassé".to_string()
+    } else if e.is_connect() {
+        "échec de connexion".to_string()
+    } else if e.is_body() || e.is_decode() {
+        "réponse illisible".to_string()
+    } else if let Some(status) = e.status() {
+        format!("statut {status}")
+    } else {
+        "requête réseau échouée".to_string()
+    }
+}
+
 impl EntsoeClient {
     /// Construit le client depuis l'environnement (`CARBONFR_ENTSOE_TOKEN`,
     /// `CARBONFR_ENTSOE_BASE_URL`, `CARBONFR_ENTSOE_WINDOW_HOURS`).
@@ -142,13 +163,14 @@ impl EntsoeClient {
             .query(&query)
             .send()
             .await
-            .map_err(|e| EntsoeError::Http(e.to_string()))?;
+            // NE PAS propager `e.to_string()` : il contient l'URL avec le token.
+            .map_err(|e| EntsoeError::Http(describe_http_error(&e)))?;
         if !resp.status().is_success() {
             return Err(EntsoeError::Http(format!("statut {}", resp.status())));
         }
         resp.text()
             .await
-            .map_err(|e| EntsoeError::Http(e.to_string()))
+            .map_err(|e| EntsoeError::Http(describe_http_error(&e)))
     }
 
     /// Génération par type d'une zone → intensité ACV par horodatage.

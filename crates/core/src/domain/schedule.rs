@@ -54,6 +54,22 @@ pub fn greenest_window_before(
         .iter()
         .take_while(|p| p.at + step <= deadline)
         .count();
+    if cutoff == 1 {
+        // Un seul créneau éligible : `greenest_window` exige ≥ 2 points pour
+        // déduire lui-même le pas, mais on le connaît déjà (série complète, avant
+        // troncature). Un point unique ne couvre `duration` que si elle tient
+        // dans un seul pas — sinon aucun créneau valide (échéance trop proche).
+        if duration <= Duration::ZERO || duration > step {
+            return None;
+        }
+        let p = &points[0];
+        let average = CarbonIntensity::new(estimate(p, estimator))?;
+        return Some(GreenWindow {
+            start: p.at,
+            end: p.at + step,
+            average,
+        });
+    }
     greenest_window(&points[..cutoff], duration, estimator)
 }
 
@@ -205,6 +221,56 @@ mod tests {
         // Le meilleur avant l'échéance est l'index 1 (40), pas l'index 3 (10).
         assert_eq!(w.start, t0 + step);
         assert!(w.average.value() < 50.0 && w.average.value() >= 40.0);
+    }
+
+    #[test]
+    fn single_eligible_slot_before_tight_deadline_still_wins() {
+        // F10 : échéance ne laissant qu'UN créneau éligible (cutoff == 1).
+        let points = series(&[100.0, 10.0, 50.0]);
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let step = Duration::minutes(15);
+        // Échéance = fin de l'index 0 → seul l'indice 0 est éligible.
+        let deadline = t0 + step;
+        let w = greenest_window_before(
+            &points,
+            Duration::minutes(15),
+            deadline,
+            WindowEstimator::Central,
+        )
+        .expect("un créneau unique éligible doit être renvoyé, pas None");
+        assert_eq!(w.start, t0);
+        assert_eq!(w.end, t0 + step);
+        assert_eq!(w.average.value(), 100.0);
+    }
+
+    #[test]
+    fn single_eligible_slot_too_short_for_duration_stays_none() {
+        // F10 : garde-fou — un créneau unique ne couvre pas une durée > 1 pas.
+        let points = series(&[100.0, 10.0, 50.0]);
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let step = Duration::minutes(15);
+        let deadline = t0 + step; // cutoff == 1
+        let w = greenest_window_before(
+            &points,
+            Duration::minutes(30), // 2 pas : ne tient pas dans l'unique créneau
+            deadline,
+            WindowEstimator::Central,
+        );
+        assert!(w.is_none());
+    }
+
+    #[test]
+    fn no_eligible_slot_before_deadline_is_none() {
+        // F10 : non-régression — échéance avant tout créneau (cutoff == 0).
+        let points = series(&[100.0, 10.0, 50.0]);
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let w = greenest_window_before(
+            &points,
+            Duration::minutes(15),
+            t0, // aucun créneau ne se termine à ≤ t0
+            WindowEstimator::Central,
+        );
+        assert!(w.is_none());
     }
 
     #[test]

@@ -201,6 +201,27 @@ impl WeatherRepository for FakeRepo {
         out.sort_by_key(|w| (w.valid_at, w.run_at));
         Ok(out)
     }
+
+    async fn weather_latest(
+        &self,
+        valid: TimeRange,
+    ) -> Result<Vec<WeatherForecast>, RepositoryError> {
+        // Même logique que la dédup côté base : une valeur par échéance (run le
+        // plus récent), triée par `valid_at`.
+        let mut by_valid: std::collections::BTreeMap<OffsetDateTime, WeatherForecast> =
+            std::collections::BTreeMap::new();
+        for w in self.weather.iter().filter(|w| valid.contains(w.valid_at)) {
+            by_valid
+                .entry(w.valid_at)
+                .and_modify(|kept| {
+                    if w.run_at > kept.run_at {
+                        *kept = *w;
+                    }
+                })
+                .or_insert(*w);
+        }
+        Ok(by_valid.into_values().collect())
+    }
 }
 
 #[async_trait]
@@ -232,9 +253,19 @@ impl carbonfr_core::ports::SubscriptionRepository for FakeRepo {
     async fn create(
         &self,
         subscription: &carbonfr_core::domain::Subscription,
-    ) -> Result<(), RepositoryError> {
-        self.subs.lock().unwrap().push(subscription.clone());
-        Ok(())
+        max_per_owner: usize,
+    ) -> Result<bool, RepositoryError> {
+        // Atomique sous le même verrou (check + push dans la même section critique).
+        let mut subs = self.subs.lock().unwrap();
+        let count = subs
+            .iter()
+            .filter(|s| s.owner_key_hash == subscription.owner_key_hash)
+            .count();
+        if count >= max_per_owner {
+            return Ok(false);
+        }
+        subs.push(subscription.clone());
+        Ok(true)
     }
     async fn list_for_owner(
         &self,
@@ -1743,7 +1774,12 @@ fn guarded_app() -> axum::Router {
         },
     );
     axum::Router::new()
+        // Route sous contrat `/v1` : soumise au quota/auth.
+        .route("/v1/protected", axum::routing::get(|| async { "ok" }))
+        // Routes opérationnelles hors `/v1` : jamais soumises au quota (F07).
         .route("/health", axum::routing::get(|| async { "ok" }))
+        .route("/health/ready", axum::routing::get(|| async { "ok" }))
+        .route("/metrics", axum::routing::get(|| async { "ok" }))
         .layer(axum::middleware::from_fn_with_state(state, enforce))
 }
 
@@ -1760,22 +1796,30 @@ async fn auth_anonymous_is_rate_limited() {
     let app = guarded_app();
     // Limite anonyme = 2/min (IP « unknown » partagée en test).
     assert_eq!(
-        get_auth(app.clone(), "/health", None).await.status(),
+        get_auth(app.clone(), "/v1/protected", None).await.status(),
         StatusCode::OK
     );
     assert_eq!(
-        get_auth(app.clone(), "/health", None).await.status(),
+        get_auth(app.clone(), "/v1/protected", None).await.status(),
         StatusCode::OK
     );
-    let limited = get_auth(app.clone(), "/health", None).await;
+    let limited = get_auth(app.clone(), "/v1/protected", None).await;
     assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
     assert!(limited.headers().contains_key("ratelimit-limit"));
 }
 
 #[tokio::test]
 async fn auth_unknown_key_is_401() {
-    let response = get_auth(guarded_app(), "/health", Some("wrong")).await;
+    let response = get_auth(guarded_app(), "/v1/protected", Some("wrong")).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    // RFC 6750 : le 401 porte un challenge WWW-Authenticate (F21).
+    assert_eq!(
+        response
+            .headers()
+            .get("www-authenticate")
+            .and_then(|v| v.to_str().ok()),
+        Some(r#"Bearer error="invalid_token""#)
+    );
 }
 
 #[tokio::test]
@@ -1783,8 +1827,25 @@ async fn auth_valid_key_gets_higher_limit() {
     let app = guarded_app();
     // Avec la bonne clé (limite 100) : la 3e requête passe encore.
     for _ in 0..3 {
-        let ok = get_auth(app.clone(), "/health", Some("good-key")).await;
+        let ok = get_auth(app.clone(), "/v1/protected", Some("good-key")).await;
         assert_eq!(ok.status(), StatusCode::OK);
+    }
+}
+
+#[tokio::test]
+async fn operational_routes_bypass_quota_and_auth() {
+    // F07 : `/health`, `/health/ready`, `/metrics` (hors `/v1`) ne sont jamais
+    // soumis au quota anonyme (2/min ici) ni à l'auth, même sous `enforce`.
+    let app = guarded_app();
+    for route in ["/health", "/health/ready", "/metrics"] {
+        for _ in 0..5 {
+            let resp = get_auth(app.clone(), route, None).await;
+            assert_eq!(resp.status(), StatusCode::OK, "route {route} sans quota");
+        }
+        // Un jeton invalide ne provoque pas de 401 sur ces routes (bypass avant
+        // la résolution du principal).
+        let resp = get_auth(app.clone(), route, Some("wrong")).await;
+        assert_eq!(resp.status(), StatusCode::OK, "route {route} sans auth");
     }
 }
 
@@ -1881,6 +1942,38 @@ async fn webhook_create_list_delete_roundtrip() {
 }
 
 #[tokio::test]
+async fn webhook_non_national_region_is_400() {
+    // F08 : le watcher ne surveille que le national → refuser les autres régions
+    // plutôt que de créer un abonnement silencieusement mort.
+    let app = webhook_app();
+    let body = r#"{"region":"bretagne","threshold":50,"direction":"below","callback_url":"https://hooks.example.com/c"}"#;
+    let resp = send(app, "POST", "/v1/webhooks", Some("wh-key"), Some(body)).await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn webhook_create_enforces_quota() {
+    // F22 : quota de 50 abonnements par clé, appliqué à la création.
+    let app = webhook_app();
+    let body =
+        r#"{"threshold":50,"direction":"below","callback_url":"https://hooks.example.com/c"}"#;
+    for _ in 0..50 {
+        let resp = send(
+            app.clone(),
+            "POST",
+            "/v1/webhooks",
+            Some("wh-key"),
+            Some(body),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+    // Le 51e est refusé (400 quota).
+    let over = send(app, "POST", "/v1/webhooks", Some("wh-key"), Some(body)).await;
+    assert_eq!(over.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn health_ready_checks_db() {
     // Repo qui répond (Ok) → 200 « ready ».
     let response = get(app(Some(national_measurement())), "/health/ready").await;
@@ -1896,7 +1989,7 @@ async fn rate_limit_not_bypassed_by_spoofed_xff() {
     // dans le seau « unknown » → le spoofing ne contourne pas le quota.
     let app = guarded_app(); // anonymous_per_min = 2
     let send_xff = |xff: &str| {
-        let req = Request::get("/health")
+        let req = Request::get("/v1/protected")
             .header("x-forwarded-for", xff)
             .body(Body::empty())
             .unwrap();
@@ -1909,6 +2002,65 @@ async fn rate_limit_not_bypassed_by_spoofed_xff() {
         send_xff("9.9.9.9").await.unwrap().status(),
         StatusCode::TOO_MANY_REQUESTS
     );
+}
+
+#[tokio::test]
+async fn unknown_methodology_is_400() {
+    // F30 : une méthodologie inconnue est un paramètre invalide (400), pas une
+    // absence de donnée (404 no_data trompeur).
+    let r = get(app(None), "/v1/intensity/now?methodology=rte-driect").await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    let body = json_body(r).await;
+    assert_eq!(body["code"], "bad_request");
+}
+
+#[tokio::test]
+async fn mix_rejects_consumption_version() {
+    // F12 : `/v1/mix` ne sert que le mix `@1`. `acv-ademe&version=2` est rejeté
+    // (400) au lieu de renvoyer silencieusement le mix de production.
+    let r = get(
+        app(Some(national_measurement())),
+        "/v1/mix?methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    // Une version inconnue est aussi rejetée (comme `/v1/intensity/now`).
+    let r2 = get(
+        app(Some(national_measurement())),
+        "/v1/mix?methodology=rte-direct&version=9",
+    )
+    .await;
+    assert_eq!(r2.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn query_deserialization_error_is_problem_json_400() {
+    // F15 : une valeur non désérialisable (chaîne pour un `u32`) échoue dans
+    // l'extracteur ; la réponse doit rester Problem Details, pas un 400 text/plain.
+    let r = get(app(None), "/v1/intensity/forecast?horizon_hours=abc").await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        r.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/problem+json")
+    );
+    assert_eq!(json_body(r).await["code"], "bad_request");
+}
+
+#[tokio::test]
+async fn unknown_route_is_problem_json_404() {
+    // F16 : un chemin inconnu reçoit un 404 Problem Details, pas le 404 vide axum.
+    let r = get(app(None), "/v1/doesnotexist").await;
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        r.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/problem+json")
+    );
+    let body = json_body(r).await;
+    assert_eq!(body["code"], "not_found");
 }
 
 #[tokio::test]

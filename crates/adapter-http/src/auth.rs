@@ -70,6 +70,17 @@ impl AuthState {
 
 /// Compteur de quota **fenêtre fixe par minute**, en mémoire (suffisant pour une
 /// instance unique, ADR-0007 ; réversible derrière un futur `UsageMeter`).
+///
+/// ⚠️ **Fenêtre fixe, pas glissante** (audit F20) : le compteur repart à zéro au
+/// changement de minute (`entry.0 != minute`) au lieu de glisser en continu. À la
+/// frontière (requêtes à 59,9 s puis à 60,1 s), un appelant peut donc passer
+/// jusqu'à `2 × limite` en ~1-2 s. **Trade-off assumé, pas un bug** : ce quota est
+/// une garde de dégradation anti-abus (protéger l'instance et le quota amont
+/// RTE/ENTSO-E), pas un SLA de facturation strict — le comptage exact est le rôle
+/// du futur `UsageMeter` persistant (ADR-0015, tier payant). Si un SLA strict
+/// devenait nécessaire ici, remplacer par une fenêtre glissante (log
+/// d'horodatages par `id`) ou un token-bucket, sans changer la signature de
+/// `check` ni le comportement de `enforce()` en aval.
 #[derive(Default)]
 struct RateLimiter {
     windows: HashMap<String, (i64, u32)>,
@@ -77,7 +88,8 @@ struct RateLimiter {
 
 impl RateLimiter {
     /// Incrémente le compteur de `id` pour `minute`. `Some(restant)` si sous la
-    /// limite, `None` si dépassée.
+    /// limite, `None` si dépassée. Fenêtre **fixe** (cf. doc de `RateLimiter`) :
+    /// `minute` n'est pas un curseur glissant.
     fn check(&mut self, id: &str, limit: u32, minute: i64) -> Option<u32> {
         // Purge légère : si la carte grossit, on ne garde que la minute courante.
         if self.windows.len() > 10_000 {
@@ -169,7 +181,19 @@ fn error_response(
 
 /// Middleware d'authentification + quota. À appliquer via
 /// `axum::middleware::from_fn_with_state` au routeur protégé.
+///
+/// **Scopé au contrat `/v1`** (ADR-0007 : tout endpoint public vit sous `/v1`) :
+/// les routes hors contrat — `/health`, `/health/ready`, `/metrics`, `/docs` —
+/// ne sont jamais soumises au quota ni à l'authentification, même quand la
+/// composition (`bin/server`) les fusionne dans le même `Router` que celui qui
+/// reçoit cette couche (audit F07). Sondes de liveness et scrape Prometheus
+/// doivent rester joignables quel que soit l'état du quota, sinon un pic de
+/// trafic sur l'API provoque une panne auto-infligée (429 sur `/health` →
+/// redémarrage par l'orchestrateur ; 429 sur `/metrics` → perte d'observabilité).
 pub async fn enforce(State(state): State<AuthState>, request: Request, next: Next) -> Response {
+    if !request.uri().path().starts_with("/v1") {
+        return next.run(request).await;
+    }
     let headers = request.headers();
 
     // 1. Résolution du principal.
@@ -252,15 +276,15 @@ pub fn key_fingerprint(key: &str) -> String {
     hash_key(key)
 }
 
-/// Jeton aléatoire hexadécimal de `bytes` octets (`/dev/urandom`) — id et secret
-/// d'abonnement webhook. `None` si l'entropie système est inaccessible.
+/// Jeton aléatoire hexadécimal de `bytes` octets (CSPRNG **userspace** `rand`,
+/// non bloquant — plus d'I/O fichier synchrone `/dev/urandom` sur le runtime
+/// Tokio, audit F29) — id et secret d'abonnement webhook. Signature conservée en
+/// `Option<String>` par cohérence avec les appelants, mais désormais infaillible
+/// (renvoie toujours `Some`).
 pub(crate) fn random_hex(bytes: usize) -> Option<String> {
-    use std::io::Read;
+    use rand::Rng;
     let mut buf = vec![0u8; bytes];
-    std::fs::File::open("/dev/urandom")
-        .ok()?
-        .read_exact(&mut buf)
-        .ok()?;
+    rand::rng().fill(buf.as_mut_slice());
     Some(buf.iter().map(|b| format!("{b:02x}")).collect())
 }
 

@@ -148,7 +148,12 @@ pub fn acv_ademe_consumption_intensity(
     }
 
     let consumed_emissions = prod_emissions - exports_mwh * prod_intensity + imported_emissions;
-    let grid_intensity = (consumed_emissions / consumption).max(0.0);
+    // Pas de clamp : un `consumed_emissions` négatif (transit net — import très
+    // peu carboné + export simultané supérieur à la production) rend l'intensité
+    // consommation physiquement indéfinie. On laisse `CarbonIntensity::new`
+    // rejeter la valeur négative → `None` (comme `acv_ademe_intensity`), plutôt
+    // que de la clamper silencieusement à 0 gCO₂eq/kWh (trompeur).
+    let grid_intensity = consumed_emissions / consumption;
 
     CarbonIntensity::new(grid_intensity * (1.0 + td_loss))
 }
@@ -246,6 +251,48 @@ mod tests {
             (intensity.value() - 12.56).abs() < 0.1,
             "intensité = {}",
             intensity.value()
+        );
+    }
+
+    #[test]
+    fn consumption_intensity_is_none_on_negative_net_transit() {
+        use crate::domain::{CrossBorderFlow, CrossBorderFlows, Neighbor};
+
+        // Production 100 % gaz (facteur 406) → prod_intensity = 406.
+        let mix = GenerationMix {
+            nucleaire: 0.0,
+            gaz: 100.0,
+            charbon: 0.0,
+            fioul: 0.0,
+            hydraulique: 0.0,
+            eolien: 0.0,
+            solaire: 0.0,
+            bioenergies: 0.0,
+            pompage: 0.0,
+            echanges: 0.0,
+            thermique: None,
+        };
+        // Transit net : import massif très peu carboné (200 MW @ 6) ET export
+        // simultané supérieur à la production (150 MW vers une autre frontière).
+        let flows = CrossBorderFlows::new(vec![
+            CrossBorderFlow {
+                neighbor: Neighbor::Switzerland,
+                flow_mw: 200.0,
+                neighbor_intensity: CarbonIntensity::new(6.0).unwrap(),
+            },
+            CrossBorderFlow {
+                neighbor: Neighbor::Spain,
+                flow_mw: -150.0,
+                neighbor_intensity: CarbonIntensity::new(200.0).unwrap(),
+            },
+        ]);
+        // consommation = 100 - 150 + 200 = 150 (> 0, garde passée) ;
+        // émissions consommées = 40600 - 150·406 + 1200 = -19100 (< 0).
+        let result =
+            acv_ademe_consumption_intensity(&mix, &flows, &EmissionFactors::acv_ademe_v1(), 0.0);
+        assert!(
+            result.is_none(),
+            "intensité consommation physiquement indéfinie (transit négatif) doit être None, pas 0 : {result:?}"
         );
     }
 

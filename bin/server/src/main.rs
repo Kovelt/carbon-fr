@@ -46,6 +46,7 @@
 //! | `CARBONFR_KEY_LABEL`         | `` (vide)      | `mint-key` : libellé de la clé      |
 //! | `CARBONFR_TRUST_PROXY`       | `0` (off)      | faire confiance à `X-Forwarded-For` (derrière un reverse proxy) |
 //! | `CARBONFR_DB_MAX_CONNECTIONS` | `20`         | taille du pool PostgreSQL           |
+//! | `CARBONFR_DB_STATEMENT_TIMEOUT_MS` | `30000` | borne serveur `statement_timeout` + `idle_in_transaction_session_timeout` |
 //! | `CARBONFR_VISIT_SALT`        | `carbon-fr` (⚠ requis si TRUST_PROXY) | sel du hachage des IP visiteurs |
 //! | `CARBONFR_LOG_FORMAT`        | (texte)        | `json` pour des logs structurés (prod) |
 //! | `RUST_LOG`                   | `info`         | filtre de logs (`tracing`)        |
@@ -74,8 +75,8 @@ use carbonfr_core::application::{
 };
 use carbonfr_core::domain::{
     ACV_FORECAST_ID, ACV_FORECAST_VERSION, CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams,
-    ErrorMetrics, IntensityUpdate, Region, TimeRange, hmac_sha256_hex, render_webhook_payload,
-    should_fire,
+    ErrorMetrics, IntensityUpdate, Region, TimeRange, WeatherForecast, hmac_sha256_hex,
+    render_webhook_payload, should_fire,
 };
 use carbonfr_core::ports::{
     ApiKeyRepository, ApiTier, ConsumptionRepository, ConsumptionSource, CrossBorderRepository,
@@ -1008,6 +1009,33 @@ async fn run_backtest_bands() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Sélectionne, pour une `origin` d'entraînement, la météo **connue au plus tard
+/// à cette origine** : par `valid_at`, le `run_at` le plus récent tel que
+/// `run_at ≤ origin`. Reproduit le filtre anti-fuite de `GbdtForecaster::forecast`
+/// (adapter-gbdt) côté entraînement, par origine — au lieu d'un maximum global sur
+/// toute la fenêtre qui fuiterait un run publié après l'origine (audit F11).
+fn weather_as_of(
+    rows: &[WeatherForecast],
+    origin: OffsetDateTime,
+) -> std::collections::HashMap<OffsetDateTime, (f64, f64)> {
+    use std::collections::HashMap;
+    let mut best: HashMap<OffsetDateTime, (OffsetDateTime, f64, f64)> = HashMap::new();
+    for w in rows {
+        if w.run_at > origin {
+            continue;
+        }
+        match best.get(&w.valid_at) {
+            Some((run, _, _)) if *run >= w.run_at => {}
+            _ => {
+                best.insert(w.valid_at, (w.run_at, w.wind, w.irradiance));
+            }
+        }
+    }
+    best.into_iter()
+        .map(|(v, (_, wind, irr))| (v, (wind, irr)))
+        .collect()
+}
+
 /// Mode `train` : entraîne le modèle **ML GBDT** (ADR-0012) sur l'historique,
 /// sauvegarde l'artefact, puis **compare** `gbdt@1` à `climatology@1` au backtest
 /// (garde de promotion : on ne sert le GBDT que s'il bat la climatologie).
@@ -1046,25 +1074,14 @@ async fn run_train() -> anyhow::Result<()> {
         .iter()
         .map(|m| (m.at, m.intensity.value()))
         .collect();
-    // Météo prévue (archive backfillée) sur la période, indexée par échéance —
-    // le `run_at = valid_at − 24 h` garantit l'anti-fuite (horizons ≤ 24 h).
+    // Météo prévue (archive + poller) sur la période. On garde l'historique brut
+    // multi-run et on sélectionne le run **par origine** (cf. `weather_as_of`) :
+    // un maximum global sur toute la fenêtre fuiterait un run publié après
+    // l'origine (F11), contrairement à l'inférence réelle.
     let weather_rows = repo
         .weather_range(read)
         .await
         .context("lecture de la météo")?;
-    let mut weather: HashMap<OffsetDateTime, (OffsetDateTime, f64, f64)> = HashMap::new();
-    for w in weather_rows {
-        match weather.get(&w.valid_at) {
-            Some((run, _, _)) if *run >= w.run_at => {}
-            _ => {
-                weather.insert(w.valid_at, (w.run_at, w.wind, w.irradiance));
-            }
-        }
-    }
-    let weather: HashMap<OffsetDateTime, (f64, f64)> = weather
-        .into_iter()
-        .map(|(v, (_, wind, irr))| (v, (wind, irr)))
-        .collect();
 
     // Origines d'entraînement : du début +1 sem. à la fin −24 h.
     let mut origins = Vec::new();
@@ -1073,14 +1090,20 @@ async fn run_train() -> anyhow::Result<()> {
         origins.push(o);
         o += Duration::hours(origin_step_hours);
     }
-    let examples = build_training_examples(
-        &intensity,
-        &weather,
-        10, // fenêtre glissante (semaines), identique à l'inférence
-        &origins,
-        params.step,
-        Duration::hours(24),
-    );
+    let mut examples = Vec::new();
+    for &origin in &origins {
+        // Anti-fuite : météo connue *au plus tard à l'origine* (même filtre que
+        // `GbdtForecaster::forecast`), appliquée par origine.
+        let weather = weather_as_of(&weather_rows, origin);
+        examples.extend(build_training_examples(
+            &intensity,
+            &weather,
+            10, // fenêtre glissante (semaines), identique à l'inférence
+            std::slice::from_ref(&origin),
+            params.step,
+            Duration::hours(24),
+        ));
+    }
     anyhow::ensure!(
         !examples.is_empty(),
         "aucun exemple d'entraînement (historique insuffisant ?)"

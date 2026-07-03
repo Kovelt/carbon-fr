@@ -55,7 +55,7 @@
           "503": {
             "description": "Base indisponible",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -127,7 +127,7 @@
           "400": {
             "description": "Filtre inconnu (source/technologie/périmètre)",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -179,7 +179,7 @@
           "404": {
             "description": "Aucune donnée d'échange disponible",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -201,7 +201,7 @@
             "name": "from",
             "in": "query",
             "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -210,7 +210,7 @@
             "name": "to",
             "in": "query",
             "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -230,7 +230,7 @@
           "400": {
             "description": "Bornes manquantes ou invalides",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -284,7 +284,7 @@
           "400": {
             "description": "Méthode sans table de facteurs",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -369,7 +369,7 @@
           "400": {
             "description": "Paramètre invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -391,7 +391,7 @@
             "name": "from",
             "in": "query",
             "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -400,7 +400,7 @@
             "name": "to",
             "in": "query",
             "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -449,7 +449,7 @@
           "400": {
             "description": "Paramètre invalide ou fenêtre > 366 jours",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -531,7 +531,7 @@
           "400": {
             "description": "Paramètre invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -541,7 +541,7 @@
           "404": {
             "description": "Historique insuffisant pour prévoir",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -680,7 +680,7 @@
           "400": {
             "description": "Paramètre invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -690,7 +690,7 @@
           "404": {
             "description": "Série insuffisante pour déterminer un créneau",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -700,7 +700,7 @@
           "503": {
             "description": "Overlay d'éligibilité demandé mais non câblé",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -762,7 +762,7 @@
           "400": {
             "description": "Région ou méthodologie invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -772,7 +772,7 @@
           "404": {
             "description": "Aucune donnée",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -794,7 +794,7 @@
             "name": "from",
             "in": "query",
             "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -803,7 +803,7 @@
             "name": "to",
             "in": "query",
             "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -861,7 +861,7 @@
           "400": {
             "description": "Paramètre invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -871,7 +871,7 @@
           "404": {
             "description": "Aucune donnée sur l'intervalle",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -917,7 +917,7 @@
           "400": {
             "description": "Région invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1000,7 +1000,7 @@
           "400": {
             "description": "Région ou méthodologie invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1010,7 +1010,7 @@
           "404": {
             "description": "Aucune donnée / mix indisponible",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1053,7 +1053,7 @@
           "400": {
             "description": "Région non nationale",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1063,7 +1063,7 @@
           "404": {
             "description": "Aucun mix ou prix spot disponible",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1085,7 +1085,7 @@
             "name": "from",
             "in": "query",
             "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -1094,7 +1094,7 @@
             "name": "to",
             "in": "query",
             "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -1123,7 +1123,7 @@
           "400": {
             "description": "Bornes manquantes/invalides ou région non nationale",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1154,7 +1154,7 @@
           "404": {
             "description": "Aucune météo disponible",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1164,7 +1164,7 @@
           "503": {
             "description": "Modèle renouvelable non calibré",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1272,7 +1272,7 @@
           "400": {
             "description": "Paramètre invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1282,7 +1282,7 @@
           "404": {
             "description": "Série insuffisante",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1337,7 +1337,7 @@
           {
             "name": "count",
             "in": "query",
-            "description": "Nombre de créneaux les moins intenses à retourner. Requis (1..=horizon).",
+            "description": "Nombre de créneaux les moins intenses à retourner. Requis, doit être > 0.\nSi `count` dépasse le nombre de créneaux disponibles sur l'horizon (pas une\nerreur : cf. `lowest_slots_caps_at_series_length` dans le core), la réponse\nest plafonnée silencieusement — le champ `count` de la réponse reflète alors\nle nombre réellement renvoyé, pas celui demandé.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1368,7 +1368,7 @@
           "400": {
             "description": "Paramètre invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1441,7 +1441,7 @@
           "404": {
             "description": "Aucune donnée météo disponible",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1463,7 +1463,7 @@
             "name": "from",
             "in": "query",
             "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -1472,7 +1472,7 @@
             "name": "to",
             "in": "query",
             "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -1492,7 +1492,7 @@
           "400": {
             "description": "Bornes manquantes ou invalides",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1523,7 +1523,7 @@
           "401": {
             "description": "Clé API requise/inconnue",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1562,7 +1562,7 @@
           "400": {
             "description": "Paramètre invalide ou URL refusée (anti-SSRF)",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1572,7 +1572,7 @@
           "401": {
             "description": "Clé API requise/inconnue",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1607,7 +1607,7 @@
           "401": {
             "description": "Clé API requise/inconnue",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1617,7 +1617,7 @@
           "404": {
             "description": "Abonnement introuvable",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }

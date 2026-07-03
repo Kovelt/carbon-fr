@@ -44,14 +44,10 @@ impl Period {
     fn expand(&self) -> Result<Vec<(OffsetDateTime, f64)>, EntsoeError> {
         let start = parse_instant(&self.time_interval.start)?;
         let step = parse_resolution_minutes(&self.resolution)?;
-        Ok(self
-            .points
+        self.points
             .iter()
-            .map(|p| {
-                let at = start + time::Duration::minutes((p.position as i64 - 1) * step);
-                (at, p.quantity)
-            })
-            .collect())
+            .map(|p| Ok((expand_position(start, step, p.position)?, p.quantity)))
+            .collect()
     }
 }
 
@@ -139,15 +135,31 @@ impl PricePeriod {
     fn expand(&self) -> Result<Vec<(OffsetDateTime, f64)>, EntsoeError> {
         let start = parse_instant(&self.time_interval.start)?;
         let step = parse_resolution_minutes(&self.resolution)?;
-        Ok(self
-            .points
+        self.points
             .iter()
-            .map(|p| {
-                let at = start + time::Duration::minutes((p.position as i64 - 1) * step);
-                (at, p.amount)
-            })
-            .collect())
+            .map(|p| Ok((expand_position(start, step, p.position)?, p.amount)))
+            .collect()
     }
+}
+
+/// Décale `start` de `(position − 1) × step` minutes **sans paniquer** en cas de
+/// dépassement : `position` vient du XML ENTSO-E, non borné (audit F14). Un point
+/// malformé/hostile (`position` proche de `u32::MAX`) produirait un décalage de
+/// centaines de milliers d'années → `start + Duration` panique et tue le poller.
+/// On propage une `EntsoeError::Parse` à la place (échec par source, non
+/// bloquant, comme partout ailleurs).
+fn expand_position(
+    start: OffsetDateTime,
+    step_minutes: i64,
+    position: u32,
+) -> Result<OffsetDateTime, EntsoeError> {
+    let offset_minutes = i64::from(position)
+        .checked_sub(1)
+        .and_then(|n| n.checked_mul(step_minutes))
+        .ok_or_else(|| EntsoeError::Parse(format!("position hors bornes : {position}")))?;
+    start
+        .checked_add(time::Duration::minutes(offset_minutes))
+        .ok_or_else(|| EntsoeError::Parse(format!("horodatage hors bornes (position {position})")))
 }
 
 /// `TimeSeries` d'un document de prix day-ahead (`Publication_MarketDocument`).
@@ -238,10 +250,12 @@ impl GenerationDocument {
 /// Parse un horodatage ENTSO-E (`yyyy-MM-ddTHH:mmZ`, parfois avec secondes).
 fn parse_instant(raw: &str) -> Result<OffsetDateTime, EntsoeError> {
     // ENTSO-E omet souvent les secondes : on les rétablit pour RFC 3339.
-    let normalised = if raw.len() == 17 && raw.ends_with('Z') {
-        format!("{}:00Z", &raw[..16])
-    } else {
-        raw.to_string()
+    // `.get(..16)` plutôt que l'indexation `raw[..16]` : défense en profondeur
+    // contre un slice sur une frontière non-UTF-8 (audit F14) — `None` propagé
+    // en erreur au lieu de paniquer.
+    let normalised = match raw.get(..16) {
+        Some(head) if raw.len() == 17 && raw.ends_with('Z') => format!("{head}:00Z"),
+        _ => raw.to_string(),
     };
     OffsetDateTime::parse(&normalised, &Rfc3339)
         .map_err(|_| EntsoeError::Parse(format!("horodatage invalide : {raw}")))
@@ -362,6 +376,59 @@ mod tests {
         // Deux directions dans l'exemple (en requête réelle, une seule par appel).
         assert_eq!(series.get(&datetime!(2013-12-18 23:00 UTC)), Some(&100.0));
         assert_eq!(series.get(&datetime!(2013-12-18 22:00 UTC)), Some(&10.0));
+    }
+
+    #[test]
+    fn expand_position_rejects_overflow_without_panic() {
+        // F14 : `position` non bornée venant du XML.
+        let start = datetime!(2024-01-01 00:00 UTC);
+        assert!(matches!(
+            expand_position(start, 60, u32::MAX),
+            Err(EntsoeError::Parse(_))
+        ));
+        // Non-régression du cas nominal.
+        assert_eq!(expand_position(start, 60, 1).unwrap(), start);
+        assert_eq!(
+            expand_position(start, 15, 5).unwrap(),
+            datetime!(2024-01-01 01:00 UTC)
+        );
+    }
+
+    #[test]
+    fn huge_position_in_generation_errors_instead_of_panicking() {
+        // F14 : un XML malformé/hostile ne doit jamais paniquer le poller.
+        let xml = r#"<GL_MarketDocument>
+          <TimeSeries>
+            <inBiddingZone_Domain.mRID>10YFR-RTE------C</inBiddingZone_Domain.mRID>
+            <MktPSRType><psrType>B14</psrType></MktPSRType>
+            <Period>
+              <timeInterval><start>2024-01-01T00:00Z</start><end>2024-01-01T01:00Z</end></timeInterval>
+              <resolution>PT60M</resolution>
+              <Point><position>4294967295</position><quantity>5000</quantity></Point>
+            </Period>
+          </TimeSeries>
+        </GL_MarketDocument>"#;
+        let doc: GenerationDocument = quick_xml::de::from_str(xml).unwrap();
+        assert!(matches!(doc.mix_by_instant(), Err(EntsoeError::Parse(_))));
+    }
+
+    #[test]
+    fn huge_position_in_price_errors_instead_of_panicking() {
+        // F14 : même motif dupliqué côté prix day-ahead.
+        let xml = r#"<?xml version="1.0"?>
+<Publication_MarketDocument xmlns="urn:iec62325.351:tc57wg16:451-3:publicationdocument:7:0">
+  <TimeSeries>
+    <in_Domain.mRID codingScheme="A01">10YFR-RTE------C</in_Domain.mRID>
+    <out_Domain.mRID codingScheme="A01">10YFR-RTE------C</out_Domain.mRID>
+    <Period>
+      <timeInterval><start>2024-01-01T00:00Z</start><end>2024-01-01T02:00Z</end></timeInterval>
+      <resolution>PT60M</resolution>
+      <Point><position>4294967295</position><price.amount>42.5</price.amount></Point>
+    </Period>
+  </TimeSeries>
+</Publication_MarketDocument>"#;
+        let doc: DayAheadPriceDocument = quick_xml::de::from_str(xml).unwrap();
+        assert!(matches!(doc.price_series(), Err(EntsoeError::Parse(_))));
     }
 
     #[test]

@@ -217,6 +217,7 @@ dependencies = [
  "carbonfr-adapter-forecast",
  "carbonfr-core",
  "carbonfr-eligibility",
+ "rand 0.9.4",
  "serde",
  "serde_json",
  "sha2",

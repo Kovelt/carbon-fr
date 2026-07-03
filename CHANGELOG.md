@@ -8,6 +8,118 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+Remédiation des **24 constats restants** de l'audit du 2026-07-02 (moyens F07–F19,
+bas F20–F31 ; le critique F01 et les hauts F03–F06 sont sortis en `v0.4.3`).
+Aucun changement d'API cassant ; le contrat OpenAPI est enrichi (media-types
+d'erreur, paramètres requis).
+
+### Sécurité
+
+- **Quota d'abonnements webhook rendu atomique** (audit F22). Le contrôle
+  « ≤ 50 abonnements par clé » était un check-then-act (lecture puis insertion
+  séparées) contournable par des créations concurrentes. Le comptage et
+  l'insertion se font désormais dans une transaction avec verrou consultatif
+  Postgres scindé par propriétaire (`pg_advisory_xact_lock`) — plus de fenêtre
+  TOCTOU. Le port `SubscriptionRepository::create` porte le plafond et renvoie un
+  booléen (inséré / quota atteint).
+- **Fuite temporelle à l'entraînement GBDT corrigée** (audit F11). La sélection
+  de la météo pour l'entraînement gardait le `run_at` le plus récent sur toute la
+  fenêtre, sans le borner par l'origine de chaque exemple — une prévision publiée
+  *après* l'origine pouvait fuiter dans les features. La sélection se fait
+  désormais **par origine** (`run_at ≤ origine`), comme à l'inférence. Sans effet
+  sur les modèles servis (`gbdt@1` ne battait pas `climatology@1`), mais assainit
+  toute itération ML future.
+
+### Robustesse
+
+- **XML ENTSO-E malformé ne fait plus paniquer le poller** (audit F14). Un
+  `<position>` anormalement grand ou un horodatage tronqué provoquait un panic
+  (dépassement `OffsetDateTime + Duration`, slice non-UTF-8) qui tuait le
+  processus — contraire au principe « échec par source non bloquant ». Le calcul
+  passe par `checked_add`/`checked_mul` → `EntsoeError::Parse`, et le slicing par
+  `str::get`. Motif corrigé sur les deux chemins (génération **et** prix).
+- **`statement_timeout` Postgres** (audit F09). Le pool ne bornait pas la durée
+  d'exécution côté serveur : une requête lente ou une session
+  idle-in-transaction pouvait monopoliser une connexion indéfiniment. Ajout de
+  `statement_timeout` + `idle_in_transaction_session_timeout` (défaut 30 s,
+  `CARBONFR_DB_STATEMENT_TIMEOUT_MS`).
+- **Le quota (opt-in) n'engloutit plus `/metrics`, `/health`, `/health/ready`**
+  (audit F07). Quand `CARBONFR_RATELIMIT_ENABLED=1`, le middleware s'appliquait à
+  toutes les routes, dont les sondes et le scrape Prometheus (429 possible → panne
+  auto-infligée). Le middleware ne s'applique plus qu'au contrat `/v1`.
+
+### Corrigé
+
+- **`greenest_window_before` : un créneau unique avant l'échéance est renvoyé**
+  (audit F10). Une échéance très proche ne laissant qu'un créneau candidat rendait
+  `404 « série insuffisante »` au lieu de ce créneau — le cas d'usage le plus
+  critique de `/v1/schedule`.
+- **Webhooks : région non-nationale refusée explicitement** (audit F08). Le
+  watcher ne surveille que le national ; un abonnement régional était accepté mais
+  ne se déclenchait jamais silencieusement. `POST /v1/webhooks` renvoie désormais
+  400 pour toute région ≠ nationale.
+- **`/v1/mix` valide `version`** (audit F12). Le paramètre `version` documenté
+  était ignoré : `version=999` renvoyait 200, `acv-ademe&version=2` servait
+  silencieusement le mix `@1`. Les deux renvoient désormais 400 (`/v1/mix` ne sert
+  que le mix de production).
+- **Méthodologie inconnue → 400** (audit F30). `?methodology=rte-driect` (faute de
+  frappe) produisait un `404 no_data` trompeur ; c'est désormais un 400
+  « méthodologie inconnue », symétrique au traitement des régions.
+- **Intensité consommation indéfinie → `None`** (audit F25). Un cas de transit net
+  négatif était clampé à `0 gCO₂eq/kWh` (trompeur) au lieu d'être rapporté absent,
+  contrairement à la méthode production-based.
+- **`solar_capacity_factor` borné à [0, 1]** (audit F28). Une irradiance > 1000
+  W/m² (réflexion de bord de nuage) pouvait dépasser l'invariant documenté.
+- **Fusion champ-à-champ dans `upsert_loads`** (audit F24). Deux `LoadRecord`
+  complémentaires (réalisée seule + prévue seule) du même lot s'écrasaient au lieu
+  de fusionner ; défense contre une future source livrant des lots mixtes.
+
+### Contrat & API
+
+- **Toutes les erreurs de l'OpenAPI en `application/problem+json`** (audit F13).
+  Les 34 réponses d'erreur documentaient `application/json` alors que le serveur
+  émet bien `application/problem+json` (RFC 9457).
+- **Erreurs de désérialisation de paramètres en Problem Details** (audit F15). Une
+  valeur non coercible (`?horizon_hours=abc`) renvoyait un `400 text/plain` brut ;
+  un extracteur `ValidatedQuery` produit désormais un Problem Details `bad_request`.
+- **404 route inconnue en Problem Details** (audit F16). Un chemin inexistant
+  recevait le 404 vide d'axum (sans `Content-Type`) ; un fallback renvoie un
+  Problem Details `not_found`.
+- **`WWW-Authenticate` sur les 401** (audit F21, RFC 6750).
+- **`from`/`to` marqués requis dans l'OpenAPI** (audit F26) : ils étaient
+  documentés optionnels alors que leur absence donne un 400.
+- **Description de `count` clarifiée** sur `/v1/schedule/slots` (audit F27) : le
+  plafonnement silencieux au nombre de créneaux disponibles est désormais
+  documenté.
+
+### Performance
+
+- **`/v1/intensity/stats` (acv-ademe@2) : dérivation calculée une seule fois**
+  (audit F18). Le résumé et la série agrégée refaisaient chacun toute la lecture +
+  dérivation ; l'historique est désormais dérivé une fois puis réutilisé
+  (`summarize`/`bucketize`).
+- **`/v1/weather*` : déduplication déléguée à Postgres** (audit F19). La lecture
+  ramenait tout l'historique des runs par échéance avant de le dédupliquer en
+  Rust ; une nouvelle méthode `weather_latest` (`DISTINCT ON (valid_at)`) ne
+  transfère qu'une ligne par échéance. `weather_range` (historique brut) reste
+  intact pour l'anti-fuite GBDT.
+- **`record_visit` ne recalcule plus un `COUNT(DISTINCT)` complet** à chaque visite
+  déjà comptée (audit F31) : cache mémoire par processus, recalcul seulement à
+  l'insertion effective.
+
+### Durcissement
+
+- **Jeton webhook via CSPRNG userspace** (audit F29) : `random_hex` n'ouvre plus
+  `/dev/urandom` en I/O synchrone sur le runtime Tokio (`rand::rng()`).
+
+### Documentation
+
+- **Invariant de version du port `IntensityRepository`** (audit F17) : les lectures
+  ne filtrent que sur `methodology_id` ; l'invariant « au plus une version
+  persistée par id » (vrai aujourd'hui) est désormais explicite dans le trait.
+- **Compromis fenêtre-fixe du rate-limit documenté** (audit F20) : garde de
+  dégradation anti-abus, pas un SLA strict (comptage exact = futur `UsageMeter`).
+
 ## [0.4.3] - 2026-07-03
 
 Release patch de sécurité : corrige le contournement SSRF critique du filtre

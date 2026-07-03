@@ -8,6 +8,38 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté
+
+- **Part renouvelable prévue pour l'éligibilité rfnbo** (`share-clim@1`,
+  [ADR-0028](docs/adr/0028-prevision-part-renouvelable-eligibilite.md), chantier
+  H4 de la roadmap hydrogène) — le pilier `renewable-share` de
+  `greenest-window?eligibility=rfnbo` était indéterminé sur 100 % des créneaux
+  futurs (constat C4 de la revue de neutralité) ; il est désormais servi par une
+  climatologie horaire-de-semaine de la part renouvelable, corrigée d'anomalie
+  ancrée sur le nowcast, avec **intervalle calibré par quantiles de résidus par
+  horizon** : verdict ferme seulement hors recouvrement du seuil 0,90 (règle
+  symétrique de l'intervalle bas-carbone), `Indeterminate` sinon, **jamais** de
+  prévision au-delà de l'horizon calibré (72 h) ni sans bandes calibrées.
+  - **GATE de backtest franchi** (sous-commande `backtest-share`, walk-forward,
+    vérité dérivée du mix) sur deux fenêtres indépendantes : RMSE 0,0410 vs
+    0,0435 (persistance) sur mars-avril 2026 et 0,0595 vs 0,0640 sur
+    oct.-nov. 2025, **0 faux verdict ferme sur 450**.
+  - Champs **additifs** : `provenance` (`observed`/`forecast`) servi sur **tous**
+    les piliers tranchés (parité de divulgation — l'intensité de l'overlay est
+    toujours une prévision, le prix day-ahead une donnée publiée),
+    `value_lower`/`value_upper` sur le signal de part prévue, `reason` sur tout
+    signal indéterminé (`missing-data`/`beyond-calibrated-horizon`/
+    `threshold-within-interval`/`surplus-not-established`), `share_model` sur
+    l'overlay ; disclaimer réécrit (provenance de chaque pilier explicitée, sans
+    sur-promesse d'horizon). SDK TypeScript et OpenAPI à jour.
+  - **GATE de neutralité re-joué** (engagement de la revue) : RED étroit
+    (4 constats F1/F3/F6/F12) → 4 correctifs → **GREEN** — revue §6 de
+    [`docs/adr/0026-revue-neutralite.md`](docs/adr/0026-revue-neutralite.md).
+  - Calibration au démarrage : `CARBONFR_SHARE_CALIBRATE_WEEKS` (défaut 8,
+    `0` = off → comportement précédent) et `CARBONFR_SHARE_CALIBRATE_TO`
+    (reproductibilité). +1 requête SQL batch par appel `?eligibility=rfnbo`
+    (motif F05, garanti par test anti-N+1).
+
 ## [0.4.5] - 2026-07-03
 
 GATE de neutralité de la couche « éligibilité électrolyseur » (ADR-0026) :

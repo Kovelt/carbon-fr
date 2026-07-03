@@ -153,6 +153,26 @@ export interface GreenestWindowResponse {
 
 /** Verdict d'un pilier d'éligibilité sur un créneau. */
 export interface EligibilitySignal {
+  /**
+   * Provenance de `value` : `observed` (donnée mesurée/publiée — part au
+   * nowcast, prix day-ahead) ou `forecast` (prévision — part `share-clim@1`
+   * au-delà du nowcast ; intensité toujours, elle vient du modèle de la
+   * réponse). Absent sur un signal indéterminé.
+   */
+  provenance?: "observed" | "forecast";
+  /**
+   * Pourquoi le pilier n'a pas tranché (`verdict: "indeterminate"`) :
+   * `missing-data`, `beyond-calibrated-horizon`, `threshold-within-interval`,
+   * `surplus-not-established`.
+   */
+  reason?: string;
+  /**
+   * Bornes de l'intervalle de `value` quand le signal est une prévision de
+   * part renouvelable — absentes pour l'observé et pour les autres piliers
+   * (l'intervalle d'intensité vit au niveau du créneau).
+   */
+  value_lower?: number;
+  value_upper?: number;
   /** `renewable-share`, `surplus-price` ou `low-carbon-intensity`. */
   pillar: string;
   /** `pass`, `fail` ou `indeterminate` (donnée manquante, jamais extrapolée). */
@@ -202,6 +222,12 @@ export interface EligibilityBody {
   overridden: boolean;
   /** Zone de dépôt : toujours `FR` (jamais une sous-région). */
   bidding_zone: string;
+  /**
+   * Identité du modèle de part renouvelable **prévue** (`share-clim@1`,
+   * ADR-0028) — présent seulement si au moins un créneau porte une part de
+   * provenance `forecast`.
+   */
+  share_model?: string;
   disclaimer: string;
   /** `true` si tous les créneaux de la fenêtre verte retenue sont éligibles. */
   window_eligible: boolean;

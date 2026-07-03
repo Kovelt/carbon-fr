@@ -70,4 +70,30 @@ Tous additifs : aucune rupture de contrat (`basis` reste `string` côté SDK ; l
 - **C4 (critical, réfuté 2/3)** — « `renewable-share` indéterminé à 100 % sur l'endpoint prévisionnel » : fait exact, mais c'est le choix **documenté** D4 (part renouvelable nowcast-only, jamais extrapolée), divulgué dans le disclaimer, et d'effet quasi nul sur les verdicts (disjonction + Article 4 ≈ jamais atteint). Le chantier qui le lèvera vraiment est **`MixForecast`** (roadmap H4) — cette revue en renforce la justification.
 - **C6 (critical, réfuté 3/3)** — « pas de champ `indeterminate` par créneau » : l'information est déjà servie sans perte (`signals[].verdict`, `count_indeterminate`) ; un booléen de plus serait redondant.
 - **Datation figée** « au 2026-07-03 » dans le `legal_basis` : choix assumé (fait daté vérifiable) mais **dette documentaire consciente** — si la consultation nucléaire est lancée, le texte doit être mis à jour. Couvert par le signal de veille n°3 de [`docs/roadmap-hydrogene.md`](../roadmap-hydrogene.md).
-- **Re-jeu obligatoire** : à l'activation de `rfnbo:2026-revision` (roadmap H3), à l'arrivée de `MixForecast` (H4), ou à toute retouche des chaînes servies.
+- **Re-jeu obligatoire** : à l'activation de `rfnbo:2026-revision` (roadmap H3), à l'arrivée de `MixForecast` (H4 — ✅ re-joué, cf. §6), ou à toute retouche des chaînes servies.
+
+---
+
+## 6. Re-jeu du 2026-07-03 — arrivée de `share-clim@1` (ADR-0028, roadmap H4)
+
+**Évalué** : la sortie **réellement servie** par le code candidat (serveur réel + base réelle, calibration reproductible `CARBONFR_SHARE_CALIBRATE_TO`) — parts renouvelables **prévues** sur l'horizon, provenance, intervalles, `share_model` — comparée au comportement précédent. **Même méthode** (6 critiques → consolidation → 3 réfutateurs par constat).
+
+**Passage 1 (RED étroit)** : 12 constats consolidés, 8 tués en contre-instruction — dont les charges les plus fortes des deux bords : la charge anti-nucléaire (« 0/96 éligible rfnbo vs 96/96 low-carbon = biais structurel ») réfutée car ce contraste est le mix électrique français lui-même, servi en transparence totale, et les verdicts globaux ne bougent pas du fait de `share-clim@1` (qui n'émet jamais de `pass` en pratique) ; la charge « fail ferme d'une prévision = sur-affirmation » réfutée car c'est la discipline D17 déjà servie par low-carbon (mêmes bandes q=0,1). Survivent **4 constats**, tous confirmés à l'unanimité ou à 2/3 :
+
+- **F1 (critical, symétrie/provenance)** — la divulgation de provenance n'existait que sur `renewable-share`, avec un commentaire **factuellement faux** (« les autres piliers ne servent que de l'observé ») alors que l'intensité du pilier low-carbon est aussi une prévision (`ForecastPoint`) sur tout créneau futur. rfnbo paraissait « scientifiquement audité », low-carbon « affirmation brute » — inversion de rigueur perçue.
+- **F3 (critical, méthodologique)** — la comparaison avant/après citée au dossier du re-jeu (39→0 éligibles) était **confondue** par la dérive du pilier prix entre les deux captures (la capture « avant » venait de la prod avec données ENTSO-E ; la capture « après » d'un serveur local sans prix spot). Le delta ne prouve **rien** sur `share-clim@1`. Le vrai A/B isolé est le test d'intégration `greenest_window_eligibility_without_share_model_is_unchanged` (même instant, avec/sans modèle) : les verdicts globaux sont identiques, seul le signal `renewable-share` gagne de l'information.
+- **F6 (major, symétrie)** — le disclaimer accordait à `renewable-share` une garantie (« jamais extrapolé au-delà de l'horizon calibré ») que l'intensité n'a pas (repli silencieux sur dispersion non calibrée).
+- **F12 (minor, provenance)** — `Indeterminate` sans code de raison : hors-horizon, donnée manquante et prix-au-dessus-du-seuil indiscernables.
+
+**Correctifs (P4–P7, 2026-07-03)** :
+
+| # | Constat | Correctif |
+|---|---|---|
+| P4 | F1 | Parité de divulgation : `provenance` servie sur **tous** les piliers tranchés (`low-carbon-intensity` → `forecast` — l'intensité vient toujours du modèle de la réponse ; `surplus-price` → `observed` — day-ahead publié) ; commentaires sur-affirmants corrigés (`verdict.rs::provenance`, doc DTO) |
+| P5 | F6 | Disclaimer réécrit : provenance de **chaque** pilier explicitée, intervalle d'intensité qualifié (« bandes calibrées, repli dispersion par créneau à froid »), garantie d'horizon calibré scopée à `share-clim@1` |
+| P6 | F12 | `IndeterminateReason` versionné servi avec chaque signal indéterminé (`missing-data` / `beyond-calibrated-horizon` / `threshold-within-interval` / `surplus-not-established`) — champ additif |
+| P7 | F3 | La présente section neutralise la comparaison confondue : ne **jamais** citer le delta 39→0 comme effet d'ADR-0028 ; la preuve d'invariance des verdicts est le test A/B au même instant |
+
+**Passage 2** : re-test par constat sur le code corrigé et la sortie re-servie (`reason: beyond-calibrated-horizon` observé à la frontière 72 h, `provenance: forecast` sur le pilier intensité, disclaimer conforme). **Verdict : GREEN.**
+
+Constats réfutés notables du re-jeu : « `surplus-price` ne fail jamais = asymétrie intra-rfnbo » (choix documenté EUA, désormais explicité par `surplus-not-established`) ; « le 0-faux-verdict du gate est vacuement vrai » (exact — le seuil n'est jamais approché en FR — mais l'ADR-0028 §7 le dit lui-même : la revendication est correctement qualifiée).

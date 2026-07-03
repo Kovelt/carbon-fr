@@ -1139,6 +1139,49 @@ fn build_with_eligibility(repo: FakeRepo) -> axum::Router {
     router(AppState::new(repo), forecast, StreamState::new(updates))
 }
 
+/// Monte le routeur avec l'overlay d'éligibilité ET `share-clim@1` câblés
+/// (part renouvelable prévue, ADR-0028) — bandes dégénérées sur 72 h.
+fn build_with_share_forecast(repo: FakeRepo) -> axum::Router {
+    let config = carbonfr_adapter_http::ShareForecastConfig {
+        bands: carbonfr_core::domain::HorizonBands::from_residuals(
+            Duration::minutes(15),
+            &vec![Vec::new(); 289],
+            0.1,
+        ),
+        params: carbonfr_core::domain::ClimatologyParams {
+            step: Duration::minutes(15),
+            tau: Duration::days(14),
+        },
+        lookback: Duration::days(21),
+        max_horizon: Duration::hours(72),
+    };
+    let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1")
+        .with_eligibility(Arc::new(EligibilityRepoAdapter(repo.clone())))
+        .with_share_forecast(Arc::new(config));
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    router(AppState::new(repo), forecast, StreamState::new(updates))
+}
+
+/// Mesure nationale avec mix à 25 % renouvelable (250 MW EnR / 1000 MW).
+fn quarter_mix_point(at: OffsetDateTime, g: f64) -> Measurement {
+    Measurement {
+        mix: Some(GenerationMix {
+            nucleaire: 750.0,
+            gaz: 0.0,
+            charbon: 0.0,
+            fioul: 0.0,
+            hydraulique: 0.0,
+            eolien: 250.0,
+            solaire: 0.0,
+            bioenergies: 0.0,
+            pompage: 0.0,
+            echanges: 0.0,
+            thermique: None,
+        }),
+        ..point(at, g)
+    }
+}
+
 /// Série dense bas-carbone (intensité ~20) sur 14 jours, pour la prévision.
 fn low_carbon_series() -> Vec<Measurement> {
     let from = forecast_from();
@@ -1459,6 +1502,75 @@ async fn greenest_window_eligibility_overridden_price_basis_is_user_override() {
         .find(|s| s["pillar"] == "renewable-share")
         .expect("signal renewable-share");
     assert_eq!(renew["basis"], "regulatory");
+}
+
+#[tokio::test]
+async fn greenest_window_eligibility_rfnbo_serves_forecast_share_with_provenance() {
+    // ADR-0028 : avec share-clim@1 câblé, les créneaux futurs portent une part
+    // renouvelable PRÉVUE (provenance `forecast`, intervalle, share_model annoncé)
+    // — verdict ferme `fail` ici (part ~0,25 très loin du seuil 0,90).
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=21 * 96)
+        .map(|i: i32| quarter_mix_point(from - step * i, 60.0))
+        .collect();
+    let response = get(
+        build_with_share_forecast(FakeRepo {
+            // L'ancre nowcast (latest) porte le même mix que l'historique.
+            measurement: Some(quarter_mix_point(from - step, 60.0)),
+            series,
+            ..Default::default()
+        }),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&eligibility=rfnbo",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let elig = &json_body(response).await["eligibility"];
+    assert_eq!(elig["share_model"], "share-clim@1");
+    let signals = elig["slots"][0]["signals"].as_array().unwrap();
+    let share = signals
+        .iter()
+        .find(|s| s["pillar"] == "renewable-share")
+        .expect("signal renewable-share");
+    assert_eq!(share["provenance"], "forecast");
+    assert_eq!(share["verdict"], "fail");
+    assert_eq!(share["basis"], "regulatory");
+    let value = share["value"].as_f64().unwrap();
+    assert!(
+        (value - 0.25).abs() < 0.02,
+        "part prévue ~0,25, obtenu {value}"
+    );
+    assert!(share["value_lower"].as_f64().is_some());
+    assert!(share["value_upper"].as_f64().is_some());
+}
+
+#[tokio::test]
+async fn greenest_window_eligibility_without_share_model_is_unchanged() {
+    // Sans share-clim@1 câblé : comportement d'avant ADR-0028 — part future
+    // indéterminée, pas de champ share_model.
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=21 * 96)
+        .map(|i: i32| quarter_mix_point(from - step * i, 60.0))
+        .collect();
+    let response = get(
+        build_with_eligibility(FakeRepo {
+            measurement: Some(quarter_mix_point(from - step, 60.0)),
+            series,
+            ..Default::default()
+        }),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&eligibility=rfnbo",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let elig = &json_body(response).await["eligibility"];
+    assert!(elig["share_model"].is_null());
+    let signals = elig["slots"][0]["signals"].as_array().unwrap();
+    let share = signals
+        .iter()
+        .find(|s| s["pillar"] == "renewable-share")
+        .expect("signal renewable-share");
+    assert_eq!(share["verdict"], "indeterminate");
 }
 
 #[tokio::test]

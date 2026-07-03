@@ -37,6 +37,8 @@
 //! | `CARBONFR_BACKTEST_BAND_QUANTILE` | `0.1`     | `backtest-bands` : quantile de bord |
 //! | `CARBONFR_FORECAST_CALIBRATE_WEEKS` | `8`     | auto-calibration au démarrage (0 = off) |
 //! | `CARBONFR_RENEWABLE_CALIBRATE_WEEKS` | `52`   | calibration `/v1/renewable` au démarrage (0 = off) |
+//! | `CARBONFR_SHARE_CALIBRATE_WEEKS` | `8`        | bandes `share-clim@1` au démarrage (0 = off, ADR-0028) |
+//! | `CARBONFR_SHARE_CALIBRATE_TO` | maintenant    | fin de calibration `share-clim@1` (RFC 3339, repro/dev) |
 //! | `CARBONFR_TRAIN_FROM`/`_TO`  | 120 j av. test | `train` : période d'entraînement   |
 //! | `CARBONFR_TRAIN_ORIGIN_STEP_HOURS` | `6`      | `train` : espacement des origines  |
 //! | `CARBONFR_GBDT_MODEL`        | `gbdt.model`   | `train` : chemin de l'artefact GBDT |
@@ -62,8 +64,8 @@ use carbonfr_adapter_gbdt::{
     GbdtForecaster, GbdtHyperParams, build_training_examples, train_model,
 };
 use carbonfr_adapter_http::{
-    AppState, AuthConfig, AuthState, EligibilityRepoAdapter, ForecastState, StreamState, enforce,
-    key_fingerprint, router,
+    AppState, AuthConfig, AuthState, EligibilityRepoAdapter, ForecastState, ShareForecastConfig,
+    StreamState, enforce, key_fingerprint, router,
 };
 use carbonfr_adapter_meteo::OpenMeteoClient;
 use carbonfr_adapter_odre::OdreClient;
@@ -117,11 +119,12 @@ async fn main() -> anyhow::Result<()> {
         Some("backtest-renewable") => run_backtest_renewable().await,
         Some("analyze-renewable-signal") => run_analyze_renewable_signal().await,
         Some("backtest-bands") => run_backtest_bands().await,
+        Some("backtest-share") => run_backtest_share().await,
         Some("train") => run_train().await,
         Some("mint-key") => run_mint_key().await,
         Some(other) => {
             anyhow::bail!(
-                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `backtest-renewable`, `analyze-renewable-signal`, `train`, `mint-key`, ou aucune pour servir l'API)"
+                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `backtest-renewable`, `analyze-renewable-signal`, `backtest-share`, `train`, `mint-key`, ou aucune pour servir l'API)"
             )
         }
     }
@@ -186,6 +189,13 @@ async fn run_server() -> anyhow::Result<()> {
         // Overlay d'éligibilité électrolyseur (ADR-0025/0026) : le repo PostgreSQL
         // fournit le mix nowcast (rte-direct) + le prix spot day-ahead.
         .with_eligibility(std::sync::Arc::new(EligibilityRepoAdapter(repo.clone())));
+    // `share-clim@1` (ADR-0028) : part renouvelable prévue du pilier rfnbo,
+    // seulement si les bandes ont pu être calibrées au démarrage (sinon la part
+    // future reste `Indeterminate` — comportement d'avant ADR-0028, gate oblige).
+    let forecast_state = match build_share_forecast_config(repo.clone()).await {
+        Some(cfg) => forecast_state.with_share_forecast(std::sync::Arc::new(cfg)),
+        None => forecast_state,
+    };
 
     let renewable_model = build_calibrated_renewable_model(repo.clone()).await;
     let mut state = AppState::new(repo.clone())
@@ -584,6 +594,129 @@ async fn run_analyze_renewable_signal() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Backtest + **GATE** de `share-clim@1` (part renouvelable prévue, ADR-0028) :
+/// walk-forward pur, vérité **dérivée** du mix observé (jamais stockée), modèle
+/// vs persistance (MAE/RMSE, global + par horizon), et — avec les bandes
+/// calibrées sur une fenêtre disjointe antérieure — comptage des verdicts fermes
+/// au seuil Article 4 (0,90). **GO** = bat la persistance en RMSE global ET zéro
+/// faux `pass` ferme. Même politique de promotion que `gbdt@1` : pas de GO, pas
+/// de mise en service.
+async fn run_backtest_share() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let params = BacktestParams::from_env()?;
+    anyhow::ensure!(
+        params.region == Region::National,
+        "share-clim@1 est national-only (zone de dépôt FR, ADR-0026)"
+    );
+
+    let lookback = Duration::days(SHARE_LOOKBACK_DAYS);
+    let horizon = Duration::hours(SHARE_MAX_HORIZON_HOURS);
+    let calib_weeks = share_calibrate_weeks()?;
+    anyhow::ensure!(
+        calib_weeks > 0,
+        "CARBONFR_SHARE_CALIBRATE_WEEKS doit être > 0 en backtest"
+    );
+    let calib_start = params.test.start() - Duration::days(calib_weeks * 7);
+
+    info!(
+        model = carbonfr_eligibility::SHARE_FORECAST_MODEL,
+        from = %params.test.start(), to = %params.test.end(),
+        calib_weeks, "backtest share-clim@1 démarré (vérité dérivée du mix)"
+    );
+
+    // Un SEUL chargement d'historique couvrant calibration + test + horizon.
+    let full = TimeRange::new(
+        calib_start - lookback,
+        params.test.end() + horizon + params.step,
+    )
+    .context("fenêtre d'historique invalide")?;
+    let history = repo
+        .range(Region::National, &params.methodology, full)
+        .await
+        .context("lecture de l'historique de mix")?;
+    anyhow::ensure!(
+        !history.is_empty(),
+        "aucun historique de mix sur la fenêtre demandée"
+    );
+
+    let clim_params = ClimatologyParams {
+        step: params.step,
+        tau: Duration::days(14),
+    };
+    // Bandes calibrées sur une fenêtre STRICTEMENT antérieure au test (anti-fuite).
+    let calib = TimeRange::new(calib_start, params.test.start())
+        .context("fenêtre de calibration invalide")?;
+    let bands = carbonfr_eligibility::calibrate_share_bands(
+        &history,
+        calib,
+        lookback,
+        params.origin_step,
+        clim_params,
+        horizon,
+        0.1,
+    );
+    if bands.is_none() {
+        warn!("bandes non calibrées (fenêtre de calibration vide ?) — verdicts fermes non mesurés");
+    }
+
+    let checkpoints = [
+        Duration::hours(1),
+        Duration::hours(6),
+        Duration::hours(24),
+        Duration::hours(72),
+    ];
+    let report = carbonfr_eligibility::backtest_share(
+        &history,
+        params.test,
+        lookback,
+        params.origin_step,
+        clim_params,
+        &checkpoints,
+        bands.as_ref(),
+        0.90,
+    )
+    .context("backtest share-clim@1 : série inexploitable")?;
+
+    let pts = |v: f64| (v * 10_000.0).round() / 10_000.0;
+    info!(origins = report.origins, "origines évaluées (walk-forward)");
+    if let (Some(m), Some(p)) = (&report.model, &report.persistence) {
+        info!(
+            model_mae = pts(m.mae),
+            model_rmse = pts(m.rmse),
+            persistence_mae = pts(p.mae),
+            persistence_rmse = pts(p.rmse),
+            n = m.n,
+            "erreur GLOBALE de part renouvelable (fraction 0-1)"
+        );
+    }
+    for h in &report.by_horizon {
+        if let (Some(m), Some(p)) = (&h.model, &h.persistence) {
+            info!(
+                horizon_h = h.horizon.whole_hours(),
+                model_rmse = pts(m.rmse),
+                persistence_rmse = pts(p.rmse),
+                n = m.n,
+                "erreur par horizon"
+            );
+        }
+    }
+    info!(
+        firm_pass = report.firm_pass,
+        false_pass = report.false_pass,
+        firm_fail = report.firm_fail,
+        false_fail = report.false_fail,
+        straddle = report.straddle,
+        "verdicts fermes au seuil 0,90 (bandes calibrées, fenêtre disjointe)"
+    );
+    info!(
+        go = report.passes_gate(),
+        "GATE share-clim@1 : bat la persistance (RMSE global) ET zéro faux pass ?"
+    );
+    Ok(())
+}
+
 /// Backtest de la **dérivation renouvelable** (ADR-0018) : production estimée
 /// depuis la météo vs production réelle, calibrée puis testée hors échantillon,
 /// comparée au baseline « moyenne ». N'est pas une prévision — on mesure d'abord
@@ -826,6 +959,93 @@ fn print_metrics_row(label: &str, metrics: Option<ErrorMetrics>) {
 /// base est lente (gros historique, REFRESH concurrent, pool saturé) ; au-delà,
 /// on démarre quand même en mode non-calibré plutôt que de pendre indéfiniment.
 const CALIBRATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Profondeur de la climatologie de part renouvelable `share-clim@1`
+/// (ADR-0028) : 10 semaines, alignée sur `climatology@1` (N calé, ADR-0009).
+const SHARE_LOOKBACK_DAYS: i64 = 70;
+/// Horizon **calibré** de `share-clim@1` : 72 h (le maximum de
+/// `greenest-window?horizon_hours=`). Au-delà : `Indeterminate`.
+const SHARE_MAX_HORIZON_HOURS: i64 = 72;
+
+/// Fenêtre de calibration des bandes `share-clim@1` (`CARBONFR_SHARE_CALIBRATE_WEEKS`,
+/// défaut 8 sem., `0` = opt-out → part future `Indeterminate` comme avant ADR-0028).
+fn share_calibrate_weeks() -> anyhow::Result<i64> {
+    std::env::var("CARBONFR_SHARE_CALIBRATE_WEEKS")
+        .ok()
+        .map(|raw| raw.parse::<i64>())
+        .transpose()
+        .context("CARBONFR_SHARE_CALIBRATE_WEEKS : entier invalide")
+        .map(|v| v.unwrap_or(8))
+}
+
+/// Calibre les bandes de `share-clim@1` (part renouvelable **prévue** du pilier
+/// `renewable-share`, ADR-0028) au démarrage — walk-forward pur sur l'historique
+/// récent, quantiles de résidus par horizon (ADR-0011 §5). `None` (le pilier
+/// reste `Indeterminate` au-delà du nowcast, comportement d'avant ADR-0028) si
+/// l'historique est trop maigre, `…_WEEKS=0`, ou timeout.
+async fn build_share_forecast_config(repo: PgIntensityRepository) -> Option<ShareForecastConfig> {
+    let weeks = share_calibrate_weeks().ok()?;
+    if weeks <= 0 {
+        return None;
+    }
+    // Fin de la fenêtre de calibration : maintenant par défaut ;
+    // `CARBONFR_SHARE_CALIBRATE_TO` (RFC 3339) pour une calibration reproductible
+    // (dev, self-hosting sur historique figé, re-jeu du GATE de neutralité).
+    let now = parse_rfc3339_env("CARBONFR_SHARE_CALIBRATE_TO")
+        .ok()
+        .flatten()
+        .unwrap_or_else(OffsetDateTime::now_utc);
+    let lookback = Duration::days(SHARE_LOOKBACK_DAYS);
+    let horizon = Duration::hours(SHARE_MAX_HORIZON_HOURS);
+    let params = ClimatologyParams::default();
+    let calib = TimeRange::new(now - Duration::weeks(weeks), now)?;
+    let full = TimeRange::new(calib.start() - lookback, now)?;
+
+    let calibration = async {
+        let history = repo
+            .range(Region::National, "rte-direct", full)
+            .await
+            .ok()?;
+        carbonfr_eligibility::calibrate_share_bands(
+            &history,
+            calib,
+            lookback,
+            Duration::days(1),
+            params,
+            horizon,
+            0.1,
+        )
+    };
+    match tokio::time::timeout(CALIBRATION_TIMEOUT, calibration).await {
+        Ok(Some(bands)) => {
+            info!(
+                weeks,
+                horizons = bands.len(),
+                "bandes share-clim@1 calibrées (part renouvelable prévue, ADR-0028)"
+            );
+            Some(ShareForecastConfig {
+                bands,
+                params,
+                lookback,
+                max_horizon: horizon,
+            })
+        }
+        Ok(None) => {
+            warn!(
+                "calibration share-clim@1 impossible (historique insuffisant) — part renouvelable \
+                 future Indeterminate"
+            );
+            None
+        }
+        Err(_) => {
+            warn!(
+                "calibration share-clim@1 : timeout au démarrage — part renouvelable future \
+                 Indeterminate"
+            );
+            None
+        }
+    }
+}
 
 /// Calibre le modèle de dérivation renouvelable (ADR-0018) sur l'historique
 /// récent au démarrage, pour servir `/v1/renewable`. Fenêtre large par défaut

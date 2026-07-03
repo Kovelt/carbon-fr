@@ -8,6 +8,13 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.6.0] - 2026-07-03
+
+La couche **B-light** d'ADR-0025 : `GET /hydrogene`, carte auto-contenue
+« électrolyseurs × carbone live » — le croisement infra hydrogène × carbone
+temps réel qui n'existe nulle part ailleurs. Hors contrat `/v1`, aucun
+changement d'API.
+
 ### Ajouté
 
 - **Carte « électrolyseurs × carbone live »** (`GET /hydrogene`, couche B-light —

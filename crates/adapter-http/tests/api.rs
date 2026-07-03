@@ -1574,6 +1574,28 @@ async fn greenest_window_eligibility_without_share_model_is_unchanged() {
 }
 
 #[tokio::test]
+async fn hydrogene_page_and_datasets_are_served() {
+    // Couche B-light (ADR-0025/0029) : page + 3 jeux embarqués, hors /v1.
+    let app = build(FakeRepo::default());
+    for (path, content_type) in [
+        ("/hydrogene", "text/html"),
+        ("/hydrogene/sites.json", "application/json"),
+        ("/hydrogene/regions.geojson", "application/geo+json"),
+        ("/hydrogene/pays.geojson", "application/geo+json"),
+    ] {
+        let response = get(app.clone(), path).await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let ct = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        assert!(ct.starts_with(content_type), "{path} : content-type {ct}");
+    }
+}
+
+#[tokio::test]
 async fn greenest_window_eligibility_uses_a_single_forecast_call() {
     // Invariant mono-forecast (ADR-0026 D16) : la fenêtre verte ET l'éligibilité
     // partagent UN SEUL appel forecast().

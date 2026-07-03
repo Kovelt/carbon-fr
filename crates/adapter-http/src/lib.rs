@@ -44,6 +44,7 @@ mod dto;
 mod eligibility_uc;
 mod error;
 mod handlers;
+mod hydrogene;
 
 pub use auth::{AuthConfig, AuthState, enforce, key_fingerprint};
 pub use eligibility_uc::ShareForecastConfig;
@@ -379,6 +380,13 @@ where
         .route("/v1", get(handlers::v1_index))
         .route("/v1/openapi.json", get(carbonfr_openapi::openapi))
         .route("/docs", get(carbonfr_openapi::swagger_ui))
+        // Page carte « électrolyseurs × carbone live » (couche B-light,
+        // ADR-0025/0029) — HORS contrat /v1, comme `/docs` : page auto-contenue
+        // (zéro CDN) + ses trois jeux de données embarqués (attribution incluse).
+        .route("/hydrogene", get(hydrogene::page))
+        .route("/hydrogene/sites.json", get(hydrogene::sites))
+        .route("/hydrogene/regions.geojson", get(hydrogene::regions))
+        .route("/hydrogene/pays.geojson", get(hydrogene::pays))
         .route("/health", get(handlers::health))
         .route("/health/ready", get(handlers::health_ready::<R>))
         .with_state(state);

@@ -39,6 +39,7 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0026](0026-methodologie-overlays-eligibilite.md) | Méthodologie des overlays d'éligibilité électrolyseur : rulesets versionnés rfnbo/low-carbon, seuils sourcés, pièges 1 & 2 | Accepté |
 | [0027](0027-politique-contribution-verrouillage-branche.md) | Politique de contribution & verrouillage de `main` (ruleset Phase A solo → Phase B ouverte, `bypass_actors` vide) | Accepté |
 | [0028](0028-prevision-part-renouvelable-eligibilite.md) | Prévision de la part renouvelable pour l'éligibilité rfnbo (`share-clim@1` : climatologie + intervalle calibré, gate backtest) | Accepté |
+| [0029](0029-carte-electrolyseurs-carbone-live.md) | Carte « électrolyseurs × carbone live » (couche B-light : page auto-contenue `/hydrogene`, sources EHO/IGN/Natural Earth, licences vérifiées) | Accepté |
 
 ## Gabarit
 

@@ -171,6 +171,12 @@ export interface EligibilitySlot {
   /** Bornes de l'intervalle de confiance (ADR-0011). */
   intensity_lower: number;
   intensity_upper: number;
+  /**
+   * Score de classement **interne au cadre** — jamais comparable entre
+   * `framework`s : `low-carbon` = intensité brute (gCO₂eq/kWh) ; `rfnbo` =
+   * heuristique composite (pénalise la donnée manquante, échelle ~10×).
+   * Pour comparer des créneaux entre cadres, utiliser `intensity`.
+   */
   score: number;
   signals: EligibilitySignal[];
 }
@@ -181,6 +187,10 @@ export interface EligibleSlot {
   intensity: number;
   intensity_lower: number;
   intensity_upper: number;
+  /**
+   * Score de classement **interne au cadre** — jamais comparable entre
+   * `framework`s (cf. `EligibilitySlot.score`).
+   */
   score: number;
 }
 

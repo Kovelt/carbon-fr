@@ -8,6 +8,34 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Modifié
+
+- **GATE de neutralité de la couche « éligibilité électrolyseur » franchi**
+  (ADR-0026 ; revue datée
+  [`docs/adr/0026-revue-neutralite.md`](docs/adr/0026-revue-neutralite.md)) —
+  évaluation adversariale multi-agents (critiques pro et anti-nucléaire +
+  auditeurs symétrie/provenance/mélecture/usage, contre-instruction à 3
+  réfutateurs par constat) rejouée sur la **sortie réellement servie**. Verdict
+  RED (3 constats majeurs) → 3 correctifs → GREEN au re-test. Correctifs, tous
+  **additifs** (aucune rupture de contrat) :
+  - le signal d'un pilier dont le seuil a été **surchargé par l'appelant**
+    (`?surplus_price_eur_mwh=`, `?low_carbon_threshold_g_per_kwh=`,
+    `?electrolyzer_kwh_per_kg=`) est désormais étiqueté `basis: "user-override"`
+    au lieu de conserver `regulatory`/`indicative-non-regulatory` (constat C14 —
+    un seuil écrasé ne dérive plus du texte canonique) ; suivi granulaire par
+    pilier dans `EligibilityRuleset` (`surplus_price_overridden`,
+    `low_carbon_threshold_overridden`, méthode `basis_for`) ;
+  - le champ `score` des créneaux d'éligibilité est documenté dans le contrat
+    OpenAPI comme **interne au cadre** (jamais comparable entre `framework`s :
+    `low-carbon` = intensité brute, `rfnbo` = heuristique composite ; comparer
+    via `intensity`) (constat C8) ;
+  - le `legal_basis` servi pour `low-carbon:2025-2359` attribue correctement le
+    comparateur 94 gCO₂eq/MJ au renvoi vers le Règl. (UE) 2023/1185 et
+    requalifie l'échéance de consultation nucléaire en **considérant non
+    contraignant** (échéance 30/06/2026, lancement non constaté au 2026-07-03 ;
+    évaluation contraignante d'ici 07/2028, art. 3) (constat C9 — aligné sur
+    l'addendum de vérification sources primaires de l'ADR-0026).
+
 ## [0.4.4] - 2026-07-03
 
 Remédiation des **24 constats restants** de l'audit du 2026-07-02 (moyens F07–F19,

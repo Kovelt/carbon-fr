@@ -458,6 +458,10 @@ pub(crate) struct EligibleSlotBody {
     intensity: f64,
     intensity_lower: f64,
     intensity_upper: f64,
+    /// Score de classement **interne au cadre** — jamais comparable entre
+    /// `framework`s : `low-carbon` = intensité brute (gCO₂eq/kWh) ; `rfnbo` =
+    /// heuristique composite (pénalise la donnée manquante, échelle ~10×).
+    /// Pour comparer des créneaux entre cadres, utiliser `intensity`.
     score: f64,
 }
 
@@ -469,6 +473,10 @@ pub(crate) struct EligibilitySlotBody {
     /// Bornes de l'intervalle de confiance (ADR-0011).
     intensity_lower: f64,
     intensity_upper: f64,
+    /// Score de classement **interne au cadre** — jamais comparable entre
+    /// `framework`s : `low-carbon` = intensité brute (gCO₂eq/kWh) ; `rfnbo` =
+    /// heuristique composite (pénalise la donnée manquante, échelle ~10×).
+    /// Pour comparer des créneaux entre cadres, utiliser `intensity`.
     score: f64,
     signals: Vec<EligibilitySignalBody>,
 }
@@ -483,7 +491,9 @@ pub(crate) struct EligibilitySignalBody {
     value: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     threshold: Option<f64>,
-    /// `regulatory` ou `indicative-non-regulatory` (seuil bas-carbone = proxy).
+    /// `regulatory`, `indicative-non-regulatory` (seuil bas-carbone = proxy) ou
+    /// `user-override` (le seuil de **ce** pilier a été surchargé par l'appelant —
+    /// le signal ne dérive plus du texte canonique).
     basis: &'static str,
 }
 
@@ -496,7 +506,7 @@ impl EligibilityBody {
     ) -> Result<Self, time::error::Format> {
         let slots = verdicts
             .iter()
-            .map(slot_body)
+            .map(|v| slot_body(v, ruleset))
             .collect::<Result<Vec<_>, time::error::Format>>()?;
 
         let best_eligible = carbonfr_eligibility::best_eligible(verdicts)
@@ -538,6 +548,7 @@ impl EligibilityBody {
 
 fn slot_body(
     v: &carbonfr_eligibility::EligibilityVerdict,
+    ruleset: &carbonfr_eligibility::EligibilityRuleset,
 ) -> Result<EligibilitySlotBody, time::error::Format> {
     let signals = v
         .signals
@@ -551,7 +562,9 @@ fn slot_body(
             },
             value: s.value(),
             threshold: s.threshold(),
-            basis: carbonfr_eligibility::basis_of(s.pillar()),
+            // Base servie : canonique, ou `user-override` si le seuil de ce
+            // pilier a été surchargé (revue de neutralité ADR-0026, C14).
+            basis: ruleset.basis_for(s.pillar()),
         })
         .collect();
     Ok(EligibilitySlotBody {

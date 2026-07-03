@@ -54,9 +54,13 @@ impl Pillar {
     }
 }
 
-/// Base réglementaire d'un pilier (pour l'auditabilité, y compris `Indeterminate`).
-/// Le seuil bas-carbone est un proxy → `indicative-non-regulatory` ; les autres
-/// dérivent directement des textes UE → `regulatory`.
+/// Base réglementaire **canonique** d'un pilier (pour l'auditabilité, y compris
+/// `Indeterminate`). Le seuil bas-carbone est un proxy → `indicative-non-regulatory` ;
+/// les autres dérivent directement des textes UE → `regulatory`.
+///
+/// ⚠️ C'est la base du *ruleset canonique* : quand l'appelant a surchargé le seuil
+/// d'un pilier, la base **servie** doit venir de `EligibilityRuleset::basis_for`
+/// (qui retourne alors `user-override`) — revue de neutralité ADR-0026, constat C14.
 pub fn basis_of(pillar: Pillar) -> &'static str {
     match pillar {
         Pillar::LowCarbonIntensity => "indicative-non-regulatory",

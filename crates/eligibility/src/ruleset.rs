@@ -7,6 +7,8 @@
 
 use time::{Date, Month, OffsetDateTime};
 
+use crate::verdict::{Pillar, basis_of};
+
 /// Comparateur fossile GHG de l'hydrogène (gCO₂eq/MJ) — RED II / actes délégués
 /// UE. Base commune RFNBO (2023/1185) et bas-carbone (2025/2359). **[FAIT]**
 pub const FOSSIL_COMPARATOR_G_PER_MJ: f64 = 94.0;
@@ -139,6 +141,13 @@ pub struct EligibilityRuleset {
     pub electrolyzer_kwh_per_kg: f64,
     /// `true` si des overrides utilisateur ont été appliqués.
     pub overridden: bool,
+    /// `true` si le seuil du pilier prix (`surplus_price_eur_mwh`) a été surchargé.
+    /// Piloté par [`with_overrides`](Self::with_overrides) ; consommé par
+    /// [`basis_for`](Self::basis_for) (revue de neutralité ADR-0026, constat C14).
+    pub surplus_price_overridden: bool,
+    /// `true` si le seuil d'intensité bas-carbone a été surchargé (directement ou
+    /// recalé via `electrolyzer_kwh_per_kg`).
+    pub low_carbon_threshold_overridden: bool,
     /// Citation textuelle de la base réglementaire (vérifiabilité).
     pub legal_basis: &'static str,
     /// Description neutre servie au catalogue.
@@ -161,6 +170,8 @@ impl EligibilityRuleset {
             low_carbon_intensity_is_indicative: false,
             electrolyzer_kwh_per_kg: DEFAULT_ELECTROLYZER_KWH_PER_KG,
             overridden: false,
+            surplus_price_overridden: false,
+            low_carbon_threshold_overridden: false,
             legal_basis: "Règl. délégués (UE) 2023/1184 (corrélation temporelle/géographique, \
                           exceptions Art. 4 ≥90 % renouvelables et surplus prix ≤20 €/MWh ou \
                           <0,36×EUA) & 2023/1185 (réduction GHG ≥70 % vs 94 gCO₂eq/MJ). [FAIT]",
@@ -188,11 +199,16 @@ impl EligibilityRuleset {
             low_carbon_intensity_is_indicative: true,
             electrolyzer_kwh_per_kg: kwh,
             overridden: false,
-            legal_basis: "Acte délégué (UE) 2025/2359 (adopté 8/7/2025) : seuil PRODUIT 28,2 gCO₂eq/MJ \
-                          (=94×0,30) ≈3384 gCO₂eq/kgH₂. Seuil ÉLECTRIQUE = ESTIMATION carbon-fr : \
-                          3384 ÷ 53 kWh/kg ≈ 64 gCO₂eq/kWh (condition nécessaire, tout le budget \
-                          attribué à l'élec). Reconnaissance du nucléaire en cours (consultation \
-                          d'ici 30/06/2026, évaluation d'ici 07/2028). [FAIT seuil produit / ESTIMATION seuil élec]",
+            surplus_price_overridden: false,
+            low_carbon_threshold_overridden: false,
+            legal_basis: "Acte délégué (UE) 2025/2359 (adopté 8/7/2025) : réduction ≥70 % vs \
+                          comparateur fossile 94 gCO₂eq/MJ (incorporé par renvoi au Règl. (UE) \
+                          2023/1185) → seuil PRODUIT 28,2 gCO₂eq/MJ ≈3384 gCO₂eq/kgH₂. Seuil \
+                          ÉLECTRIQUE = ESTIMATION carbon-fr : 3384 ÷ 53 kWh/kg ≈ 64 gCO₂eq/kWh \
+                          (condition nécessaire, tout le budget attribué à l'élec). Reconnaissance \
+                          du nucléaire : consultation prévue par considérant (non contraignant, \
+                          échéance 30/06/2026 — lancement non constaté au 2026-07-03) ; évaluation \
+                          contraignante d'ici 07/2028 (art. 3). [FAIT seuil produit / ESTIMATION seuil élec]",
             description: "Vue bas-carbone inclusive (nucléaire, gaz+CCS). Signal RÉSEAU : intensité \
                           carbone ≤ seuil dérivé (~64 gCO₂eq/kWh, INDICATIF, condition nécessaire — \
                           au-delà, H₂ bas-carbone impossible par l'électricité seule). Pas de pilier \
@@ -242,6 +258,7 @@ impl EligibilityRuleset {
         let mut changed = false;
         if let Some(p) = surplus_price_eur_mwh {
             self.surplus_price_eur_mwh = Some(p);
+            self.surplus_price_overridden = true;
             changed = true;
         }
         if let Some(kwh) = electrolyzer_kwh_per_kg {
@@ -256,15 +273,36 @@ impl EligibilityRuleset {
                 self.low_carbon_intensity_threshold_g_per_kwh = Some(
                     low_carbon_intensity_threshold(kwh).min(MAX_LOW_CARBON_INTENSITY_THRESHOLD),
                 );
+                self.low_carbon_threshold_overridden = true;
             }
             changed = true;
         }
         if let Some(t) = low_carbon_intensity_threshold_g_per_kwh {
             self.low_carbon_intensity_threshold_g_per_kwh = Some(t);
+            self.low_carbon_threshold_overridden = true;
             changed = true;
         }
         self.overridden = changed;
         self
+    }
+
+    /// Base d'un signal **telle que servie** : la base canonique du pilier
+    /// ([`basis_of`]), sauf si le seuil de *ce* pilier a été surchargé par
+    /// l'appelant — le signal ne dérive alors plus du texte (ni du proxy)
+    /// canonique et est étiqueté `user-override` (revue de neutralité ADR-0026,
+    /// constat C14 : un seuil écrasé ne peut pas rester « regulatory »).
+    pub fn basis_for(&self, pillar: Pillar) -> &'static str {
+        let pillar_overridden = match pillar {
+            Pillar::SurplusPrice => self.surplus_price_overridden,
+            Pillar::LowCarbonIntensity => self.low_carbon_threshold_overridden,
+            // Aucun override n'est exposé sur la part renouvelable.
+            Pillar::RenewableShare => false,
+        };
+        if pillar_overridden {
+            "user-override"
+        } else {
+            basis_of(pillar)
+        }
     }
 }
 
@@ -426,5 +464,51 @@ mod tests {
     fn no_overrides_leaves_overridden_false() {
         let r = EligibilityRuleset::rfnbo_2023_1184().with_overrides(None, None, None);
         assert!(!r.overridden);
+    }
+
+    #[test]
+    fn basis_for_is_canonical_without_override() {
+        let rfnbo = EligibilityRuleset::rfnbo_2023_1184();
+        assert_eq!(rfnbo.basis_for(Pillar::SurplusPrice), "regulatory");
+        assert_eq!(rfnbo.basis_for(Pillar::RenewableShare), "regulatory");
+        let lc = EligibilityRuleset::low_carbon_2025_2359();
+        assert_eq!(
+            lc.basis_for(Pillar::LowCarbonIntensity),
+            "indicative-non-regulatory"
+        );
+    }
+
+    #[test]
+    fn basis_for_flags_overridden_price_pillar_only() {
+        // Revue de neutralité (C14) : un seuil écrasé ne peut pas rester « regulatory ».
+        let r = EligibilityRuleset::rfnbo_2023_1184().with_overrides(Some(100.0), None, None);
+        assert_eq!(r.basis_for(Pillar::SurplusPrice), "user-override");
+        // Le pilier non surchargé reste canonique.
+        assert_eq!(r.basis_for(Pillar::RenewableShare), "regulatory");
+    }
+
+    #[test]
+    fn basis_for_flags_threshold_override_direct_and_via_kwh() {
+        let direct =
+            EligibilityRuleset::low_carbon_2025_2359().with_overrides(None, Some(50.0), None);
+        assert_eq!(
+            direct.basis_for(Pillar::LowCarbonIntensity),
+            "user-override"
+        );
+        let via_kwh =
+            EligibilityRuleset::low_carbon_2025_2359().with_overrides(None, None, Some(70.0));
+        assert_eq!(
+            via_kwh.basis_for(Pillar::LowCarbonIntensity),
+            "user-override"
+        );
+    }
+
+    #[test]
+    fn kwh_override_on_rfnbo_does_not_flag_low_carbon_pillar() {
+        // Pas de seuil d'intensité sur rfnbo → le kwh pose `overridden` (global)
+        // mais ne marque pas le pilier bas-carbone (absent) comme surchargé.
+        let r = EligibilityRuleset::rfnbo_2023_1184().with_overrides(None, None, Some(70.0));
+        assert!(r.overridden);
+        assert!(!r.low_carbon_threshold_overridden);
     }
 }

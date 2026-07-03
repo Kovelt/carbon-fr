@@ -1422,6 +1422,46 @@ async fn greenest_window_eligibility_overridden_kwh_recales_threshold() {
 }
 
 #[tokio::test]
+async fn greenest_window_eligibility_overridden_price_basis_is_user_override() {
+    // Revue de neutralité ADR-0026 (C14) : un seuil écrasé par l'appelant ne peut
+    // pas rester étiqueté « regulatory » — le signal du pilier surchargé passe en
+    // `user-override`, les piliers non touchés restent canoniques.
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 60.0))
+        .collect();
+    // Prix à 79 €/MWh : au-dessus du seuil légal (20) mais sous l'override (100).
+    let prices: Vec<SpotPrice> = (0..=24 * 4)
+        .map(|i: i32| SpotPrice::new(from + step * i, 79.0).unwrap())
+        .collect();
+    let response = get(
+        build_with_eligibility(FakeRepo {
+            series,
+            prices,
+            ..Default::default()
+        }),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&eligibility=rfnbo&surplus_price_eur_mwh=100",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let elig = &json_body(response).await["eligibility"];
+    assert_eq!(elig["overridden"], true);
+    let signals = elig["slots"][0]["signals"].as_array().unwrap();
+    let surplus = signals
+        .iter()
+        .find(|s| s["pillar"] == "surplus-price")
+        .expect("signal surplus-price");
+    assert_eq!(surplus["verdict"], "pass"); // 79 ≤ 100 (seuil surchargé)
+    assert_eq!(surplus["basis"], "user-override");
+    let renew = signals
+        .iter()
+        .find(|s| s["pillar"] == "renewable-share")
+        .expect("signal renewable-share");
+    assert_eq!(renew["basis"], "regulatory");
+}
+
+#[tokio::test]
 async fn greenest_window_eligibility_uses_a_single_forecast_call() {
     // Invariant mono-forecast (ADR-0026 D16) : la fenêtre verte ET l'éligibilité
     // partagent UN SEUL appel forecast().

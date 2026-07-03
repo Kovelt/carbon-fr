@@ -77,7 +77,7 @@ Forces en présence :
 - Article 4 ≈ jamais déclenché en FR ; le signal `renewable-share` est **instantané** (proxy), pas l'Article 4 **annuel** légal — documenté.
 - `rfnbo` futur partiellement `Indeterminate` (pas de mix prévu) ; `MixForecast` + branche EUA en réserve.
 - Seuil low-carbon = **proxy** (condition nécessaire), pas un seuil réglementaire.
-- Une réponse ne porte **qu'un cadre** : la neutralité repose sur la **symétrie d'accès** (catalogue + paramètre). Une **revue de neutralité adversariale** (type ADR-0024) est recommandée avant tout palier payant sur cette couche.
+- Une réponse ne porte **qu'un cadre** : la neutralité repose sur la **symétrie d'accès** (catalogue + paramètre). Une **revue de neutralité adversariale** (type ADR-0024) est recommandée avant tout palier payant sur cette couche. ✅ **Conduite le 2026-07-03, verdict GREEN** après 3 correctifs (C8/C9/C14) : [`0026-revue-neutralite.md`](0026-revue-neutralite.md) — re-jouable à toute modification des rulesets servis.
 
 ---
 

@@ -1920,7 +1920,7 @@
         "properties": {
           "basis": {
             "type": "string",
-            "description": "`regulatory` ou `indicative-non-regulatory` (seuil bas-carbone = proxy)."
+            "description": "`regulatory`, `indicative-non-regulatory` (seuil bas-carbone = proxy) ou\n`user-override` (le seuil de **ce** pilier a été surchargé par l'appelant —\nle signal ne dérive plus du texte canonique)."
           },
           "pillar": {
             "type": "string",
@@ -1976,7 +1976,8 @@
           },
           "score": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "description": "Score de classement **interne au cadre** — jamais comparable entre\n`framework`s : `low-carbon` = intensité brute (gCO₂eq/kWh) ; `rfnbo` =\nheuristique composite (pénalise la donnée manquante, échelle ~10×).\nPour comparer des créneaux entre cadres, utiliser `intensity`."
           },
           "signals": {
             "type": "array",
@@ -2013,7 +2014,8 @@
           },
           "score": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "description": "Score de classement **interne au cadre** — jamais comparable entre\n`framework`s : `low-carbon` = intensité brute (gCO₂eq/kWh) ; `rfnbo` =\nheuristique composite (pénalise la donnée manquante, échelle ~10×).\nPour comparer des créneaux entre cadres, utiliser `intensity`."
           },
           "timestamp": {
             "type": "string"

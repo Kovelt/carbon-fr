@@ -40,6 +40,15 @@ for (const c of ex.exchanges) console.log(c.country_name, c.flow_mw, c.intensity
 // Renouvelable estimé depuis la météo (facteur de charge)
 const ren = await cf.renewable();
 console.log(`éolien ${(ren.wind_capacity_factor * 100).toFixed(0)}% de capacité`);
+
+// Éligibilité électrolyseur : fenêtre verte annotée RFNBO ou bas-carbone (ADR-0025/0026)
+const win = await cf.greenestWindow({ horizonHours: 24, eligibility: "low-carbon" });
+console.log(win.eligibility?.window_eligible, win.eligibility?.count_eligible);
+for (const s of win.eligibility?.slots ?? []) console.log(s.timestamp, s.eligible, s.score);
+
+// Catalogue des cadres d'éligibilité (rulesets versionnés, seuils, base légale)
+const rs = await cf.eligibilityRulesets();
+for (const r of rs.rulesets) console.log(r.version, r.status, r.legal_basis);
 ```
 
 ## Flux temps réel (SSE)
@@ -71,7 +80,8 @@ const cf = new CarbonFr({
 | `intensityDate` | `GET /v1/intensity/date` |
 | `intensityStats` | `GET /v1/intensity/stats` |
 | `forecast` | `GET /v1/intensity/forecast` |
-| `greenestWindow` | `GET /v1/intensity/greenest-window` |
+| `greenestWindow` | `GET /v1/intensity/greenest-window` (overlay électrolyseur via `eligibility: "rfnbo" \| "low-carbon"` + overrides) |
+| `eligibilityRulesets` | `GET /v1/eligibility/rulesets` (cadres d'éligibilité électrolyseur) |
 | `schedule` · `scheduleSlots` · `below` | scheduling carbon-aware |
 | `exchanges` · `exchangesHistory` | `GET /v1/exchanges[/date]` |
 | `weather` · `weatherHistory` | `GET /v1/weather[/date]` |

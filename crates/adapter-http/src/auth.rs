@@ -279,8 +279,9 @@ pub fn key_fingerprint(key: &str) -> String {
 /// Jeton aléatoire hexadécimal de `bytes` octets (CSPRNG **userspace** `rand`,
 /// non bloquant — plus d'I/O fichier synchrone `/dev/urandom` sur le runtime
 /// Tokio, audit F29) — id et secret d'abonnement webhook. Signature conservée en
-/// `Option<String>` par cohérence avec les appelants, mais désormais infaillible
-/// (renvoie toujours `Some`).
+/// `Option<String>` par cohérence avec les appelants ; renvoie toujours `Some`
+/// en pratique (le CSPRNG OS ne panique qu'en cas d'échec catastrophique
+/// d'initialisation de l'entropie système, hors de portée d'un repli gracieux).
 pub(crate) fn random_hex(bytes: usize) -> Option<String> {
     use rand::Rng;
     let mut buf = vec![0u8; bytes];

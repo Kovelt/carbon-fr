@@ -297,7 +297,7 @@ async fn run_mint_key() -> anyhow::Result<()> {
     let repo = connect_repo(&database_url).await?;
     let label = std::env::var("CARBONFR_KEY_LABEL").unwrap_or_default();
 
-    let key = generate_api_key().context("génération de la clé")?;
+    let key = generate_api_key();
     let hash = key_fingerprint(&key);
     repo.insert_key(&hash, ApiTier::Free, &label)
         .await
@@ -310,16 +310,14 @@ async fn run_mint_key() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Génère une clé aléatoire `cfr_<64 hex>` (32 octets de `/dev/urandom`).
-fn generate_api_key() -> anyhow::Result<String> {
-    use std::io::Read;
+/// Génère une clé aléatoire `cfr_<64 hex>` (32 octets, CSPRNG userspace `rand` —
+/// pas d'I/O fichier synchrone, cohérent avec `random_hex`, audit F29).
+fn generate_api_key() -> String {
+    use rand::Rng;
     let mut buf = [0u8; 32];
-    std::fs::File::open("/dev/urandom")
-        .context("ouverture de /dev/urandom")?
-        .read_exact(&mut buf)
-        .context("lecture d'entropie")?;
+    rand::rng().fill(&mut buf);
     let hex: String = buf.iter().map(|b| format!("{b:02x}")).collect();
-    Ok(format!("cfr_{hex}"))
+    format!("cfr_{hex}")
 }
 
 /// Mode backfill : rapatriement de l'historique national, puis arrêt.

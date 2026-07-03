@@ -8,6 +8,8 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.4.4] - 2026-07-03
+
 Remédiation des **24 constats restants** de l'audit du 2026-07-02 (moyens F07–F19,
 bas F20–F31 ; le critique F01 et les hauts F03–F06 sont sortis en `v0.4.3`).
 Aucun changement d'API cassant ; le contrat OpenAPI est enrichi (media-types

@@ -47,6 +47,7 @@ axum = "0.8.7"
 gbdt = "0.1"
 utoipa = { version = "5.4.0", features = ["axum_extras"] }
 sha2 = "0.10.9"
+rand = "0.9"
 async-trait = "0.1.89"
 anyhow = "1.0.100"
 tracing = "0.1.41"

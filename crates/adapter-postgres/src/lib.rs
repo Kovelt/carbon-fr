@@ -25,7 +25,7 @@ use carbonfr_core::ports::{
     IntensityRepository, RepositoryError, SpotPriceRepository, SubscriptionRepository,
     VisitCounter, WeatherRepository,
 };
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgPool, QueryBuilder, Row};
 use time::{Date, OffsetDateTime};
 
@@ -58,6 +58,12 @@ const ON_CONFLICT_UPSERT: &str = " ON CONFLICT (region, at, methodology_id, meth
 #[derive(Clone)]
 pub struct PgIntensityRepository {
     pool: PgPool,
+    /// Dernier [`VisitStats`] calculé (audit F31) : évite de relancer un
+    /// `COUNT(DISTINCT visitor_hash)` sur toute la table `visit` à chaque visite
+    /// qui n'a rien changé (visiteur déjà compté ce jour-là). Cache **par
+    /// processus**, partagé entre les clones du repository ; auto-corrigé dès
+    /// qu'un nouveau `(visiteur, jour)` est inséré par ce même processus.
+    visit_cache: std::sync::Arc<std::sync::Mutex<Option<VisitStats>>>,
 }
 
 impl PgIntensityRepository {
@@ -68,28 +74,56 @@ impl PgIntensityRepository {
     /// sous saturation, une requête **échoue vite** (→ 500) plutôt que de pendre
     /// jusqu'au défaut de 30 s. Recyclage (`idle`/`max_lifetime`) pour éviter les
     /// connexions mortes côté serveur après de longues durées.
+    ///
+    /// `statement_timeout`/`idle_in_transaction_session_timeout` (audit F09,
+    /// défaut 30 s via `CARBONFR_DB_STATEMENT_TIMEOUT_MS`) bornent l'exécution
+    /// **côté serveur** : `acquire_timeout` ne borne que l'attente d'une
+    /// connexion libre, pas l'usage d'une requête déjà en cours (verrou, session
+    /// idle-in-transaction) qui immobiliserait une connexion du pool.
     pub async fn connect(database_url: &str) -> Result<Self, RepositoryError> {
         let max_connections = std::env::var("CARBONFR_DB_MAX_CONNECTIONS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(20);
+        let statement_timeout_ms: u64 = std::env::var("CARBONFR_DB_STATEMENT_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30_000);
+        let connect_options: PgConnectOptions = database_url
+            .parse()
+            // Même redaction que l'erreur de connexion ci-dessous : un message de
+            // parsing peut réciter le DSN (donc le mot de passe).
+            .map_err(|_| backend("URL de connexion PostgreSQL invalide".to_string()))?;
+        let connect_options = connect_options.options([
+            ("statement_timeout", statement_timeout_ms.to_string()),
+            (
+                "idle_in_transaction_session_timeout",
+                statement_timeout_ms.to_string(),
+            ),
+        ]);
         let pool = PgPoolOptions::new()
             .max_connections(max_connections)
             .acquire_timeout(std::time::Duration::from_secs(5))
             .idle_timeout(std::time::Duration::from_secs(600))
             .max_lifetime(std::time::Duration::from_secs(1800))
-            .connect(database_url)
+            .connect_with(connect_options)
             .await
             // On ne propage PAS `{e}` : un message d'erreur sqlx de connexion peut
             // contenir le DSN (donc le mot de passe). On reste générique.
             .map_err(|_| backend("connexion à PostgreSQL impossible".to_string()))?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            visit_cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        })
     }
 
     /// Construit le repository à partir d'un pool existant (composition root,
     /// tests).
     pub fn from_pool(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            visit_cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
     }
 
     /// Accès au pool sous-jacent.
@@ -335,13 +369,30 @@ impl PgIntensityRepository {
 #[async_trait]
 impl VisitCounter for PgIntensityRepository {
     async fn record_visit(&self, visitor: &str, day: Date) -> Result<VisitStats, RepositoryError> {
-        sqlx::query("INSERT INTO visit (visitor_hash, day) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-            .bind(visitor)
-            .bind(day)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| backend(format!("record_visit : {e}")))?;
-        self.visit_stats().await
+        let result = sqlx::query(
+            "INSERT INTO visit (visitor_hash, day) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(visitor)
+        .bind(day)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| backend(format!("record_visit : {e}")))?;
+
+        // F31 : si l'INSERT n'a rien ajouté (visiteur déjà compté ce jour-là), les
+        // stats globales n'ont pas changé du fait de CET appel → on sert la
+        // dernière valeur connue au lieu de relancer un `COUNT(DISTINCT)` sur
+        // toute la table. Repli sur le calcul complet si le cache est froid
+        // (redémarrage) ou après toute insertion réelle (recompute + rafraîchit).
+        if result.rows_affected() == 0
+            && let Some(cached) = self.visit_cache.lock().ok().and_then(|c| *c)
+        {
+            return Ok(cached);
+        }
+        let stats = self.visit_stats().await?;
+        if let Ok(mut cache) = self.visit_cache.lock() {
+            *cache = Some(stats);
+        }
+        Ok(stats)
     }
 
     async fn visit_stats(&self) -> Result<VisitStats, RepositoryError> {
@@ -377,15 +428,26 @@ impl ConsumptionRepository for PgIntensityRepository {
         if loads.is_empty() {
             return Ok(0);
         }
-        // Dédup par clé `(region, at)` : un même couple ne peut être affecté deux
-        // fois dans un seul `ON CONFLICT` (la source peut renvoyer des doublons —
-        // p. ex. l'export consolidé). Le dernier l'emporte.
-        let mut seen: std::collections::HashMap<(&str, OffsetDateTime), &LoadRecord> =
+        // Dédup par clé `(region, at)`, **fusion champ à champ** (audit F24) : un
+        // même couple ne peut être affecté deux fois dans un seul `ON CONFLICT`
+        // (la source peut renvoyer des doublons — p. ex. l'export consolidé). Deux
+        // enregistrements complémentaires du même lot (l'un réalisée seule via
+        // `LoadRecord::realized`, l'autre prévue seule via `LoadRecord::forecast`)
+        // ne doivent pas s'écraser : on fusionne comme le fait le `COALESCE` SQL
+        // (un champ `None` ne remplace jamais un champ déjà vu ; entre deux valeurs
+        // présentes, la plus récente dans le lot l'emporte). Le `COALESCE` de
+        // `ON CONFLICT` ne protège qu'entre appels successifs, pas au sein d'un lot.
+        let mut seen: std::collections::HashMap<(&str, OffsetDateTime), LoadRecord> =
             std::collections::HashMap::with_capacity(loads.len());
         for load in loads {
-            seen.insert((load.region.slug(), load.at), load);
+            seen.entry((load.region.slug(), load.at))
+                .and_modify(|merged| {
+                    merged.realized = load.realized.or(merged.realized);
+                    merged.forecast = load.forecast.or(merged.forecast);
+                })
+                .or_insert(*load);
         }
-        let deduped: Vec<&LoadRecord> = seen.into_values().collect();
+        let deduped: Vec<LoadRecord> = seen.into_values().collect();
 
         let mut written = 0usize;
         // Paquets bornés : 4 colonnes × 10 000 = 40 000 paramètres < 65 535.
@@ -501,21 +563,45 @@ impl WeatherRepository for PgIntensityRepository {
         .await
         .map_err(|e| backend(format!("weather_range : {e}")))?;
 
-        rows.iter()
-            .map(|row| {
-                Ok(WeatherForecast {
-                    valid_at: row
-                        .try_get("valid_at")
-                        .map_err(|e| backend(e.to_string()))?,
-                    run_at: row.try_get("run_at").map_err(|e| backend(e.to_string()))?,
-                    wind: row.try_get("wind").map_err(|e| backend(e.to_string()))?,
-                    irradiance: row
-                        .try_get("irradiance")
-                        .map_err(|e| backend(e.to_string()))?,
-                })
-            })
-            .collect()
+        rows.iter().map(weather_row).collect()
     }
+
+    async fn weather_latest(
+        &self,
+        valid: TimeRange,
+    ) -> Result<Vec<WeatherForecast>, RepositoryError> {
+        // F19 : déduplication déléguée à Postgres via l'index existant
+        // `weather_forecast_valid_run_idx (valid_at, run_at DESC)` (migration
+        // 0006) — une ligne par échéance (le run le plus récent), sans ramener
+        // tout l'historique des runs en mémoire. `weather_range` reste brut.
+        let rows = sqlx::query(
+            "SELECT DISTINCT ON (valid_at) valid_at, run_at, wind, irradiance \
+             FROM weather_forecast \
+             WHERE valid_at >= $1 AND valid_at < $2 \
+             ORDER BY valid_at ASC, run_at DESC",
+        )
+        .bind(valid.start())
+        .bind(valid.end())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| backend(format!("weather_latest : {e}")))?;
+
+        rows.iter().map(weather_row).collect()
+    }
+}
+
+/// Convertit une ligne `weather_forecast` en [`WeatherForecast`].
+fn weather_row(row: &sqlx::postgres::PgRow) -> Result<WeatherForecast, RepositoryError> {
+    Ok(WeatherForecast {
+        valid_at: row
+            .try_get("valid_at")
+            .map_err(|e| backend(e.to_string()))?,
+        run_at: row.try_get("run_at").map_err(|e| backend(e.to_string()))?,
+        wind: row.try_get("wind").map_err(|e| backend(e.to_string()))?,
+        irradiance: row
+            .try_get("irradiance")
+            .map_err(|e| backend(e.to_string()))?,
+    })
 }
 
 #[async_trait]
@@ -840,7 +926,44 @@ fn row_to_subscription(
 
 #[async_trait]
 impl SubscriptionRepository for PgIntensityRepository {
-    async fn create(&self, s: &Subscription) -> Result<(), RepositoryError> {
+    async fn create(
+        &self,
+        s: &Subscription,
+        max_per_owner: usize,
+    ) -> Result<bool, RepositoryError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| backend(format!("create subscription (begin) : {e}")))?;
+
+        // Verrou consultatif transactionnel scindé par propriétaire : sérialise les
+        // créations concurrentes de la même clé le temps de la transaction, fermant
+        // la fenêtre TOCTOU entre le comptage et l'insertion (audit F22). Relâché
+        // automatiquement au COMMIT/ROLLBACK (pas de verrou orphelin).
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('webhook_subscription:' || $1))")
+            .bind(&s.owner_key_hash)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| backend(format!("create subscription (lock) : {e}")))?;
+
+        let row =
+            sqlx::query("SELECT count(*) AS n FROM webhook_subscription WHERE owner_key_hash = $1")
+                .bind(&s.owner_key_hash)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| backend(format!("create subscription (count) : {e}")))?;
+        let count: i64 = row
+            .try_get("n")
+            .map_err(|e| backend(format!("create subscription (count) : {e}")))?;
+
+        if count as usize >= max_per_owner {
+            tx.rollback()
+                .await
+                .map_err(|e| backend(format!("create subscription (rollback) : {e}")))?;
+            return Ok(false);
+        }
+
         sqlx::query(
             "INSERT INTO webhook_subscription \
              (id, owner_key_hash, region, threshold, direction, callback_url, secret) \
@@ -853,10 +976,14 @@ impl SubscriptionRepository for PgIntensityRepository {
         .bind(s.direction.code())
         .bind(&s.callback_url)
         .bind(&s.secret)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
-        .map_err(|e| backend(format!("create subscription : {e}")))?;
-        Ok(())
+        .map_err(|e| backend(format!("create subscription (insert) : {e}")))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| backend(format!("create subscription (commit) : {e}")))?;
+        Ok(true)
     }
 
     async fn list_for_owner(

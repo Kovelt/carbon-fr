@@ -9,8 +9,6 @@
 //! on retient la **dernière prévision** (run le plus récent) du créneau le plus
 //! proche ; pour une série, une valeur par `valid_at` (run le plus récent).
 
-use std::collections::BTreeMap;
-
 use time::{Duration, OffsetDateTime};
 
 use crate::domain::{Region, TimeRange, WeatherForecast};
@@ -39,7 +37,11 @@ impl<W: WeatherRepository> GetWeather<W> {
             reference + Duration::hours(3),
         )
         .ok_or(ApplicationError::NotFound(Region::National))?;
-        self.dedup_latest_run(self.weather.weather_range(window).await?)
+        // `weather_latest` rend déjà une valeur par échéance (dernier run, dédup
+        // côté base — audit F19) ; on ne garde que la plus proche de `reference`.
+        self.weather
+            .weather_latest(window)
+            .await?
             .into_iter()
             .min_by_key(|f| (f.valid_at - reference).whole_seconds().abs())
             .ok_or(ApplicationError::NotFound(Region::National))
@@ -48,16 +50,6 @@ impl<W: WeatherRepository> GetWeather<W> {
     /// Série météo sur un intervalle de `valid_at`, une valeur par créneau
     /// (dernier run connu), triée par `valid_at` croissant.
     pub async fn series(&self, valid: TimeRange) -> Result<Vec<WeatherForecast>, ApplicationError> {
-        Ok(self.dedup_latest_run(self.weather.weather_range(valid).await?))
-    }
-
-    /// Garde, par `valid_at`, la prévision du run le plus récent. `weather_range`
-    /// trie par `(valid_at, run_at)` croissants → la dernière écriture gagne.
-    fn dedup_latest_run(&self, forecasts: Vec<WeatherForecast>) -> Vec<WeatherForecast> {
-        let mut by_valid: BTreeMap<i64, WeatherForecast> = BTreeMap::new();
-        for f in forecasts {
-            by_valid.insert(f.valid_at.unix_timestamp(), f);
-        }
-        by_valid.into_values().collect()
+        Ok(self.weather.weather_latest(valid).await?)
     }
 }

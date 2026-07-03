@@ -78,6 +78,28 @@ pub trait Eco2mixArchive: Send + Sync {
 /// L'écriture est un **upsert conditionnel au millésime** (ADR-0006) :
 /// l'implémentation ne remplace une mesure de clé `(region, at, methodology)`
 /// que si le `vintage` entrant est de qualité supérieure ou égale.
+///
+/// **Invariant de version (non garanti par le type — audit F17)** : `latest`,
+/// `range`, `stats` et `rollup` ne filtrent que sur `methodology_id` ; le champ
+/// [`Methodology::version`](crate::domain::Methodology) n'entre pas dans la
+/// lecture, alors que l'écriture le porte dans sa clé d'unicité `(region, at,
+/// methodology_id, methodology_version)`. C'est **sans risque tant qu'au plus
+/// une version est persistée par `methodology_id`** — vrai aujourd'hui :
+/// `rte-direct` n'existe qu'en v1, et `acv-ademe` **stocké** dans `measurement`
+/// est toujours la variante production-based `@1` (ADR-0008). La variante
+/// consumption-based `acv-ademe@2` (ADR-0010) n'est **jamais écrite** : elle est
+/// dérivée à la lecture par
+/// [`GetConsumptionIntensity`](crate::application::GetConsumptionIntensity) à
+/// partir du mix `@1` + `CrossBorderRepository`, sans passer par ce port pour
+/// `@2`.
+///
+/// ⚠️ Si une méthode future persiste un jour deux versions sous le même `id`,
+/// ces 4 signatures devront gagner un paramètre `version` (SQL : `AND
+/// methodology_version = $N`) — et il faudra **d'abord** ajouter une colonne
+/// `methodology_version` aux tables `measurement_rollup_{hourly,daily}` (leur
+/// clé primaire `(region, methodology_id, bucket)` n'en porte pas non plus, une
+/// 2ᵉ version y mélangerait les agrégats). Refactor volontairement différé tant
+/// qu'aucun appelant n'en a besoin.
 #[async_trait]
 pub trait IntensityRepository: Send + Sync {
     /// Insère ou met à jour des mesures selon la règle de millésime.
@@ -161,7 +183,22 @@ pub trait WeatherRepository: Send + Sync {
 
     /// Prévisions dont le `valid_at` tombe dans `valid`, triées par
     /// `(valid_at, run_at)` croissants.
+    ///
+    /// Renvoie l'**historique brut multi-run** : plusieurs `run_at` par
+    /// `valid_at`. C'est le mécanisme d'anti-fuite (ADR-0012 §6) — l'entraînement
+    /// et l'inférence GBDT ont besoin de chaque run pour choisir, par origine, le
+    /// dernier run *antérieur* à cette origine. Ne pas dédupliquer ici.
     async fn weather_range(
+        &self,
+        valid: TimeRange,
+    ) -> Result<Vec<WeatherForecast>, RepositoryError>;
+
+    /// Prévisions météo **une par échéance** (le run le plus récent) sur `valid`.
+    /// Pour les **lectures pures** (`/v1/weather`, `/v1/weather/date`,
+    /// `/v1/renewable`) : contrairement à [`weather_range`](Self::weather_range),
+    /// la déduplication est déléguée à la base (audit F19) plutôt que ramenée en
+    /// mémoire, ce qui évite de transférer tout l'historique des runs.
+    async fn weather_latest(
         &self,
         valid: TimeRange,
     ) -> Result<Vec<WeatherForecast>, RepositoryError>;
@@ -281,8 +318,15 @@ pub trait ApiKeyRepository: Send + Sync {
 /// watcher de fond (`active`).
 #[async_trait]
 pub trait SubscriptionRepository: Send + Sync {
-    /// Crée un abonnement.
-    async fn create(&self, subscription: &Subscription) -> Result<(), RepositoryError>;
+    /// Crée un abonnement, borné à `max_per_owner` pour ce propriétaire.
+    /// Vérification de quota + insertion **atomiques** côté adapter (audit F22 :
+    /// pas de fenêtre TOCTOU entre deux créations concurrentes de la même clé).
+    /// `Ok(false)` si le quota est déjà atteint (rien n'est inséré).
+    async fn create(
+        &self,
+        subscription: &Subscription,
+        max_per_owner: usize,
+    ) -> Result<bool, RepositoryError>;
 
     /// Liste les abonnements d'un propriétaire (par empreinte de clé).
     async fn list_for_owner(

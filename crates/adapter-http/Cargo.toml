@@ -15,6 +15,7 @@ serde = { workspace = true }
 time = { workspace = true, features = ["formatting", "parsing"] }
 utoipa = { workspace = true }
 sha2 = { workspace = true }
+rand = { workspace = true }
 # Code de PRODUCTION (trait EligibilityRepo objet-safe + blanket impl, ADR-0026) :
 # async-trait sort des dev-dependencies.
 async-trait = { workspace = true }

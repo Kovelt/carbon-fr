@@ -2,7 +2,7 @@
 //! le résultat en DTO JSON.
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use carbonfr_core::application::{
     CarbonAwareScheduler, GetConsumptionIntensity, GetCrossBorderExchanges, GetCurrentIntensity,
@@ -10,7 +10,7 @@ use carbonfr_core::application::{
 };
 use carbonfr_core::domain::{
     CostSource, CostTechnology, Granularity, Perimeter, Region, Subscription, ThresholdDirection,
-    TimeRange, WindowEstimator, cost_reference_catalog, validate_webhook_url,
+    TimeRange, WindowEstimator, bucketize, cost_reference_catalog, summarize, validate_webhook_url,
 };
 use carbonfr_core::ports::{
     ApiKeyRepository, CrossBorderRepository, ForecastModel, IntensityRepository,
@@ -31,7 +31,7 @@ use crate::dto::{
     SlotsResponse, StatsResponse, StreamEventBody, VisitStatsResponse, WeatherHistoryResponse,
     WeatherResponse, WebhookListResponse,
 };
-use crate::error::{ApiError, ProblemDetails};
+use crate::error::{ApiError, ProblemDetails, ValidatedQuery};
 use crate::{AppState, ForecastState};
 use std::convert::Infallible;
 
@@ -85,9 +85,21 @@ fn resolve_region(slug: &Option<String>) -> Result<Region, ApiError> {
     }
 }
 
-/// Méthodologie demandée (`?methodology=`), ou celle par défaut de l'état.
-fn resolve_methodology(requested: &Option<String>, default: &str) -> String {
-    requested.clone().unwrap_or_else(|| default.to_string())
+/// Méthodologies servies (ADR-0005/0008/0010) — valide `?methodology=`
+/// symétriquement à la région.
+const KNOWN_METHODOLOGIES: &[&str] = &["rte-direct", "acv-ademe"];
+
+/// Méthodologie demandée (`?methodology=`), ou celle par défaut de l'état. 400 si
+/// la méthodologie demandée est inconnue (audit F30 : sinon elle produit un 404
+/// `no_data` trompeur, symétriquement à `resolve_region` qui rejette en 400).
+fn resolve_methodology(requested: &Option<String>, default: &str) -> Result<String, ApiError> {
+    match requested {
+        None => Ok(default.to_string()),
+        Some(m) if KNOWN_METHODOLOGIES.contains(&m.as_str()) => Ok(m.clone()),
+        Some(m) => Err(ApiError::bad_request(format!(
+            "méthodologie inconnue : {m}"
+        ))),
+    }
 }
 
 /// `true` si la requête vise `acv-ademe@2` (consommation) — chemin calculé à la
@@ -128,20 +140,20 @@ fn parse_timestamp(name: &str, raw: &str) -> Result<OffsetDateTime, ApiError> {
     params(RegionQuery),
     responses(
         (status = 200, description = "Dernière mesure", body = IntensityResponse),
-        (status = 400, description = "Région ou méthodologie invalide", body = ProblemDetails),
-        (status = 404, description = "Aucune donnée", body = ProblemDetails),
+        (status = 400, description = "Région ou méthodologie invalide", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 404, description = "Aucune donnée", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "intensité"
 )]
 pub(crate) async fn intensity_now<R>(
     State(state): State<AppState<R>>,
-    Query(query): Query<RegionQuery>,
+    ValidatedQuery(query): ValidatedQuery<RegionQuery>,
 ) -> Result<Json<IntensityResponse>, ApiError>
 where
     R: IntensityRepository + CrossBorderRepository + Clone + Send + Sync + 'static,
 {
     let region = query.resolve()?;
-    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
     check_version(&methodology, query.version)?;
 
     // Chemin `acv-ademe@2` consumption-based : calculé à la lecture depuis le mix
@@ -169,20 +181,32 @@ where
     params(RegionQuery),
     responses(
         (status = 200, description = "Mix de production (MW)", body = MixResponse),
-        (status = 400, description = "Région ou méthodologie invalide", body = ProblemDetails),
-        (status = 404, description = "Aucune donnée / mix indisponible", body = ProblemDetails),
+        (status = 400, description = "Région ou méthodologie invalide", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 404, description = "Aucune donnée / mix indisponible", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "mix"
 )]
 pub(crate) async fn mix<R>(
     State(state): State<AppState<R>>,
-    Query(query): Query<RegionQuery>,
+    ValidatedQuery(query): ValidatedQuery<RegionQuery>,
 ) -> Result<Json<MixResponse>, ApiError>
 where
     R: IntensityRepository + Clone + Send + Sync + 'static,
 {
     let region = query.resolve()?;
-    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
+    // Rejette une `version` inconnue plutôt que de l'ignorer silencieusement, comme
+    // `/v1/intensity/now` (audit F12). De plus, `/v1/mix` ne sert que le mix de
+    // production (`@1`) : `acv-ademe&version=2` (consommation) n'a pas de mix
+    // propre → 400 explicite au lieu de renvoyer silencieusement le mix `@1`.
+    check_version(&methodology, query.version)?;
+    if wants_consumption(&methodology, query.version) {
+        return Err(ApiError::bad_request(
+            "/v1/mix ne fournit que le mix de production ; acv-ademe version=2 \
+             (consommation) n'a pas de mix propre"
+                .to_string(),
+        ));
+    }
     let use_case = GetCurrentIntensity::new(state.repo.clone(), methodology);
     let measurement = use_case.execute(region).await?;
     let mix = measurement.mix.as_ref().ok_or_else(|| {
@@ -203,7 +227,7 @@ where
     path = "/v1/exchanges",
     responses(
         (status = 200, description = "Échanges transfrontaliers courants", body = ExchangesResponse),
-        (status = 404, description = "Aucune donnée d'échange disponible", body = ProblemDetails),
+        (status = 404, description = "Aucune donnée d'échange disponible", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "échanges"
 )]
@@ -227,13 +251,13 @@ where
     params(DateRangeQuery),
     responses(
         (status = 200, description = "Série historique des échanges", body = ExchangesHistoryResponse),
-        (status = 400, description = "Bornes manquantes ou invalides", body = ProblemDetails),
+        (status = 400, description = "Bornes manquantes ou invalides", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "échanges"
 )]
 pub(crate) async fn exchanges_date<R>(
     State(state): State<AppState<R>>,
-    Query(query): Query<DateRangeQuery>,
+    ValidatedQuery(query): ValidatedQuery<DateRangeQuery>,
 ) -> Result<Json<ExchangesHistoryResponse>, ApiError>
 where
     R: IntensityRepository + CrossBorderRepository + Clone + Send + Sync + 'static,
@@ -269,7 +293,7 @@ where
     path = "/v1/weather",
     responses(
         (status = 200, description = "Météo nationale courante", body = WeatherResponse),
-        (status = 404, description = "Aucune donnée météo disponible", body = ProblemDetails),
+        (status = 404, description = "Aucune donnée météo disponible", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "météo"
 )]
@@ -292,13 +316,13 @@ where
     params(DateRangeQuery),
     responses(
         (status = 200, description = "Série météo historique", body = WeatherHistoryResponse),
-        (status = 400, description = "Bornes manquantes ou invalides", body = ProblemDetails),
+        (status = 400, description = "Bornes manquantes ou invalides", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "météo"
 )]
 pub(crate) async fn weather_date<R>(
     State(state): State<AppState<R>>,
-    Query(query): Query<DateRangeQuery>,
+    ValidatedQuery(query): ValidatedQuery<DateRangeQuery>,
 ) -> Result<Json<WeatherHistoryResponse>, ApiError>
 where
     R: WeatherRepository + Clone + Send + Sync + 'static,
@@ -336,8 +360,8 @@ where
     path = "/v1/renewable",
     responses(
         (status = 200, description = "Production renouvelable estimée + facteur de charge", body = RenewableResponse),
-        (status = 404, description = "Aucune météo disponible", body = ProblemDetails),
-        (status = 503, description = "Modèle renouvelable non calibré", body = ProblemDetails),
+        (status = 404, description = "Aucune météo disponible", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 503, description = "Modèle renouvelable non calibré", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "renouvelable"
 )]
@@ -361,8 +385,10 @@ where
 #[into_params(parameter_in = Query)]
 pub(crate) struct HistoryQuery {
     /// Début de l'intervalle (RFC 3339, inclus). Requis.
+    #[param(required)]
     from: Option<String>,
     /// Fin de l'intervalle (RFC 3339, exclu). Requis.
+    #[param(required)]
     to: Option<String>,
     /// Slug de région. National par défaut.
     region: Option<String>,
@@ -382,8 +408,10 @@ pub(crate) struct HistoryQuery {
 #[into_params(parameter_in = Query)]
 pub(crate) struct DateRangeQuery {
     /// Début de l'intervalle (RFC 3339, inclus). Requis.
+    #[param(required)]
     from: Option<String>,
     /// Fin de l'intervalle (RFC 3339, exclu). Requis.
+    #[param(required)]
     to: Option<String>,
 }
 
@@ -395,13 +423,13 @@ pub(crate) struct DateRangeQuery {
     params(HistoryQuery),
     responses(
         (status = 200, description = "Série chronologique", body = HistoryResponse),
-        (status = 400, description = "Paramètre invalide ou fenêtre > 366 jours", body = ProblemDetails),
+        (status = 400, description = "Paramètre invalide ou fenêtre > 366 jours", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "intensité"
 )]
 pub(crate) async fn intensity_date<R>(
     State(state): State<AppState<R>>,
-    Query(query): Query<HistoryQuery>,
+    ValidatedQuery(query): ValidatedQuery<HistoryQuery>,
 ) -> Result<Json<HistoryResponse>, ApiError>
 where
     R: IntensityRepository + CrossBorderRepository + Clone + Send + Sync + 'static,
@@ -428,7 +456,7 @@ where
     let range = TimeRange::new(from, to)
         .ok_or_else(|| ApiError::bad_request("`to` doit être strictement postérieur à `from`"))?;
 
-    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
     check_version(&methodology, query.version)?;
 
     // Chemin `acv-ademe@2` consommation : série calculée à la lecture (ADR-0010).
@@ -461,8 +489,10 @@ where
 #[into_params(parameter_in = Query)]
 pub(crate) struct StatsQuery {
     /// Début de l'intervalle (RFC 3339, inclus). Requis.
+    #[param(required)]
     from: Option<String>,
     /// Fin de l'intervalle (RFC 3339, exclu). Requis.
+    #[param(required)]
     to: Option<String>,
     /// Slug de région. National par défaut.
     region: Option<String>,
@@ -482,14 +512,14 @@ pub(crate) struct StatsQuery {
     params(StatsQuery),
     responses(
         (status = 200, description = "Résumé (et série si interval)", body = StatsResponse),
-        (status = 400, description = "Paramètre invalide", body = ProblemDetails),
-        (status = 404, description = "Aucune donnée sur l'intervalle", body = ProblemDetails),
+        (status = 400, description = "Paramètre invalide", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 404, description = "Aucune donnée sur l'intervalle", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "intensité"
 )]
 pub(crate) async fn intensity_stats<R>(
     State(state): State<AppState<R>>,
-    Query(query): Query<StatsQuery>,
+    ValidatedQuery(query): ValidatedQuery<StatsQuery>,
 ) -> Result<Json<StatsResponse>, ApiError>
 where
     R: IntensityRepository + CrossBorderRepository + Clone + Send + Sync + 'static,
@@ -515,7 +545,7 @@ where
     let range = TimeRange::new(from, to)
         .ok_or_else(|| ApiError::bad_request("`to` doit être strictement postérieur à `from`"))?;
 
-    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
     check_version(&methodology, query.version)?;
     let consumption = wants_consumption(&methodology, query.version);
     if consumption && region != Region::National {
@@ -525,12 +555,23 @@ where
     }
 
     // `acv-ademe@2` : résumé et série agrégée **calculés à la lecture** (ADR-0010
-    // §6 ; la série n'est pas matérialisée en rollup). Sinon, agrégat SQL exact.
+    // §6 ; la série n'est pas matérialisée en rollup) — l'historique dérivé
+    // (`range` + `flows_range` + `derive_consumption_series`) est calculé **une
+    // seule fois** puis réutilisé pour le résumé ET la série (corrige F18 : sinon
+    // `summary()` puis `series()` refaisaient chacune toute la dérivation). Sinon
+    // (rte-direct / acv-ademe@1), agrégat SQL exact + rollup : deux requêtes
+    // ciblées, pas de duplication à corriger.
     let consumption_uc = GetConsumptionIntensity::new(state.repo.clone(), state.repo.clone());
     let stats_uc = GetIntensityStats::new(state.repo.clone(), methodology.clone());
 
-    let summary = if consumption {
-        consumption_uc.summary(region, range).await?
+    let consumption_history = if consumption {
+        Some(consumption_uc.history(region, range).await?)
+    } else {
+        None
+    };
+
+    let summary = if let Some(history) = &consumption_history {
+        summarize(history)
     } else {
         stats_uc.summary(region, range).await?
     }
@@ -546,8 +587,8 @@ where
         Some(raw) => {
             let granularity = Granularity::from_label(raw)
                 .ok_or_else(|| ApiError::bad_request("`interval` doit valoir `hour` ou `day`"))?;
-            let series = if consumption {
-                consumption_uc.series(region, range, granularity).await?
+            let series = if let Some(history) = &consumption_history {
+                bucketize(history, granularity)
             } else {
                 stats_uc.series(region, range, granularity).await?
             };
@@ -609,20 +650,20 @@ pub(crate) struct ForecastQuery {
     params(ForecastQuery),
     responses(
         (status = 200, description = "Série prévue", body = ForecastResponse),
-        (status = 400, description = "Paramètre invalide", body = ProblemDetails),
-        (status = 404, description = "Historique insuffisant pour prévoir", body = ProblemDetails),
+        (status = 400, description = "Paramètre invalide", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 404, description = "Historique insuffisant pour prévoir", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "prévision"
 )]
 pub(crate) async fn forecast<F>(
     State(state): State<ForecastState<F>>,
-    Query(query): Query<ForecastQuery>,
+    ValidatedQuery(query): ValidatedQuery<ForecastQuery>,
 ) -> Result<Json<ForecastResponse>, ApiError>
 where
     F: ForecastModel + Clone + Send + Sync + 'static,
 {
     let region = resolve_region(&query.region)?;
-    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
     check_version(&methodology, query.version)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let horizon = Duration::hours(horizon_hours as i64);
@@ -745,21 +786,21 @@ fn resolve_estimator(raw: &Option<String>) -> Result<WindowEstimator, ApiError> 
     params(GreenestWindowQuery),
     responses(
         (status = 200, description = "Créneau le plus bas-carbone", body = GreenestWindowResponse),
-        (status = 400, description = "Paramètre invalide", body = ProblemDetails),
-        (status = 404, description = "Série insuffisante pour déterminer un créneau", body = ProblemDetails),
-        (status = 503, description = "Overlay d'éligibilité demandé mais non câblé", body = ProblemDetails),
+        (status = 400, description = "Paramètre invalide", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 404, description = "Série insuffisante pour déterminer un créneau", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 503, description = "Overlay d'éligibilité demandé mais non câblé", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "prévision"
 )]
 pub(crate) async fn greenest_window<F>(
     State(state): State<ForecastState<F>>,
-    Query(query): Query<GreenestWindowQuery>,
+    ValidatedQuery(query): ValidatedQuery<GreenestWindowQuery>,
 ) -> Result<Json<GreenestWindowResponse>, ApiError>
 where
     F: ForecastModel + Clone + Send + Sync + 'static,
 {
     let region = resolve_region(&query.region)?;
-    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let window_minutes = query.window_minutes.unwrap_or(DEFAULT_WINDOW_MINUTES);
     if window_minutes == 0 || window_minutes as u64 > horizon_hours as u64 * 60 {
@@ -891,20 +932,20 @@ pub(crate) struct ScheduleQuery {
     params(ScheduleQuery),
     responses(
         (status = 200, description = "Créneau planifié + économie", body = ScheduleResponse),
-        (status = 400, description = "Paramètre invalide", body = ProblemDetails),
-        (status = 404, description = "Série insuffisante", body = ProblemDetails),
+        (status = 400, description = "Paramètre invalide", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 404, description = "Série insuffisante", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "usage"
 )]
 pub(crate) async fn schedule<F>(
     State(state): State<ForecastState<F>>,
-    Query(query): Query<ScheduleQuery>,
+    ValidatedQuery(query): ValidatedQuery<ScheduleQuery>,
 ) -> Result<Json<ScheduleResponse>, ApiError>
 where
     F: ForecastModel + Clone + Send + Sync + 'static,
 {
     let region = resolve_region(&query.region)?;
-    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let duration_minutes = query.duration_minutes.unwrap_or(DEFAULT_WINDOW_MINUTES);
     if duration_minutes == 0 || duration_minutes as u64 > horizon_hours as u64 * 60 {
@@ -954,7 +995,11 @@ pub(crate) struct SlotsQuery {
     methodology: Option<String>,
     from: Option<String>,
     horizon_hours: Option<u32>,
-    /// Nombre de créneaux les moins intenses à retourner. Requis (1..=horizon).
+    /// Nombre de créneaux les moins intenses à retourner. Requis, doit être > 0.
+    /// Si `count` dépasse le nombre de créneaux disponibles sur l'horizon (pas une
+    /// erreur : cf. `lowest_slots_caps_at_series_length` dans le core), la réponse
+    /// est plafonnée silencieusement — le champ `count` de la réponse reflète alors
+    /// le nombre réellement renvoyé, pas celui demandé.
     count: Option<u32>,
     estimator: Option<String>,
 }
@@ -967,19 +1012,19 @@ pub(crate) struct SlotsQuery {
     params(SlotsQuery),
     responses(
         (status = 200, description = "Créneaux les moins intenses", body = SlotsResponse),
-        (status = 400, description = "Paramètre invalide", body = ProblemDetails),
+        (status = 400, description = "Paramètre invalide", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "usage"
 )]
 pub(crate) async fn schedule_slots<F>(
     State(state): State<ForecastState<F>>,
-    Query(query): Query<SlotsQuery>,
+    ValidatedQuery(query): ValidatedQuery<SlotsQuery>,
 ) -> Result<Json<SlotsResponse>, ApiError>
 where
     F: ForecastModel + Clone + Send + Sync + 'static,
 {
     let region = resolve_region(&query.region)?;
-    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let count = query
         .count
@@ -1029,19 +1074,19 @@ pub(crate) struct BelowQuery {
     params(BelowQuery),
     responses(
         (status = 200, description = "Créneaux sous le seuil", body = SlotsResponse),
-        (status = 400, description = "Paramètre invalide", body = ProblemDetails),
+        (status = 400, description = "Paramètre invalide", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "usage"
 )]
 pub(crate) async fn intensity_below<F>(
     State(state): State<ForecastState<F>>,
-    Query(query): Query<BelowQuery>,
+    ValidatedQuery(query): ValidatedQuery<BelowQuery>,
 ) -> Result<Json<SlotsResponse>, ApiError>
 where
     F: ForecastModel + Clone + Send + Sync + 'static,
 {
     let region = resolve_region(&query.region)?;
-    let methodology = resolve_methodology(&query.methodology, &state.methodology);
+    let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let threshold = query
         .threshold
@@ -1097,13 +1142,13 @@ pub(crate) struct StreamQuery {
     params(StreamQuery),
     responses(
         (status = 200, description = "Flux SSE d'événements `intensity` (text/event-stream)"),
-        (status = 400, description = "Région invalide", body = ProblemDetails),
+        (status = 400, description = "Région invalide", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "usage"
 )]
 pub(crate) async fn intensity_stream(
     State(state): State<crate::StreamState>,
-    Query(query): Query<StreamQuery>,
+    ValidatedQuery(query): ValidatedQuery<StreamQuery>,
 ) -> Result<
     axum::response::Sse<
         impl tokio_stream::Stream<Item = Result<axum::response::sse::Event, Infallible>>,
@@ -1169,8 +1214,8 @@ async fn authenticate_owner<R: ApiKeyRepository>(
     request_body = CreateWebhookRequest,
     responses(
         (status = 201, description = "Abonnement créé (secret affiché une fois)", body = CreatedWebhookResponse),
-        (status = 400, description = "Paramètre invalide ou URL refusée (anti-SSRF)", body = ProblemDetails),
-        (status = 401, description = "Clé API requise/inconnue", body = ProblemDetails),
+        (status = 400, description = "Paramètre invalide ou URL refusée (anti-SSRF)", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 401, description = "Clé API requise/inconnue", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "webhooks"
 )]
@@ -1183,13 +1228,18 @@ where
     R: ApiKeyRepository + SubscriptionRepository + Clone + Send + Sync + 'static,
 {
     let owner = authenticate_owner(&state.repo, &headers).await?;
-    // Quota par clé : borne le stockage et l'amplification de livraisons sortantes.
-    if state.repo.list_for_owner(&owner).await?.len() >= MAX_WEBHOOKS_PER_KEY {
-        return Err(ApiError::bad_request(format!(
-            "quota d'abonnements atteint (maximum {MAX_WEBHOOKS_PER_KEY} par clé)"
-        )));
-    }
     let region = resolve_region(&request.region)?;
+    // Le watcher (spawn_webhook_watcher) ne consomme que les mises à jour
+    // nationales (rte-direct) diffusées par le poller : un abonnement sur une
+    // région métropolitaine ne se déclencherait jamais. On le rejette
+    // explicitement plutôt que de le laisser silencieusement mort (audit F08).
+    if region != Region::National {
+        return Err(ApiError::bad_request(
+            "les webhooks ne sont supportés que pour la région nationale \
+             (`region` doit être omis ou valoir `national`) : le watcher ne \
+             surveille que les mises à jour nationales",
+        ));
+    }
     let direction = ThresholdDirection::from_code(&request.direction)
         .ok_or_else(|| ApiError::bad_request("`direction` doit valoir `below` ou `above`"))?;
     if !request.threshold.is_finite() || request.threshold < 0.0 {
@@ -1215,7 +1265,18 @@ where
         callback_url: request.callback_url,
         secret,
     };
-    state.repo.create(&subscription).await?;
+    // Quota par clé : comptage + insertion **atomiques** côté adapter (verrou
+    // consultatif Postgres par propriétaire) — pas de fenêtre TOCTOU entre deux
+    // créations concurrentes de la même clé (audit F22).
+    let created = state
+        .repo
+        .create(&subscription, MAX_WEBHOOKS_PER_KEY)
+        .await?;
+    if !created {
+        return Err(ApiError::bad_request(format!(
+            "quota d'abonnements atteint (maximum {MAX_WEBHOOKS_PER_KEY} par clé)"
+        )));
+    }
     Ok((
         StatusCode::CREATED,
         Json(CreatedWebhookResponse::from_subscription(&subscription)),
@@ -1228,7 +1289,7 @@ where
     path = "/v1/webhooks",
     responses(
         (status = 200, description = "Abonnements de la clé", body = WebhookListResponse),
-        (status = 401, description = "Clé API requise/inconnue", body = ProblemDetails),
+        (status = 401, description = "Clé API requise/inconnue", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "webhooks"
 )]
@@ -1251,8 +1312,8 @@ where
     params(("id" = String, Path, description = "Identifiant d'abonnement")),
     responses(
         (status = 204, description = "Supprimé"),
-        (status = 401, description = "Clé API requise/inconnue", body = ProblemDetails),
-        (status = 404, description = "Abonnement introuvable", body = ProblemDetails),
+        (status = 401, description = "Clé API requise/inconnue", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 404, description = "Abonnement introuvable", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "webhooks"
 )]
@@ -1364,7 +1425,7 @@ pub(crate) async fn health() -> &'static str {
     path = "/health/ready",
     responses(
         (status = 200, description = "Base accessible", body = String),
-        (status = 503, description = "Base indisponible", body = ProblemDetails),
+        (status = 503, description = "Base indisponible", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "opérations"
 )]
@@ -1413,14 +1474,14 @@ pub(crate) struct FactorsQuery {
     params(FactorsQuery),
     responses(
         (status = 200, description = "Table des facteurs", body = FactorsResponse),
-        (status = 400, description = "Méthode sans table de facteurs", body = ProblemDetails),
+        (status = 400, description = "Méthode sans table de facteurs", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "méthodologie"
 )]
 pub(crate) async fn factors(
-    Query(query): Query<FactorsQuery>,
+    ValidatedQuery(query): ValidatedQuery<FactorsQuery>,
 ) -> Result<Json<FactorsResponse>, ApiError> {
-    let methodology = resolve_methodology(&query.methodology, "acv-ademe");
+    let methodology = resolve_methodology(&query.methodology, "acv-ademe")?;
     match methodology.as_str() {
         "acv-ademe" => {
             let version = query.version.unwrap_or(2);
@@ -1473,14 +1534,14 @@ pub(crate) struct PriceQuery {
     params(PriceQuery),
     responses(
         (status = 200, description = "Décomposition courante du prix payé", body = PriceResponse),
-        (status = 400, description = "Région non nationale", body = ProblemDetails),
-        (status = 404, description = "Aucun mix ou prix spot disponible", body = ProblemDetails),
+        (status = 400, description = "Région non nationale", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 404, description = "Aucun mix ou prix spot disponible", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "prix"
 )]
 pub(crate) async fn price<R>(
     State(state): State<AppState<R>>,
-    Query(query): Query<PriceQuery>,
+    ValidatedQuery(query): ValidatedQuery<PriceQuery>,
 ) -> Result<Json<PriceResponse>, ApiError>
 where
     R: IntensityRepository + SpotPriceRepository + Clone + Send + Sync + 'static,
@@ -1496,8 +1557,10 @@ where
 #[into_params(parameter_in = Query)]
 pub(crate) struct PriceHistoryQuery {
     /// Début de l'intervalle (RFC 3339, inclus). Requis.
+    #[param(required)]
     from: Option<String>,
     /// Fin de l'intervalle (RFC 3339, exclu). Requis.
+    #[param(required)]
     to: Option<String>,
     /// Région. **National uniquement**.
     region: Option<String>,
@@ -1512,13 +1575,13 @@ pub(crate) struct PriceHistoryQuery {
     params(PriceHistoryQuery),
     responses(
         (status = 200, description = "Série de prix sur l'intervalle", body = PriceHistoryResponse),
-        (status = 400, description = "Bornes manquantes/invalides ou région non nationale", body = ProblemDetails),
+        (status = 400, description = "Bornes manquantes/invalides ou région non nationale", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "prix"
 )]
 pub(crate) async fn price_date<R>(
     State(state): State<AppState<R>>,
-    Query(query): Query<PriceHistoryQuery>,
+    ValidatedQuery(query): ValidatedQuery<PriceHistoryQuery>,
 ) -> Result<Json<PriceHistoryResponse>, ApiError>
 where
     R: IntensityRepository + SpotPriceRepository + Clone + Send + Sync + 'static,
@@ -1574,12 +1637,12 @@ pub(crate) struct CostReferenceQuery {
     params(CostReferenceQuery),
     responses(
         (status = 200, description = "Fourchettes LCOE par filière (estimation)", body = CostReferenceResponse),
-        (status = 400, description = "Filtre inconnu (source/technologie/périmètre)", body = ProblemDetails),
+        (status = 400, description = "Filtre inconnu (source/technologie/périmètre)", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "prix"
 )]
 pub(crate) async fn cost_reference(
-    Query(query): Query<CostReferenceQuery>,
+    ValidatedQuery(query): ValidatedQuery<CostReferenceQuery>,
 ) -> Result<Json<CostReferenceResponse>, ApiError> {
     let source = match &query.source {
         Some(s) => Some(

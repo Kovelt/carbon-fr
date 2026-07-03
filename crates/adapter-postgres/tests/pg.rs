@@ -388,6 +388,49 @@ async fn weather_keeps_run_history_per_valid_time() {
     assert_eq!(got[0].run_at, run1);
     assert_eq!(got[1].run_at, run2);
     assert_eq!(got[1].wind, 25.0);
+
+    // F19 : `weather_latest` ne rend que le run le plus récent par échéance
+    // (dédup côté base), sans transférer tout l'historique.
+    let latest = repo.weather_latest(window).await.unwrap();
+    assert_eq!(latest.len(), 1, "une seule ligne par échéance");
+    assert_eq!(latest[0].run_at, run2);
+    assert_eq!(latest[0].wind, 25.0);
+}
+
+/// F24 : deux `LoadRecord` **complémentaires** (réalisée seule + prévue seule)
+/// pour la même clé `(region, at)` dans un **seul** `upsert_loads` doivent
+/// **fusionner** (aucun champ perdu), pas s'écraser.
+#[tokio::test]
+async fn upsert_loads_merges_complementary_records_in_same_batch() {
+    let Some(repo) = setup("test-pg-load-merge").await else {
+        return;
+    };
+    let at = OffsetDateTime::UNIX_EPOCH + Duration::days(7000);
+    sqlx::query("DELETE FROM consumption WHERE at = $1")
+        .bind(at)
+        .execute(repo.pool())
+        .await
+        .expect("nettoyage consumption");
+
+    let written = repo
+        .upsert_loads(&[
+            LoadRecord::realized(at, Region::National, 55000.0),
+            LoadRecord::forecast(at, Region::National, 54000.0),
+        ])
+        .await
+        .unwrap();
+    assert_eq!(written, 1, "une seule ligne fusionnée");
+
+    use sqlx::Row;
+    let row = sqlx::query("SELECT realized, forecast FROM consumption WHERE at = $1")
+        .bind(at)
+        .fetch_one(repo.pool())
+        .await
+        .unwrap();
+    let realized: Option<f64> = row.try_get("realized").unwrap();
+    let forecast: Option<f64> = row.try_get("forecast").unwrap();
+    assert_eq!(realized, Some(55000.0), "champ réalisé conservé");
+    assert_eq!(forecast, Some(54000.0), "champ prévu conservé (pas écrasé)");
 }
 
 /// Deux lignes de **même clé** dans un **seul** `upsert_many` : sans la dédup
@@ -818,7 +861,7 @@ async fn webhook_subscription_crud_scoped_to_owner() {
         callback_url: "https://hooks.example.com/c".to_string(),
         secret: "s3cr3t".to_string(),
     };
-    repo.create(&sub).await.unwrap();
+    assert!(repo.create(&sub, 50).await.unwrap());
 
     // Listé pour son propriétaire, pas pour un autre.
     assert_eq!(repo.list_for_owner("owner-aaa").await.unwrap().len(), 1);

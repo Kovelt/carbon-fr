@@ -362,6 +362,10 @@ where
 
     core.merge(forecasting)
         .merge(streaming)
+        // Fallback AVANT les couches : un chemin inconnu doit traverser CORS/Trace
+        // comme une réponse normale (sinon un client navigateur ne peut pas lire le
+        // corps du 404). Cf. `fallback_not_found` (audit F16).
+        .fallback(fallback_not_found)
         // Limite de corps serrée : nos seuls POST (webhook, visite) sont de petits
         // JSON. 16 Kio plafonne un corps abusif bien sous le défaut axum (2 Mio).
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
@@ -374,6 +378,18 @@ where
         // clés API passent par l'en-tête `Authorization`, pas par `credentials`).
         // Couche la plus externe : gère le préflight `OPTIONS` avant le routage.
         .layer(cors_layer())
+}
+
+/// Fallback du routeur : tout chemin qui ne correspond à aucune route déclarée
+/// reçoit un 404 **Problem Details** (ADR-0021) au lieu du 404 axum par défaut
+/// (corps vide, sans `Content-Type`) — audit F16.
+async fn fallback_not_found() -> axum::response::Response {
+    error::problem_response(
+        axum::http::StatusCode::NOT_FOUND,
+        "not_found",
+        "Route inexistante",
+        "aucune route ne correspond à ce chemin",
+    )
 }
 
 /// Politique CORS de l'API : ouverte en lecture (origine/méthodes/en-têtes `Any`),

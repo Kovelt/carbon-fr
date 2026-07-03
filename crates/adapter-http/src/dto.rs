@@ -168,7 +168,10 @@ impl RenewableResponse {
         let wind_mw = model.estimate_wind_mw(w.wind);
         let solar_mw = model.estimate_solar_mw(w.irradiance);
         let solar_cf = if model.solar_capacity_mw > 0.0 {
-            solar_mw / model.solar_capacity_mw
+            // Clampé à [0,1] : une irradiance > STC (1000 W/m², réflexion de bord
+            // de nuage) donnerait sinon un facteur de charge > 1, contredisant
+            // l'invariant documenté du champ (audit F28).
+            (solar_mw / model.solar_capacity_mw).clamp(0.0, 1.0)
         } else {
             0.0
         };

@@ -32,6 +32,7 @@ tokio = { workspace = true, features = [
     "net",
 ] }
 anyhow = { workspace = true }
+rand = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 time = { workspace = true, features = ["parsing"] }

@@ -109,8 +109,9 @@ d'erreur, paramètres requis).
 
 ### Durcissement
 
-- **Jeton webhook via CSPRNG userspace** (audit F29) : `random_hex` n'ouvre plus
-  `/dev/urandom` en I/O synchrone sur le runtime Tokio (`rand::rng()`).
+- **Génération de secrets via CSPRNG userspace** (audit F29) : `random_hex`
+  (secrets webhook) **et** `generate_api_key` (sous-commande `mint-key`) n'ouvrent
+  plus `/dev/urandom` en I/O synchrone sur le runtime Tokio (`rand::rng()`).
 
 ### Documentation
 

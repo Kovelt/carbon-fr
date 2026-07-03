@@ -93,3 +93,17 @@ Forces en présence :
 - **Use-case dans `core`** — *écarté* : créerait un cycle (l'orchestration mix+prix vit côté adapter).
 - **`MixForecast` immédiat / branche EUA / servir `rfnbo:2026-revision`** — *reportés* (réserve, droit non adopté).
 - **Ignorer les intervalles ADR-0011** — *écarté* (D17 : l'incertitude est de premier ordre).
+
+---
+
+## Addendum — vérification sur sources primaires (2026-07-03)
+
+Vérification conduite sur les textes officiels (annexe intégrale du Règl. (UE) 2025/2359 lue sur le PDF du JOUE L du 21/11/2025 ; communication AccelerateEU COM(2026) 370 final du 22/04/2026 ; recherche EUR-Lex des actes modifiant 2023/1184). Résultats :
+
+1. **Décision 4 confirmée au verbatim** : l'annexe du 2025/2359 ne fixe **aucun seuil d'intensité électrique**. Le chiffre « 18 gCO₂eq/MJ » qui circule en source secondaire **n'apparaît nulle part** dans le texte — confusion probable avec la valeur **France** de la Table 5 (18,8 en 2019 / 18,3 en 2021, intensités moyennes nationales 2019-2023, source JRC/Eurostat) ou avec le `183 gCO₂eq/MJ` de la méthode (c). L'étiquetage `indicative-non-regulatory` du seuil dérivé `~64` est donc **maintenu**.
+2. **Précision nouvelle** — l'annexe (Partie A, point 6) définit **quatre méthodes alternatives** de comptabilisation de l'électricité réseau non-100 %-renouvelable : **(a)** moyennes **annuelles** nationales (Table 5, l'une des 5 dernières années au choix) ; **(b)** moyenne **horaire** du mix de la bidding zone **prévue day-ahead par le GRT** (H-2 avant gate closure) ; **(c)** heures pleine charge → binaire `0` ou `183 gCO₂eq/MJ` (selon les heures où le prix marginal était fixé par renouvelable/nucléaire) ; **(d)** intensité **horaire de la technologie marginale** fixant le prix, si publiée par le GRT. Notre seuil dérivé correspond implicitement à une lecture de type **(a)** ; les méthodes **(b)/(d)** sont horaires — c'est exactement la famille de signaux que carbon-fr produit (cf. roadmap hydrogène).
+3. **Précision d'attribution** : le comparateur fossile `94 gCO₂eq/MJ` n'est pas répété dans 2025/2359 — il y est incorporé **par renvoi au Règl. (UE) 2023/1185** ; seul le seuil de 70 % y est littéral.
+4. **Décision 8 confirmée** : au 03/07/2026, **aucun acte modificatif** de 2023/1184 n'est adopté ni publié (seul 2024/1408, purement terminologique, existe). La « révision ciblée » RFNBO n'est qu'un engagement politique (AccelerateEU, T2 2026, non délivré à ce jour) ; les chiffres 2032-2033 / grandfathering ~2040 sont des fuites/notes d'analystes, **non actionnables**. `rfnbo:2026-revision` reste `planned`.
+5. **Décision 5 affinée** : l'échéance « consultation nucléaire d'ici 2026-06-30 » vient d'un **considérant** (« should », non contraignant) ; l'obligation de l'**article 3** est l'évaluation au **2028-07-01**. Aucun signe de lancement effectif de la consultation au 03/07/2026.
+
+**Signaux de veille** (chacun justifierait d'ouvrir le chantier `rfnbo:2026-revision`, mais seulement sur texte stable — idéalement adopté par le Collège) : (a) projet de texte sur le portail *Have your say* (« RFNBO » / « renewable hydrogen ») ; (b) nouvel acte dans l'historique EUR-Lex CELEX 32023R1184 ; (c) lancement effectif de la consultation nucléaire. Détail et séquencement : [`docs/roadmap-hydrogene.md`](../roadmap-hydrogene.md).

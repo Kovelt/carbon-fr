@@ -866,6 +866,7 @@ where
                 &points,
                 &ruleset,
                 estimator,
+                state.share_forecast.as_deref(),
             )
             .await;
             Some(EligibilityBody::from_verdicts(

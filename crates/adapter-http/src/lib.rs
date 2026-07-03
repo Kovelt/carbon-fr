@@ -46,6 +46,7 @@ mod error;
 mod handlers;
 
 pub use auth::{AuthConfig, AuthState, enforce, key_fingerprint};
+pub use eligibility_uc::ShareForecastConfig;
 
 use axum::Router;
 use axum::routing::{get, post};
@@ -141,6 +142,16 @@ pub trait EligibilityRepo: Send + Sync {
         &self,
         range: carbonfr_core::domain::TimeRange,
     ) -> Vec<(time::OffsetDateTime, f64)>;
+
+    /// Historique du mix national (`rte-direct`) sur un intervalle, **trié par
+    /// horodatage croissant** — la matière première de la climatologie de part
+    /// renouvelable `share-clim@1` (ADR-0028). Un **seul** aller-retour batch
+    /// (même discipline que `spot_prices_range`, audit F05). `Vec` vide si
+    /// indisponible.
+    async fn national_mix_range(
+        &self,
+        range: carbonfr_core::domain::TimeRange,
+    ) -> Vec<carbonfr_core::domain::Measurement>;
 }
 
 /// Adaptateur d'un repository concret (`R: IntensityRepository +
@@ -200,6 +211,17 @@ where
             .map(|p| (p.at, p.eur_per_mwh))
             .collect()
     }
+
+    async fn national_mix_range(
+        &self,
+        range: carbonfr_core::domain::TimeRange,
+    ) -> Vec<carbonfr_core::domain::Measurement> {
+        // Même ancre `rte-direct` que `latest_national_mix` (ADR-0026 décision 9).
+        self.0
+            .range(carbonfr_core::domain::Region::National, "rte-direct", range)
+            .await
+            .unwrap_or_default()
+    }
 }
 
 /// État des endpoints de **prévision** (ADR-0009), distinct de [`AppState`] : il
@@ -225,6 +247,10 @@ pub struct ForecastState<F> {
     /// dynamique (même motif que `consumption`). `None` → overlay non câblé (503
     /// si demandé), self-hosting et prévision classique intacts.
     pub(crate) eligibility: Option<std::sync::Arc<dyn EligibilityRepo>>,
+    /// Modèle `share-clim@1` (part renouvelable **prévue**, ADR-0028), optionnel.
+    /// `None` (bandes non calibrées, opt-out) → la part future reste
+    /// `Indeterminate`, comportement d'avant ADR-0028.
+    pub(crate) share_forecast: Option<std::sync::Arc<crate::eligibility_uc::ShareForecastConfig>>,
 }
 
 impl<F> ForecastState<F> {
@@ -238,7 +264,19 @@ impl<F> ForecastState<F> {
             consumption: None,
             consumption_model: String::new(),
             eligibility: None,
+            share_forecast: None,
         }
+    }
+
+    /// Câble le modèle `share-clim@1` (part renouvelable prévue pour le pilier
+    /// `renewable-share` de `rfnbo`, ADR-0028). Sans cet appel, les créneaux
+    /// futurs restent `Indeterminate` sur ce pilier (jamais d'extrapolation).
+    pub fn with_share_forecast(
+        mut self,
+        config: std::sync::Arc<crate::eligibility_uc::ShareForecastConfig>,
+    ) -> Self {
+        self.share_forecast = Some(config);
+        self
     }
 
     /// Câble l'overlay d'éligibilité électrolyseur (ADR-0025/0026), servi via

@@ -5,6 +5,7 @@ use time::OffsetDateTime;
 use carbonfr_core::domain::CarbonIntensity;
 
 use crate::ruleset::EligibilityFramework;
+use crate::share_forecast::ShareEstimate;
 
 /// Zone de dépôt (« bidding zone ») — **PIÈGE 1** : la corrélation géographique
 /// RFNBO s'évalue à la zone nationale (FR = une seule zone), **jamais** à l'une
@@ -15,8 +16,9 @@ pub const FR_BIDDING_ZONE: &str = "FR";
 ///
 /// `ForecastPoint` ne porte que l'intensité (pas le mix ni le prix). On enrichit
 /// donc chaque créneau ici. `renewable_share`/`spot_price_eur_mwh` sont `None`
-/// quand l'info n'est pas disponible (au-delà du nowcast pour le mix, au-delà du
-/// day-ahead pour le prix) → signal `Indeterminate`, jamais d'extrapolation.
+/// quand l'info n'est pas disponible (au-delà de l'horizon **calibré** de
+/// `share-clim@1` pour le mix, au-delà du day-ahead pour le prix) → signal
+/// `Indeterminate`, jamais d'extrapolation.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SlotInput {
     pub at: OffsetDateTime,
@@ -27,8 +29,15 @@ pub struct SlotInput {
     /// d'indétermination « seuil ∈ [lower, upper] ».
     pub intensity_lower: CarbonIntensity,
     pub intensity_upper: CarbonIntensity,
-    /// Part renouvelable **instantanée** du mix national (nowcast), `[0,1]`.
-    pub renewable_share: Option<f64>,
+    /// Part renouvelable du mix national, `[0,1]` — **observée** (nowcast,
+    /// intervalle dégénéré) ou **prévue** (`share-clim@1`, intervalle calibré —
+    /// ADR-0028). La provenance et l'intervalle sont portés par l'estimation.
+    pub renewable_share: Option<ShareEstimate>,
+    /// Pourquoi `renewable_share` est `None`, quand il l'est (F12 — la sortie
+    /// distingue « au-delà de l'horizon calibré » de « donnée manquante »).
+    /// Ignoré si `renewable_share` est `Some`. Seules `MissingData` et
+    /// `BeyondCalibratedHorizon` ont un sens ici.
+    pub renewable_share_gap: IndeterminateReason,
     /// Prix spot day-ahead (€/MWh) au créneau, frais (filtré côté adapter).
     pub spot_price_eur_mwh: Option<f64>,
 }
@@ -71,11 +80,18 @@ pub fn basis_of(pillar: Pillar) -> &'static str {
 /// Signal émis par un pilier sur un créneau.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EligibilitySignal {
-    /// Part renouvelable instantanée vs seuil (proxy ; ≠ Article 4 annuel).
+    /// Part renouvelable vs seuil (proxy ; ≠ Article 4 annuel). Observée
+    /// (nowcast) ou prévue (`share-clim@1`) — dans le second cas le verdict est
+    /// tranché sur l'**intervalle** `[lower, upper]` (ferme seulement hors
+    /// recouvrement du seuil, ADR-0028).
     RenewableShare {
         share: f64,
+        lower: f64,
+        upper: f64,
         threshold: f64,
         passed: bool,
+        /// `true` = mix observé ; `false` = part prévue (`share-clim@1`).
+        observed: bool,
     },
     /// Prix day-ahead ≤ seuil de surplus.
     SurplusPrice {
@@ -90,8 +106,41 @@ pub enum EligibilitySignal {
         indicative: bool,
         passed: bool,
     },
-    /// Donnée manquante : le pilier ne peut pas trancher (jamais extrapolé).
-    Indeterminate { pillar: Pillar },
+    /// Le pilier ne peut pas trancher — la raison est portée explicitement
+    /// (revue de neutralité ADR-0028, F12 : des causes opérationnellement très
+    /// différentes ne doivent pas être indiscernables). Jamais extrapolé.
+    Indeterminate {
+        pillar: Pillar,
+        reason: IndeterminateReason,
+    },
+}
+
+/// Pourquoi un pilier n'a pas pu trancher (servi avec le signal — additif).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndeterminateReason {
+    /// Donnée absente (mix/prix/seuil indisponible au créneau).
+    MissingData,
+    /// Créneau au-delà de l'horizon **calibré** de la prévision de part
+    /// renouvelable (`share-clim@1`, ADR-0028) — on ne prévoit pas au-delà.
+    BeyondCalibratedHorizon,
+    /// Le seuil tombe dans l'intervalle de confiance `[lower, upper]` (D17) :
+    /// trancher fermement serait une sur-affirmation.
+    ThresholdWithinInterval,
+    /// Prix connu mais au-dessus du seuil : l'exception surplus n'est pas
+    /// établie SANS être réfutée (la branche EUA n'est pas évaluée) — jamais
+    /// de `fail` ferme sur ce pilier.
+    SurplusNotEstablished,
+}
+
+impl IndeterminateReason {
+    pub fn slug(self) -> &'static str {
+        match self {
+            IndeterminateReason::MissingData => "missing-data",
+            IndeterminateReason::BeyondCalibratedHorizon => "beyond-calibrated-horizon",
+            IndeterminateReason::ThresholdWithinInterval => "threshold-within-interval",
+            IndeterminateReason::SurplusNotEstablished => "surplus-not-established",
+        }
+    }
 }
 
 impl EligibilitySignal {
@@ -100,7 +149,7 @@ impl EligibilitySignal {
             EligibilitySignal::RenewableShare { .. } => Pillar::RenewableShare,
             EligibilitySignal::SurplusPrice { .. } => Pillar::SurplusPrice,
             EligibilitySignal::LowCarbonIntensity { .. } => Pillar::LowCarbonIntensity,
-            EligibilitySignal::Indeterminate { pillar } => pillar,
+            EligibilitySignal::Indeterminate { pillar, .. } => pillar,
         }
     }
 
@@ -126,6 +175,45 @@ impl EligibilitySignal {
                 ..
             } => Some(intensity_g_per_kwh),
             EligibilitySignal::Indeterminate { .. } => None,
+        }
+    }
+
+    /// Provenance de la valeur du signal, pour l'auditabilité : `observed` /
+    /// `forecast` sur le pilier part renouvelable (le seul dont la provenance
+    /// varie créneau par créneau, ADR-0028). `None` ailleurs — **pas** parce que
+    /// les autres piliers seraient de l'observé (l'intensité de l'overlay
+    /// prévisionnel est TOUJOURS une prévision, le prix day-ahead est une donnée
+    /// publiée) : leur provenance est constante et connue de l'adapter, qui la
+    /// sert lui-même (revue de neutralité ADR-0028, F1 — parité de divulgation).
+    pub fn provenance(self) -> Option<&'static str> {
+        match self {
+            EligibilitySignal::RenewableShare { observed, .. } => {
+                Some(if observed { "observed" } else { "forecast" })
+            }
+            _ => None,
+        }
+    }
+
+    /// Raison d'indétermination, `None` si le signal a tranché.
+    pub fn indeterminate_reason(self) -> Option<IndeterminateReason> {
+        match self {
+            EligibilitySignal::Indeterminate { reason, .. } => Some(reason),
+            _ => None,
+        }
+    }
+
+    /// Bornes de l'intervalle de la valeur, quand le signal est une **prévision**
+    /// (part renouvelable `share-clim@1`) — `None` pour l'observé (dégénéré) et
+    /// les autres piliers.
+    pub fn value_bounds(self) -> Option<(f64, f64)> {
+        match self {
+            EligibilitySignal::RenewableShare {
+                lower,
+                upper,
+                observed: false,
+                ..
+            } => Some((lower, upper)),
+            _ => None,
         }
     }
 

@@ -42,7 +42,9 @@ pub use factors::{
     EmissionFactors, TD_LOSS_FACTOR_V1, acv_ademe_consumption_intensity, acv_ademe_intensity,
     derive_acv_ademe, derive_consumption_series,
 };
-pub use forecast::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, climatology_forecast};
+pub use forecast::{
+    CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, climatology_forecast, week_slot,
+};
 pub use forecast_acv::{ACV_FORECAST_ID, ACV_FORECAST_VERSION, acv_ademe_forecast};
 pub use forecast_point::{ForecastPoint, ModelVersion};
 pub use horizon_bands::HorizonBands;

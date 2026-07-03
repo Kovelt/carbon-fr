@@ -107,3 +107,13 @@ Vérification conduite sur les textes officiels (annexe intégrale du Règl. (UE
 5. **Décision 5 affinée** : l'échéance « consultation nucléaire d'ici 2026-06-30 » vient d'un **considérant** (« should », non contraignant) ; l'obligation de l'**article 3** est l'évaluation au **2028-07-01**. Aucun signe de lancement effectif de la consultation au 03/07/2026.
 
 **Signaux de veille** (chacun justifierait d'ouvrir le chantier `rfnbo:2026-revision`, mais seulement sur texte stable — idéalement adopté par le Collège) : (a) projet de texte sur le portail *Have your say* (« RFNBO » / « renewable hydrogen ») ; (b) nouvel acte dans l'historique EUR-Lex CELEX 32023R1184 ; (c) lancement effectif de la consultation nucléaire. Détail et séquencement : [`docs/roadmap-hydrogene.md`](../roadmap-hydrogene.md).
+
+---
+
+## Addendum — décision 9 amendée par l'ADR-0028 (2026-07-03)
+
+La réserve « `MixForecast` » de la décision 9 est levée par l'[ADR-0028](0028-prevision-part-renouvelable-eligibilite.md) (`share-clim@1`, GATE de backtest franchi sur deux fenêtres indépendantes). La décision 9 se lit désormais :
+
+> Part renouvelable **observée** attribuée aux créneaux `at ≤ now` (ancre `rte-direct`, inchangé, intervalle dégénéré). **Au-delà** : part **prévue** par `share-clim@1` **si** les bandes sont calibrées (sinon `Indeterminate`, comme avant), avec verdict par règle d'intervalle (ferme seulement hors recouvrement du seuil — symétrique de la décision 10/D17), provenance `forecast` servie, et **jamais** au-delà de l'horizon calibré (72 h).
+
+Le principe cardinal est inchangé : l'indétermination reste un signal explicite, rien n'est extrapolé en silence — la prévision porte son incertitude au lieu de se taire. La revue de neutralité doit être **re-jouée** avec ce nouveau comportement (engagement du §5 de la revue).

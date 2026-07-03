@@ -1897,6 +1897,13 @@
           "ruleset_version": {
             "type": "string"
           },
+          "share_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Identité versionnée du modèle de part renouvelable **prévue**\n(`share-clim@1`, ADR-0028) — présent seulement si au moins un créneau\nporte une part de provenance `forecast` ; absent si tout est observé ou\nindéterminé (modèle non câblé / hors horizon calibré)."
+          },
           "slots": {
             "type": "array",
             "items": {
@@ -1926,6 +1933,20 @@
             "type": "string",
             "description": "Pilier : `renewable-share`, `surplus-price` ou `low-carbon-intensity`."
           },
+          "provenance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provenance de `value` (parité de divulgation entre piliers, revue F1) :\n`observed` (donnée mesurée/publiée — part au nowcast, prix day-ahead) ou\n`forecast` (prévision — part `share-clim@1` au-delà du nowcast, intensité\nTOUJOURS, puisqu'elle vient du modèle de prévision annoncé par la\nréponse). Absent sur un signal indéterminé (pas de valeur)."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pourquoi le pilier n'a pas tranché (`verdict: indeterminate`) :\n`missing-data`, `beyond-calibrated-horizon` (part au-delà de l'horizon\ncalibré de `share-clim@1`), `threshold-within-interval` (seuil dans\nl'intervalle de confiance, D17), `surplus-not-established` (prix connu\nau-dessus du seuil, branche EUA non évaluée — jamais un échec ferme)."
+          },
           "threshold": {
             "type": [
               "number",
@@ -1934,6 +1955,21 @@
             "format": "double"
           },
           "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "value_lower": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Bornes de l'intervalle de `value` quand le signal est une **prévision**\n(part renouvelable `share-clim@1`, ADR-0028) — absentes pour l'observé\n(intervalle dégénéré) et les autres piliers."
+          },
+          "value_upper": {
             "type": [
               "number",
               "null"

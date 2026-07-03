@@ -8,6 +8,23 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.4.5] - 2026-07-03
+
+GATE de neutralité de la couche « éligibilité électrolyseur » (ADR-0026) :
+verdict **GREEN** après 3 correctifs additifs, plus la roadmap hydrogène et
+l'addendum de vérification réglementaire sur sources primaires. Aucun
+changement cassant.
+
+### Ajouté
+
+- **Roadmap hydrogène** ([`docs/roadmap-hydrogene.md`](docs/roadmap-hydrogene.md)) —
+  séquencée par déclencheurs réglementaires (activation de `rfnbo:2026-revision`
+  sur texte adopté uniquement, `MixForecast`, couche B-light, signaux de
+  veille) ; **addendum ADR-0026** de vérification sur sources primaires
+  (2026-07-03) : l'annexe du Règl. (UE) 2025/2359 ne fixe aucun seuil
+  électrique (proxy `indicative` confirmé), la révision RFNBO n'est pas
+  adoptée ; doc de l'overlay `?eligibility=` ajoutée aux README (racine + SDK).
+
 ### Modifié
 
 - **GATE de neutralité de la couche « éligibilité électrolyseur » franchi**

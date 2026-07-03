@@ -8,6 +8,12 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.4.3] - 2026-07-03
+
+Release patch de sécurité : corrige le contournement SSRF critique du filtre
+d'IP des webhooks (F01) et trois autres constats hauts de l'audit du 2026-07-02
+(F03–F06). Aucun changement d'API.
+
 ### Sécurité
 
 - **SSRF webhooks — contournement du filtre d'IP par encodage alternatif corrigé**

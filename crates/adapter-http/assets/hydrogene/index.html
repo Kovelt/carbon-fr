@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Électrolyseurs × carbone du réseau — carbon-fr</title>
+<meta name="description" content="Carte des électrolyseurs France/Europe croisée avec l'intensité carbone live du réseau électrique français (couche B-light, ADR-0025).">
+<style>
+/* Palette validée (skill dataviz : rampes ordinales 5 classes, light & dark). */
+:root {
+  --surface: #fcfcfb; --plane: #f9f9f7;
+  --ink: #0b0b0b; --ink-2: #52514e; --ink-muted: #898781;
+  --hairline: #e1e0d9; --border: rgba(11,11,11,0.10);
+  --seq-1: #86b6ef; --seq-2: #5598e7; --seq-3: #2a78d6; --seq-4: #1c5cab; --seq-5: #104281;
+  --marker: #eb6834;
+  --nodata: #efeeea; --pays: #f1f0ec; --pays-stroke: #d8d7d0;
+  --ok: #0ca30c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface: #1a1a19; --plane: #0d0d0d;
+    --ink: #ffffff; --ink-2: #c3c2b7; --ink-muted: #898781;
+    --hairline: #2c2c2a; --border: rgba(255,255,255,0.10);
+    /* Rampe inversée en sombre : « proche de la surface » = faible intensité,
+       le fort est saillant (clair) — même set validé, ordre retourné. */
+    --seq-1: #1c5cab; --seq-2: #3987e5; --seq-3: #6da7ec; --seq-4: #9ec5f4; --seq-5: #cde2fb;
+    --marker: #d95926;
+    --nodata: #242423; --pays: #222221; --pays-stroke: #343432;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--plane); color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header { padding: 20px 24px 8px; display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; }
+h1 { font-size: 20px; margin: 0; font-weight: 650; }
+h1 small { font-weight: 400; color: var(--ink-2); font-size: 14px; }
+#live {
+  display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 999px; font-size: 14px;
+}
+#live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-muted); }
+#live.on .dot { background: var(--ok); }
+#live b { font-variant-numeric: tabular-nums; }
+main { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; padding: 8px 24px 24px; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+#carte-card { padding: 8px; position: relative; }
+#vue { position: absolute; top: 14px; left: 14px; z-index: 2; display: flex; gap: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+#vue button {
+  border: 0; background: var(--surface); color: var(--ink-2); padding: 5px 12px; cursor: pointer; font: inherit; font-size: 13px;
+}
+#vue button[aria-pressed="true"] { background: var(--seq-3); color: #fff; }
+svg { display: block; width: 100%; height: auto; }
+.region { stroke: var(--surface); stroke-width: 1; cursor: pointer; transition: filter .15s; }
+.region:hover { filter: brightness(1.12); }
+.pays { fill: var(--pays); stroke: var(--pays-stroke); stroke-width: 0.7; }
+.site { stroke: var(--surface); cursor: pointer; }
+.site.operation { fill: var(--marker); stroke-width: 1.5; }
+.site.construction { fill: transparent; stroke: var(--marker); stroke-width: 2; }
+#tooltip {
+  position: fixed; pointer-events: none; z-index: 10; display: none; max-width: 300px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 12px; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.18);
+}
+#tooltip .t { font-weight: 600; }
+#tooltip .s { color: var(--ink-2); }
+aside h2 { font-size: 14px; margin: 0 0 8px; font-weight: 650; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; }
+.fenetre { display: flex; flex-direction: column; gap: 4px; padding: 10px 0; border-top: 1px solid var(--hairline); font-size: 14px; }
+.fenetre:first-of-type { border-top: 0; padding-top: 2px; }
+.fenetre .cadre { font-weight: 650; }
+.fenetre .val { color: var(--ink-2); }
+.fenetre .val b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.legende { margin-top: 14px; }
+.legende .row { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 13px; color: var(--ink-2); }
+.sw { width: 18px; height: 12px; border-radius: 3px; border: 1px solid var(--border); flex: none; }
+.legende svg { width: 18px; height: 18px; flex: none; }
+footer { padding: 0 24px 28px; color: var(--ink-muted); font-size: 12.5px; max-width: 1100px; }
+footer p { margin: 6px 0; }
+a { color: var(--seq-3); }
+@media (prefers-color-scheme: dark) { a { color: var(--seq-2); } }
+.avert { border-left: 3px solid var(--hairline); padding-left: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Électrolyseurs × carbone du réseau <small>France · Europe — <a href="/docs">carbon-fr</a></small></h1>
+  <span id="live" title="Intensité carbone nationale (rte-direct), temps réel">
+    <span class="dot"></span>
+    <span>Réseau FR&nbsp;: <b id="live-val">—</b> gCO₂eq/kWh</span>
+    <span class="s" id="live-at" style="color:var(--ink-muted)"></span>
+  </span>
+</header>
+
+<main>
+  <div class="card" id="carte-card">
+    <div id="vue" role="group" aria-label="Vue">
+      <button id="btn-fr" aria-pressed="true">France</button>
+      <button id="btn-eu" aria-pressed="false">Europe</button>
+    </div>
+    <svg id="carte" role="img" aria-label="Carte des électrolyseurs et de l'intensité carbone par région"></svg>
+  </div>
+
+  <aside>
+    <div class="card">
+      <h2>Fenêtres favorables — réseau national, 24 h · indépendantes des sites</h2>
+      <div class="fenetre" id="f-rfnbo">
+        <span class="cadre">rfnbo <span class="s" style="font-weight:400;color:var(--ink-muted)">(renouvelable, UE 2023/1184)</span></span>
+        <span class="val">chargement…</span>
+      </div>
+      <div class="fenetre" id="f-lowcarbon">
+        <span class="cadre">low-carbon <span class="s" style="font-weight:400;color:var(--ink-muted)">(bas-carbone, dont nucléaire — UE 2025/2359)</span></span>
+        <span class="val">chargement…</span>
+      </div>
+      <p style="font-size:12.5px;color:var(--ink-muted);margin:10px 0 0">
+        Signaux <b>réseau</b> (zone de dépôt FR), pas une certification. La carte n'évalue
+        <b>pas</b> l'éligibilité de chaque site (donnée au niveau site absente) —
+        détail&nbsp;: <a href="/v1/eligibility/rulesets">cadres servis</a>.
+      </p>
+    </div>
+
+    <div class="card legende" aria-hidden="false">
+      <h2>Légende</h2>
+      <div class="row"><span style="font-size:12px;color:var(--ink-muted)">Intensité du réseau régional (acv-ademe, gCO₂eq/kWh)</span></div>
+      <div class="row"><span class="sw" style="background:var(--seq-1)"></span> &lt; 25</div>
+      <div class="row"><span class="sw" style="background:var(--seq-2)"></span> 25 – 45</div>
+      <div class="row"><span class="sw" style="background:var(--seq-3)"></span> 45 – 70</div>
+      <div class="row"><span class="sw" style="background:var(--seq-4)"></span> 70 – 100</div>
+      <div class="row"><span class="sw" style="background:var(--seq-5)"></span> ≥ 100</div>
+      <div class="row"><span class="sw" style="background:var(--nodata)"></span> sans donnée (hors couverture éCO2mix régional)</div>
+      <div class="row" style="margin-top:10px">
+        <svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" class="site operation" style="stroke:var(--surface)"/></svg>
+        électrolyseur en exploitation
+      </div>
+      <div class="row">
+        <svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" class="site construction"/></svg>
+        en construction
+      </div>
+      <div class="row" style="color:var(--ink-muted)">surface du marqueur ∝ capacité (MWel)</div>
+      <div class="row" style="color:var(--ink-muted);margin-top:6px">couleur régionale = réseau, pas le site — aucune éligibilité par site affichée</div>
+    </div>
+  </aside>
+</main>
+
+<div id="tooltip" role="tooltip"></div>
+
+<footer>
+  <p class="avert">
+    <b>Ce que montre cette page</b> — la couleur des régions est l'intensité carbone <b>du réseau
+    électrique</b> (méthodologie <code>acv-ademe</code>, cycle de vie, dernière mesure), pas celle
+    des sites. Les marqueurs sont un état structurel semestriel du parc d'électrolyse (≥ 0,5 MWel,
+    en exploitation ou en construction — les projets seulement annoncés n'y figurent pas).
+    En France, une intensité basse reflète surtout le <b>nucléaire</b>, pas nécessairement du
+    renouvelable — les cadres <code>rfnbo</code> / <code>low-carbon</code> ci-dessus portent cette
+    distinction réglementaire, au niveau du réseau uniquement.
+    Page hors contrat <code>/v1</code> (comme <code>/docs</code>).
+  </p>
+  <p id="attrib">
+    Sites&nbsp;: <a href="https://observatory.clean-hydrogen.europa.eu/tools-reports/datasets">European
+    Hydrogen Observatory</a> © Clean Hydrogen JU (instantané <span id="snap">…</span>, reproduction
+    autorisée avec mention de la source) · Contours régions&nbsp;: IGN — Admin Express
+    (<a href="https://www.etalab.gouv.fr/licence-ouverte-open-licence">Licence Ouverte 2.0</a>) ·
+    Fond pays&nbsp;: <a href="https://www.naturalearthdata.com/">Natural Earth</a> (domaine public) ·
+    Intensités &amp; fenêtres&nbsp;: données RTE éCO2mix via ODRÉ, retraitées par
+    <a href="https://github.com/Kovelt/carbon-fr">carbon-fr</a>. Annuaire filière&nbsp;: voir aussi
+    <a href="https://vighy.france-hydrogene.org/">Vig'Hy</a> (France Hydrogène).
+  </p>
+</footer>
+
+<script>
+'use strict';
+(async function () {
+  const $ = (id) => document.getElementById(id);
+  const CLASSES = [25, 45, 70, 100]; // bornes des 5 classes
+  const SEQ = ['--seq-1', '--seq-2', '--seq-3', '--seq-4', '--seq-5'];
+  const INSEE_SLUG = {
+    '84': 'auvergne-rhone-alpes', '27': 'bourgogne-franche-comte', '53': 'bretagne',
+    '24': 'centre-val-de-loire', '44': 'grand-est', '32': 'hauts-de-france',
+    '11': 'ile-de-france', '28': 'normandie', '75': 'nouvelle-aquitaine',
+    '76': 'occitanie', '52': 'pays-de-la-loire', '93': 'provence-alpes-cote-d-azur',
+  };
+  const VUES = { fr: { lon: [-5.5, 10.0], lat: [41.0, 51.5] }, eu: { lon: [-11, 26], lat: [36, 62] } };
+  const W = 960;
+
+  // ---- projection équirectangulaire compensée en latitude ----
+  function projector(vue) {
+    const latMid = (vue.lat[0] + vue.lat[1]) / 2;
+    const kx = Math.cos(latMid * Math.PI / 180);
+    const spanX = (vue.lon[1] - vue.lon[0]) * kx;
+    const spanY = vue.lat[1] - vue.lat[0];
+    const H = Math.round(W * spanY / spanX);
+    const sc = W / spanX;
+    return {
+      H,
+      x: (lon) => (lon - vue.lon[0]) * kx * sc,
+      y: (lat) => (vue.lat[1] - lat) * sc,
+    };
+  }
+  function ringPath(ring, p) {
+    return ring.map((pt, i) => (i ? 'L' : 'M') + p.x(pt[0]).toFixed(1) + ' ' + p.y(pt[1]).toFixed(1)).join('') + 'Z';
+  }
+  function geomPath(geom, p) {
+    const polys = geom.type === 'Polygon' ? [geom.coordinates] : geom.coordinates;
+    return polys.map((poly) => poly.map((ring) => ringPath(ring, p)).join('')).join('');
+  }
+
+  // ---- tooltip ----
+  const tip = $('tooltip');
+  function showTip(evt, html) {
+    tip.innerHTML = html;
+    tip.style.display = 'block';
+    const x = Math.min(evt.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+    const y = Math.min(evt.clientY + 14, window.innerHeight - tip.offsetHeight - 8);
+    tip.style.left = x + 'px';
+    tip.style.top = y + 'px';
+  }
+  function hideTip() { tip.style.display = 'none'; }
+
+  // ---- données statiques ----
+  const [regions, pays, sitesDoc] = await Promise.all([
+    fetch('/hydrogene/regions.geojson').then((r) => r.json()),
+    fetch('/hydrogene/pays.geojson').then((r) => r.json()),
+    fetch('/hydrogene/sites.json').then((r) => r.json()),
+  ]);
+  $('snap').textContent = sitesDoc.snapshot;
+  const sites = sitesDoc.sites.slice().sort((a, b) => (b.mw || 0) - (a.mw || 0)); // gros dessous
+
+  // ---- intensités régionales (12 appels légers, acv-ademe) ----
+  const intensites = {}; // slug -> {value, at}
+  await Promise.all(Object.values(INSEE_SLUG).map(async (slug) => {
+    try {
+      const r = await fetch('/v1/intensity/now?region=' + slug + '&methodology=acv-ademe');
+      if (r.ok) {
+        const j = await r.json();
+        intensites[slug] = { value: j.intensity.value, at: j.timestamp };
+      }
+    } catch (e) { /* région sans donnée : classe « sans donnée » */ }
+  }));
+
+  function classe(v) {
+    let i = 0;
+    while (i < CLASSES.length && v >= CLASSES[i]) i++;
+    return getComputedStyle(document.documentElement).getPropertyValue(SEQ[i]).trim();
+  }
+  const fmtH = (iso) => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const fmt1 = (v) => v.toLocaleString('fr-FR', { maximumFractionDigits: 1 });
+
+  // ---- rendu ----
+  const svg = $('carte');
+  function render(vueId) {
+    const vue = VUES[vueId];
+    const p = projector(vue);
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + p.H);
+    let out = '';
+    for (const f of pays.features) {
+      out += '<path class="pays" d="' + geomPath(f.geometry, p) + '"/>';
+    }
+    for (const f of regions.features) {
+      const slug = INSEE_SLUG[f.properties.code];
+      const mes = slug ? intensites[slug] : undefined;
+      const fill = mes ? classe(mes.value) : 'var(--nodata)';
+      out += '<path class="region" data-code="' + f.properties.code + '" fill="' + fill + '" d="' + geomPath(f.geometry, p) + '"/>';
+    }
+    const rScale = vueId === 'fr' ? 1.6 : 1.0;
+    for (const s of sites) {
+      if (vueId === 'fr' && s.country !== 'France') continue;
+      const cx = p.x(s.lon).toFixed(1), cy = p.y(s.lat).toFixed(1);
+      const r = Math.min(16 * rScale, Math.max(2.5, Math.sqrt(s.mw || 1) * 1.05 * rScale)).toFixed(1);
+      const cls = s.stage === 'Operation' ? 'operation' : 'construction';
+      out += '<circle class="site ' + cls + '" data-i="' + sites.indexOf(s) + '" cx="' + cx + '" cy="' + cy + '" r="' + r + '"/>';
+    }
+    svg.innerHTML = out;
+  }
+
+  // ---- interactions carte ----
+  svg.addEventListener('mousemove', (evt) => {
+    const t = evt.target;
+    if (t.classList && t.classList.contains('region')) {
+      const f = regions.features.find((x) => x.properties.code === t.dataset.code);
+      const slug = INSEE_SLUG[f.properties.code];
+      const mes = slug ? intensites[slug] : undefined;
+      showTip(evt, '<div class="t">' + f.properties.nom + '</div>' + (mes
+        ? '<div><b>' + fmt1(mes.value) + '</b> gCO₂eq/kWh <span class="s">(acv-ademe, réseau, ' + fmtH(mes.at) + ')</span></div>'
+        : '<div class="s">sans donnée (hors couverture éCO2mix régional)</div>'));
+    } else if (t.classList && t.classList.contains('site')) {
+      const s = sites[Number(t.dataset.i)];
+      showTip(evt, '<div class="t">' + s.name + '</div>'
+        + '<div class="s">' + s.city + ' · ' + s.country + '</div>'
+        + '<div><b>' + fmt1(s.mw || 0) + ' MWel</b> · ' + (s.stage === 'Operation' ? 'en exploitation' : 'en construction')
+        + (s.year ? ' · ' + s.year : '') + '</div>'
+        + '<div class="s">source : Observatoire européen de l\'hydrogène (' + sitesDoc.snapshot + ')</div>'
+        + '<div class="s" style="margin-top:2px">couleur régionale : signal réseau, pas une éligibilité du site</div>');
+    } else { hideTip(); }
+  });
+  svg.addEventListener('mouseleave', hideTip);
+
+  let vueId = 'fr';
+  render(vueId);
+  function setVue(v) {
+    vueId = v;
+    hideTip(); // le tooltip ne doit pas survivre au re-rendu
+    $('btn-fr').setAttribute('aria-pressed', String(v === 'fr'));
+    $('btn-eu').setAttribute('aria-pressed', String(v === 'eu'));
+    render(v);
+  }
+  $('btn-fr').addEventListener('click', () => setVue('fr'));
+  $('btn-eu').addEventListener('click', () => setVue('eu'));
+
+  // ---- bandeau national : SSE + repli polling ----
+  function setLive(value, at, live) {
+    $('live-val').textContent = fmt1(value);
+    $('live-at').textContent = fmtH(at);
+    $('live').classList.toggle('on', live);
+  }
+  async function pollNow() {
+    try {
+      const j = await (await fetch('/v1/intensity/now')).json();
+      setLive(j.intensity.value, j.timestamp, false);
+    } catch (e) { /* bandeau reste sur la dernière valeur */ }
+  }
+  await pollNow();
+  try {
+    const es = new EventSource('/v1/intensity/stream');
+    es.addEventListener('intensity', (evt) => {
+      const j = JSON.parse(evt.data);
+      setLive(j.intensity, j.timestamp, true);
+    });
+    es.onerror = () => { $('live').classList.remove('on'); };
+  } catch (e) { setInterval(pollNow, 60000); }
+
+  // ---- fenêtres favorables (les 2 cadres, réponse additive) ----
+  async function fenetre(cadre, elId) {
+    const el = $(elId).querySelector('.val');
+    try {
+      const r = await fetch('/v1/intensity/greenest-window?horizon_hours=24&eligibility=' + cadre);
+      if (!r.ok) throw new Error(String(r.status));
+      const j = await r.json();
+      const e = j.eligibility;
+      const n = e.slots.length;
+      if (e.count_eligible > 0) {
+        el.innerHTML = '<b>' + e.count_eligible + '</b>/' + n + ' créneaux éligibles (signaux réseau)'
+          + (e.best_eligible ? ' · meilleur : ' + fmtH(e.best_eligible.timestamp) : '')
+          + (e.count_indeterminate ? ' · ' + e.count_indeterminate + ' indéterminés' : '');
+      } else {
+        el.innerHTML = 'aucun créneau éligible sur 24 h'
+          + (e.count_indeterminate ? ' · <b>' + e.count_indeterminate + '</b>/' + n + ' indéterminés' : '');
+      }
+    } catch (err) {
+      el.textContent = 'indisponible';
+    }
+  }
+  fenetre('rfnbo', 'f-rfnbo');
+  fenetre('low-carbon', 'f-lowcarbon');
+})();
+</script>
+</body>
+</html>

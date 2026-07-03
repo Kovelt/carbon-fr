@@ -8,6 +8,25 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté
+
+- **Carte « électrolyseurs × carbone live »** (`GET /hydrogene`, couche B-light —
+  [ADR-0029](docs/adr/0029-carte-electrolyseurs-carbone-live.md), chantier H6 de
+  la roadmap hydrogène) : page **auto-contenue** (zéro CDN, zéro tuile, zéro
+  bibliothèque — SVG maison, thème clair/sombre, palettes validées) croisant les
+  **233 électrolyseurs européens géolocalisés** de l'European Hydrogen
+  Observatory (© Clean Hydrogen JU, instantané semestriel Dec2025, filtre
+  `Water electrolysis`) avec la donnée live de l'API : choropleth des 12 régions
+  (`acv-ademe`), bandeau national temps réel (SSE), fenêtres d'éligibilité
+  `rfnbo`/`low-carbon`. Fond de carte : IGN Admin Express (Licence Ouverte 2.0)
+  + Natural Earth (domaine public) — GISCO/Eurostat écarté (clause commerciale
+  EuroGeographics), Vig'Hy écarté (pas de licence publiée). **Hors contrat
+  `/v1`** (comme `/docs`) + trois jeux de données embarqués avec provenance
+  (`/hydrogene/{sites.json,regions.geojson,pays.geojson}`). Neutralité : la
+  page n'affiche jamais une éligibilité **par site** (donnée niveau site
+  absente) — la couleur carbone est celle du réseau. Gardé par tests
+  (auto-contenance, provenance, contrat du dataset, routes).
+
 ## [0.5.0] - 2026-07-03
 
 Le pilier renouvelable du cadre `rfnbo` devient **prévisionnel** : `share-clim@1`

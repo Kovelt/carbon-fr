@@ -8,6 +8,14 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.5.0] - 2026-07-03
+
+Le pilier renouvelable du cadre `rfnbo` devient **prévisionnel** : `share-clim@1`
+(ADR-0028), gardé par un double GATE (backtest walk-forward + re-jeu de la revue
+de neutralité, GREEN). Contrat `/v1` enrichi de façon **purement additive**
+(`provenance`, `value_lower`/`value_upper`, `reason`, `share_model`) — aucun
+changement cassant.
+
 ### Ajouté
 
 - **Part renouvelable prévue pour l'éligibilité rfnbo** (`share-clim@1`,

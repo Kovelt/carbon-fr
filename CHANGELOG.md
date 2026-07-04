@@ -8,6 +8,16 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Modifié
+
+- **`GET /hydrogene` embarquable par le site vitrine** : la page carte porte
+  désormais `Content-Security-Policy: frame-ancestors 'self'
+  https://carbon-fr.kovelt.fr`, ce qui autorise son iframe sur
+  `carbon-fr.kovelt.fr` (vignette de la page Hydrogène) tout en primant sur le
+  `X-Frame-Options: SAMEORIGIN` posé globalement par le reverse proxy — qui
+  reste effectif sur `/docs` et le reste. Uniquement la page : les datasets
+  `/hydrogene/*.json|geojson` sont inchangés.
+
 ## [0.6.0] - 2026-07-03
 
 La couche **B-light** d'ADR-0025 : `GET /hydrogene`, carte auto-contenue

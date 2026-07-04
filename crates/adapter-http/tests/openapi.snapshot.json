@@ -465,6 +465,7 @@
           "prévision"
         ],
         "summary": "`GET /v1/intensity/forecast` — série d'intensité **prévue** sur l'horizon,\npar le modèle `climatology@1` (ADR-0009).",
+        "description": "Modèle statistique carbon-fr (climatologie de l'historique RTE observé) —\n**pas** la prévision day-ahead du mix de bidding zone publiée par le GRT\n(méthode (b) de l'annexe du Règl. (UE) 2025/2359 ; cf. ADR-0026, addendum O1).",
         "operationId": "forecast",
         "parameters": [
           {
@@ -557,6 +558,7 @@
           "prévision"
         ],
         "summary": "`GET /v1/intensity/greenest-window` — créneau le plus bas-carbone à venir, sur\nla prévision `climatology@1` (ADR-0009). Avec `?eligibility=`, annote chaque\ncréneau d'un verdict d'éligibilité électrolyseur (ADR-0025/0026).",
+        "description": "La série sous-jacente est le même modèle statistique carbon-fr que\n`/v1/intensity/forecast` — **pas** la prévision day-ahead du GRT\n(cf. ADR-0026, addendum O1).",
         "operationId": "greenest_window",
         "parameters": [
           {
@@ -2494,6 +2496,7 @@
       },
       "MarginalTechnologyBody": {
         "type": "object",
+        "description": "Technologie marginale **estimée** (ordre de mérite domestique, ADR-0023).\nMême famille conceptuelle que la méthode (d) de l'annexe du Règl. (UE)\n2025/2359 (marginale horaire), mais n'en satisfait pas la condition « si\npubliée par le GRT » : heuristique carbon-fr, jamais une donnée d'appel\npar centrale (cf. ADR-0026, addendum O1).",
         "required": [
           "filiere",
           "label",

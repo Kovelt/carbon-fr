@@ -644,6 +644,10 @@ pub(crate) struct ForecastQuery {
 
 /// `GET /v1/intensity/forecast` — série d'intensité **prévue** sur l'horizon,
 /// par le modèle `climatology@1` (ADR-0009).
+///
+/// Modèle statistique carbon-fr (climatologie de l'historique RTE observé) —
+/// **pas** la prévision day-ahead du mix de bidding zone publiée par le GRT
+/// (méthode (b) de l'annexe du Règl. (UE) 2025/2359 ; cf. ADR-0026, addendum O1).
 #[utoipa::path(
     get,
     path = "/v1/intensity/forecast",
@@ -780,6 +784,10 @@ fn resolve_estimator(raw: &Option<String>) -> Result<WindowEstimator, ApiError> 
 /// `GET /v1/intensity/greenest-window` — créneau le plus bas-carbone à venir, sur
 /// la prévision `climatology@1` (ADR-0009). Avec `?eligibility=`, annote chaque
 /// créneau d'un verdict d'éligibilité électrolyseur (ADR-0025/0026).
+///
+/// La série sous-jacente est le même modèle statistique carbon-fr que
+/// `/v1/intensity/forecast` — **pas** la prévision day-ahead du GRT
+/// (cf. ADR-0026, addendum O1).
 #[utoipa::path(
     get,
     path = "/v1/intensity/greenest-window",

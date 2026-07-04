@@ -714,6 +714,93 @@ async fn run_backtest_share() -> anyhow::Result<()> {
         go = report.passes_gate(),
         "GATE share-clim@1 : bat la persistance (RMSE global) ET zéro faux pass ?"
     );
+
+    // Itération météo (`share-meteo@2`, expérience gardée — même politique de
+    // promotion que gbdt@1) : comparaison à trois sur les MÊMES origines/cibles,
+    // si un historique météo est disponible. Le GATE météo exige de battre
+    // share-clim@1 (pas seulement la persistance).
+    let weather_window = TimeRange::new(
+        calib_start - lookback,
+        params.test.end() + horizon + params.step,
+    )
+    .context("fenêtre météo invalide")?;
+    let weather_rows = repo
+        .weather_range(weather_window)
+        .await
+        .context("lecture de l'historique météo")?;
+    if weather_rows.is_empty() {
+        info!("pas d'historique météo sur la fenêtre — comparaison share-meteo@2 sautée");
+        return Ok(());
+    }
+    let index = carbonfr_eligibility::WeatherIndex::build(&weather_rows);
+    let meteo_bands = carbonfr_eligibility::calibrate_share_meteo_bands(
+        &history,
+        &index,
+        calib,
+        lookback,
+        params.origin_step,
+        clim_params,
+        horizon,
+        0.1,
+    );
+    if meteo_bands.is_none() {
+        warn!("bandes share-meteo non calibrées — verdicts fermes non mesurés");
+    }
+    let meteo_report = carbonfr_eligibility::backtest_share_meteo(
+        &history,
+        &index,
+        params.test,
+        lookback,
+        params.origin_step,
+        clim_params,
+        &checkpoints,
+        meteo_bands.as_ref(),
+        0.90,
+    )
+    .context("backtest share-meteo@2 : série inexploitable")?;
+    info!(
+        model = carbonfr_eligibility::SHARE_METEO_MODEL,
+        origins = meteo_report.origins,
+        weather_driven = meteo_report.weather_driven,
+        fallback = meteo_report.fallback,
+        "comparaison météo (mêmes origines/cibles, repli = share-clim@1)"
+    );
+    if let (Some(m), Some(c), Some(p)) = (
+        &meteo_report.meteo,
+        &meteo_report.clim,
+        &meteo_report.persistence,
+    ) {
+        info!(
+            meteo_rmse = pts(m.rmse),
+            clim_rmse = pts(c.rmse),
+            persistence_rmse = pts(p.rmse),
+            n = m.n,
+            "erreur GLOBALE de part renouvelable (fraction 0-1)"
+        );
+    }
+    for h in &meteo_report.by_horizon {
+        if let (Some(m), Some(c)) = (&h.meteo, &h.clim) {
+            info!(
+                horizon_h = h.horizon.whole_hours(),
+                meteo_rmse = pts(m.rmse),
+                clim_rmse = pts(c.rmse),
+                n = m.n,
+                "erreur par horizon (météo vs climatologie)"
+            );
+        }
+    }
+    info!(
+        firm_pass = meteo_report.firm_pass,
+        false_pass = meteo_report.false_pass,
+        firm_fail = meteo_report.firm_fail,
+        false_fail = meteo_report.false_fail,
+        straddle = meteo_report.straddle,
+        "verdicts fermes share-meteo@2 au seuil 0,90"
+    );
+    info!(
+        go = meteo_report.passes_gate(),
+        "GATE share-meteo@2 : bat share-clim@1 (RMSE global) ET zéro faux pass ?"
+    );
     Ok(())
 }
 

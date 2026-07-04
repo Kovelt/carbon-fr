@@ -409,13 +409,20 @@ pub fn calibrate_share_bands(
         return None;
     }
 
-    // Un seau vide donnerait une bande nulle `(0, 0)` — soit un intervalle
-    // DÉGÉNÉRÉ sur une prévision : une fausse certitude. Arrive quand la grille
-    // de la vérité est plus grossière que le pas des bandes (ex. jeu consolidé
-    // 30 min vs pas 15 min : les index impairs ne trouvent jamais d'observation).
-    // On comble par le seau non vide le plus proche (précédent d'abord — la
-    // dispersion croît avec l'horizon, l'emprunt au précédent est conservateur
-    // dans le mauvais sens le plus faible ; repli suivant pour les seaux de tête).
+    fill_empty_buckets(&mut residuals);
+    Some(HorizonBands::from_residuals(params.step, &residuals, q))
+}
+
+/// Comble les seaux de résidus vides par le seau non vide le plus proche.
+///
+/// Un seau vide donnerait une bande nulle `(0, 0)` — soit un intervalle
+/// DÉGÉNÉRÉ sur une prévision : une fausse certitude. Arrive quand la grille
+/// de la vérité est plus grossière que le pas des bandes (ex. jeu consolidé
+/// 30 min vs pas 15 min : les index impairs ne trouvent jamais d'observation).
+/// On comble par le seau non vide le plus proche (précédent d'abord — la
+/// dispersion croît avec l'horizon, l'emprunt au précédent est conservateur
+/// dans le mauvais sens le plus faible ; repli suivant pour les seaux de tête).
+pub(crate) fn fill_empty_buckets(residuals: &mut [Vec<f64>]) {
     let filled: Vec<usize> = (0..residuals.len())
         .filter(|&i| !residuals[i].is_empty())
         .collect();
@@ -431,13 +438,11 @@ pub fn calibrate_share_bands(
             }
         }
     }
-
-    Some(HorizonBands::from_residuals(params.step, &residuals, q))
 }
 
 /// Dérive la série `(horodatage, part)` d'un historique de mesures, triée par
 /// horodatage croissant.
-fn share_samples(history: &[Measurement]) -> Vec<(OffsetDateTime, f64)> {
+pub(crate) fn share_samples(history: &[Measurement]) -> Vec<(OffsetDateTime, f64)> {
     let mut samples: Vec<(OffsetDateTime, f64)> = history
         .iter()
         .filter_map(|m| {

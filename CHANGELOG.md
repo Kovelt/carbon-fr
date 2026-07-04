@@ -8,6 +8,20 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Modifié
+
+- **Positionnement vis-à-vis des méthodes horaires du Règl. (UE) 2025/2359**
+  (chantier O1 de la roadmap hydrogène) : l'[addendum O1 de l'ADR-0026](docs/adr/0026-methodologie-overlays-eligibilite.md)
+  documente, méthode par méthode, l'alignement **et les écarts** entre la donnée
+  carbon-fr et les quatre méthodes de comptabilisation de l'électricité réseau
+  de l'annexe (partie A, pt 6). Répercuté dans le README, les descriptions
+  OpenAPI (`/v1/intensity/forecast` et `/v1/intensity/greenest-window` : « pas
+  la prévision day-ahead du GRT » ; technologie marginale de `/v1/price` :
+  renvoi méthode (d)) et le `legal_basis` du ruleset `low-carbon:2025-2359`
+  (mention des quatre méthodes ; seuil ~64 = proxy hors annexe). Aucun nouveau
+  champ, aucun seuil modifié ; passe de neutralité re-jouée sur le wording
+  (revue ADR-0026, §7).
+
 ## [0.6.0] - 2026-07-03
 
 La couche **B-light** d'ADR-0025 : `GET /hydrogene`, carte auto-contenue

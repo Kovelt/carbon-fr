@@ -279,8 +279,7 @@ pub fn backtest_share(
         .iter()
         .map(|&h| (h, ErrorAccumulator::default(), ErrorAccumulator::default()))
         .collect();
-    let (mut firm_pass, mut false_pass, mut firm_fail, mut false_fail, mut straddle) =
-        (0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut firm = FirmVerdictCounter::default();
     let mut origins = 0usize;
 
     let mut cursor = align_down(test.start(), step_secs);
@@ -311,22 +310,8 @@ pub fn backtest_share(
             persistence_acc.observe(anchor.1, observed);
             persistence_h.observe(anchor.1, observed);
 
-            if let Some((q_low, q_high)) = bands.and_then(|b| b.at(*h)) {
-                let lower = (expected + q_low).clamp(0.0, 1.0).min(expected);
-                let upper = (expected + q_high).clamp(0.0, 1.0).max(expected);
-                if lower >= threshold {
-                    firm_pass += 1;
-                    if observed < threshold {
-                        false_pass += 1;
-                    }
-                } else if upper < threshold {
-                    firm_fail += 1;
-                    if observed >= threshold {
-                        false_fail += 1;
-                    }
-                } else {
-                    straddle += 1;
-                }
+            if let Some(band) = bands.and_then(|b| b.at(*h)) {
+                firm.observe(expected, observed, band, threshold);
             }
         }
     }
@@ -343,11 +328,11 @@ pub fn backtest_share(
                 persistence: p.metrics(),
             })
             .collect(),
-        firm_pass,
-        false_pass,
-        firm_fail,
-        false_fail,
-        straddle,
+        firm_pass: firm.firm_pass,
+        false_pass: firm.false_pass,
+        firm_fail: firm.firm_fail,
+        false_fail: firm.false_fail,
+        straddle: firm.straddle,
     })
 }
 
@@ -454,9 +439,49 @@ pub(crate) fn share_samples(history: &[Measurement]) -> Vec<(OffsetDateTime, f64
     samples
 }
 
+/// Compteur des verdicts fermes au seuil (la métrique de sécurité du GATE) —
+/// règle d'intervalle D17, partagée par les backtests `share-clim@1` et
+/// `share-meteo@2` : `pass` ferme si `lower ≥ seuil`, `fail` ferme si
+/// `upper < seuil`, `straddle` sinon.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct FirmVerdictCounter {
+    pub(crate) firm_pass: usize,
+    pub(crate) false_pass: usize,
+    pub(crate) firm_fail: usize,
+    pub(crate) false_fail: usize,
+    pub(crate) straddle: usize,
+}
+
+impl FirmVerdictCounter {
+    /// Classe un point (prévu + bande de résidus, observé) au `threshold`.
+    pub(crate) fn observe(
+        &mut self,
+        expected: f64,
+        observed: f64,
+        (q_low, q_high): (f64, f64),
+        threshold: f64,
+    ) {
+        let lower = (expected + q_low).clamp(0.0, 1.0).min(expected);
+        let upper = (expected + q_high).clamp(0.0, 1.0).max(expected);
+        if lower >= threshold {
+            self.firm_pass += 1;
+            if observed < threshold {
+                self.false_pass += 1;
+            }
+        } else if upper < threshold {
+            self.firm_fail += 1;
+            if observed >= threshold {
+                self.false_fail += 1;
+            }
+        } else {
+            self.straddle += 1;
+        }
+    }
+}
+
 /// Aligne vers le bas sur la grille du pas (multiples depuis l'epoch, comme le
 /// backtest d'intensité du `core`).
-fn align_down(at: OffsetDateTime, step_secs: i64) -> OffsetDateTime {
+pub(crate) fn align_down(at: OffsetDateTime, step_secs: i64) -> OffsetDateTime {
     let unix = at.unix_timestamp();
     let aligned = unix - unix.rem_euclid(step_secs);
     OffsetDateTime::from_unix_timestamp(aligned).unwrap_or(at)

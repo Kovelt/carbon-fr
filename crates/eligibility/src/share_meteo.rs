@@ -1,9 +1,10 @@
 //! Variante **météo-pilotée** de la prévision de part renouvelable
-//! (`share-meteo@2`) — itération mesurable d'ADR-0028, **gardée par
-//! `backtest-share`** : elle n'est promue que si elle bat `share-clim@1`
-//! (RMSE global, mêmes origines) avec zéro faux `pass` ferme. Tant que le
-//! GATE n'est pas franchi, ce module n'est **pas servi** (même politique de
-//! promotion que `gbdt@1`, ADR-0012).
+//! (`share-meteo@2`) — itération mesurable d'ADR-0028, **gardée par la
+//! sous-commande dédiée `backtest-share-meteo`** : elle n'est promue que si
+//! elle bat `share-clim@1` (RMSE global, mêmes origines) avec zéro faux
+//! `pass` ferme. Ce module n'est **pas servi** (même politique de promotion
+//! que `gbdt@1`, ADR-0012 — décision du 2026-07-04 : expérience conservée,
+//! cf. addendum ADR-0028).
 //!
 //! Principe : **dérivation par canal** là où la météo *as-of* couvre la cible,
 //! **repli exact sur la formule `share-clim@1`** au-delà —
@@ -37,7 +38,9 @@ use carbonfr_core::domain::{
 use time::{Duration, OffsetDateTime};
 
 use crate::share::renewable_share;
-use crate::share_forecast::{ShareClimatology, fill_empty_buckets, share_samples};
+use crate::share_forecast::{
+    FirmVerdictCounter, ShareClimatology, align_down, fill_empty_buckets, share_samples,
+};
 
 /// Identité versionnée du modèle candidat (ADR-0019/0028) : distincte de
 /// `share-clim@1`, jamais de mutation silencieuse.
@@ -165,7 +168,8 @@ impl ChannelClimatology {
 /// d'apprentissage strictement passée. Pur.
 pub struct ShareMeteoModel<'w> {
     channel_clim: [ChannelClimatology; CHANNELS],
-    /// Ancre = dernière mesure de la fenêtre portant un mix.
+    /// Ancre = dernière mesure de la fenêtre dont la part est calculable
+    /// (même règle que `fallback_anchor` — jamais une mesure dégénérée).
     anchor_at: OffsetDateTime,
     anchor_channels: [f64; CHANNELS],
     renewable: RenewableModel,
@@ -201,12 +205,16 @@ impl<'w> ShareMeteoModel<'w> {
             for (i, series) in per_channel.iter_mut().enumerate() {
                 series.push((m.at, ch[i]));
             }
-            if anchor.is_none_or(|(at, _)| m.at > at) {
-                anchor = Some((m.at, ch));
-            }
             if let Some(share) = renewable_share(mix) {
                 share_series.push((m.at, share));
+                // Une SEULE règle d'ancrage pour les deux ancres : la dernière
+                // mesure dont la part est calculable. Ancrer les canaux sur une
+                // mesure dégénérée (mix présent mais total ≤ 0 — trou de donnée)
+                // désynchroniserait la branche météo-pilotée du repli et
+                // fabriquerait un biais éolien/solaire contre une référence
+                // quasi nulle.
                 if fallback_anchor.is_none_or(|(at, _)| m.at > at) {
+                    anchor = Some((m.at, ch));
                     fallback_anchor = Some((m.at, share));
                 }
             }
@@ -261,8 +269,12 @@ impl<'w> ShareMeteoModel<'w> {
                 Some((w0, i0)) => {
                     let phys_w0 = self.renewable.estimate_wind_mw(w0);
                     let phys_s0 = self.renewable.estimate_solar_mw(i0);
+                    // Ratio borné : au voisinage du seuil, `obs/phys` peut
+                    // exploser (phys ≈ 50 MW, obs réel bien plus haut) — une
+                    // correction de niveau > ×4 ou < ÷4 signale une ancre
+                    // dégénérée, on préfère alors le modèle calibré.
                     let ratio = if phys_s0 >= SOLAR_ANCHOR_MIN_MW {
-                        self.anchor_channels[CH_SOLAIRE] / phys_s0
+                        (self.anchor_channels[CH_SOLAIRE] / phys_s0).clamp(0.25, 4.0)
                     } else {
                         1.0
                     };
@@ -356,9 +368,20 @@ pub fn backtest_share_meteo(
     if step_secs <= 0 || origin_step <= Duration::ZERO || checkpoints.is_empty() {
         return None;
     }
-    let mut sorted: Vec<Measurement> = history.to_vec();
-    sorted.sort_by_key(|m| m.at);
-    let samples = share_samples(&sorted);
+    // L'appelant (repo Postgres `ORDER BY at`) fournit déjà un historique trié :
+    // on n'en clone/trie une copie que si la précondition n'est pas satisfaite.
+    let sorted_storage: Vec<Measurement>;
+    let sorted: &[Measurement] = if history.is_sorted_by_key(|m| m.at) {
+        history
+    } else {
+        sorted_storage = {
+            let mut v = history.to_vec();
+            v.sort_by_key(|m| m.at);
+            v
+        };
+        &sorted_storage
+    };
+    let samples = share_samples(sorted);
     if samples.is_empty() {
         return None;
     }
@@ -387,8 +410,7 @@ pub fn backtest_share_meteo(
         })
         .collect();
     let (mut weather_driven, mut fallback) = (0usize, 0usize);
-    let (mut firm_pass, mut false_pass, mut firm_fail, mut false_fail, mut straddle) =
-        (0usize, 0usize, 0usize, 0usize, 0usize);
+    let mut firm = FirmVerdictCounter::default();
     let mut origins = 0usize;
 
     let mut cursor = align_down(test.start(), step_secs);
@@ -428,24 +450,8 @@ pub fn backtest_share_meteo(
             persistence_acc.observe(anchor.1, observed);
             persistence_h.observe(anchor.1, observed);
 
-            if let Some((q_low, q_high)) = bands.and_then(|b| b.at(*h)) {
-                let lower = (meteo_expected + q_low).clamp(0.0, 1.0).min(meteo_expected);
-                let upper = (meteo_expected + q_high)
-                    .clamp(0.0, 1.0)
-                    .max(meteo_expected);
-                if lower >= threshold {
-                    firm_pass += 1;
-                    if observed < threshold {
-                        false_pass += 1;
-                    }
-                } else if upper < threshold {
-                    firm_fail += 1;
-                    if observed >= threshold {
-                        false_fail += 1;
-                    }
-                } else {
-                    straddle += 1;
-                }
+            if let Some(band) = bands.and_then(|b| b.at(*h)) {
+                firm.observe(meteo_expected, observed, band, threshold);
             }
         }
     }
@@ -466,11 +472,11 @@ pub fn backtest_share_meteo(
             .collect(),
         weather_driven,
         fallback,
-        firm_pass,
-        false_pass,
-        firm_fail,
-        false_fail,
-        straddle,
+        firm_pass: firm.firm_pass,
+        false_pass: firm.false_pass,
+        firm_fail: firm.firm_fail,
+        false_fail: firm.false_fail,
+        straddle: firm.straddle,
     })
 }
 
@@ -492,9 +498,20 @@ pub fn calibrate_share_meteo_bands(
     if step_secs <= 0 || origin_step <= Duration::ZERO || horizon <= Duration::ZERO {
         return None;
     }
-    let mut sorted: Vec<Measurement> = history.to_vec();
-    sorted.sort_by_key(|m| m.at);
-    let samples = share_samples(&sorted);
+    // L'appelant (repo Postgres `ORDER BY at`) fournit déjà un historique trié :
+    // on n'en clone/trie une copie que si la précondition n'est pas satisfaite.
+    let sorted_storage: Vec<Measurement>;
+    let sorted: &[Measurement] = if history.is_sorted_by_key(|m| m.at) {
+        history
+    } else {
+        sorted_storage = {
+            let mut v = history.to_vec();
+            v.sort_by_key(|m| m.at);
+            v
+        };
+        &sorted_storage
+    };
+    let samples = share_samples(sorted);
     if samples.is_empty() {
         return None;
     }
@@ -533,13 +550,6 @@ pub fn calibrate_share_meteo_bands(
     }
     fill_empty_buckets(&mut residuals);
     Some(HorizonBands::from_residuals(params.step, &residuals, q))
-}
-
-/// Aligne vers le bas sur la grille du pas (multiples depuis l'epoch).
-fn align_down(at: OffsetDateTime, step_secs: i64) -> OffsetDateTime {
-    let unix = at.unix_timestamp();
-    let aligned = unix - unix.rem_euclid(step_secs);
-    OffsetDateTime::from_unix_timestamp(aligned).unwrap_or(at)
 }
 
 #[cfg(test)]
@@ -617,6 +627,78 @@ mod tests {
             step: Duration::hours(1),
             tau: Duration::days(14),
         }
+    }
+
+    #[test]
+    fn channels_decomposition_matches_renewable_share_rule() {
+        // `channels`/`share_from_channels` réencodent la règle de `share.rs`
+        // (numérateur, clamps, pompage/échanges exclus, thermique agrégé) :
+        // ce test golden les garde synchronisés — toute dérive casse ici.
+        let mut mixes = vec![mix_for(30.0, 500.0)];
+        let mut regional = mix_for(20.0, 100.0);
+        regional.thermique = Some(3_000.0);
+        regional.gaz = 9_999.0; // ignoré quand `thermique` est présent
+        mixes.push(regional);
+        let mut negatif = mix_for(10.0, 0.0);
+        negatif.hydraulique = -500.0;
+        negatif.pompage = -2_000.0;
+        negatif.echanges = 5_000.0;
+        mixes.push(negatif);
+        for mix in &mixes {
+            assert_eq!(share_from_channels(&channels(mix)), renewable_share(mix));
+        }
+        let zero = GenerationMix {
+            nucleaire: 0.0,
+            gaz: 0.0,
+            charbon: 0.0,
+            fioul: 0.0,
+            hydraulique: 0.0,
+            eolien: 0.0,
+            solaire: 0.0,
+            bioenergies: 0.0,
+            pompage: 0.0,
+            echanges: 0.0,
+            thermique: None,
+        };
+        assert_eq!(share_from_channels(&channels(&zero)), None);
+        assert_eq!(renewable_share(&zero), None);
+    }
+
+    #[test]
+    fn degenerate_trailing_mix_never_anchors_the_model() {
+        // Dernière mesure de la fenêtre = mix présent mais total ≤ 0 (trou de
+        // donnée) : l'ancre doit rester sur la dernière mesure VALIDE, pour la
+        // branche météo-pilotée comme pour le repli (constat de revue).
+        let start = monday();
+        let train_hours = 6 * 7 * 24;
+        let rows = weather_rows(start, train_hours + 24);
+        let mut hist = history(train_hours, &rows);
+        let zero = GenerationMix {
+            nucleaire: 0.0,
+            gaz: 0.0,
+            charbon: 0.0,
+            fioul: 0.0,
+            hydraulique: 0.0,
+            eolien: 0.0,
+            solaire: 0.0,
+            bioenergies: 0.0,
+            pompage: 0.0,
+            echanges: 0.0,
+            thermique: None,
+        };
+        let degenerate_at = start + Duration::hours(train_hours - 1) + Duration::minutes(30);
+        hist.push(measurement(degenerate_at, zero));
+        let index = WeatherIndex::build(&rows);
+        let origin = start + Duration::hours(train_hours);
+        let model = ShareMeteoModel::build(&hist, &index, origin, params()).expect("modèle");
+        assert!(
+            model.anchor_at < degenerate_at,
+            "l'ancre ne doit pas être la mesure dégénérée"
+        );
+        assert_eq!(
+            model.anchor_at, model.fallback_anchor.0,
+            "les deux ancres suivent la même règle"
+        );
     }
 
     #[test]

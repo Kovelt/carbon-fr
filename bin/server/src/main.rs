@@ -120,11 +120,12 @@ async fn main() -> anyhow::Result<()> {
         Some("analyze-renewable-signal") => run_analyze_renewable_signal().await,
         Some("backtest-bands") => run_backtest_bands().await,
         Some("backtest-share") => run_backtest_share().await,
+        Some("backtest-share-meteo") => run_backtest_share_meteo().await,
         Some("train") => run_train().await,
         Some("mint-key") => run_mint_key().await,
         Some(other) => {
             anyhow::bail!(
-                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `backtest-renewable`, `analyze-renewable-signal`, `backtest-share`, `train`, `mint-key`, ou aucune pour servir l'API)"
+                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `backtest-renewable`, `analyze-renewable-signal`, `backtest-share`, `backtest-share-meteo`, `train`, `mint-key`, ou aucune pour servir l'API)"
             )
         }
     }
@@ -714,24 +715,67 @@ async fn run_backtest_share() -> anyhow::Result<()> {
         go = report.passes_gate(),
         "GATE share-clim@1 : bat la persistance (RMSE global) ET zéro faux pass ?"
     );
+    Ok(())
+}
 
-    // Itération météo (`share-meteo@2`, expérience gardée — même politique de
-    // promotion que gbdt@1) : comparaison à trois sur les MÊMES origines/cibles,
-    // si un historique météo est disponible. Le GATE météo exige de battre
-    // share-clim@1 (pas seulement la persistance).
-    let weather_window = TimeRange::new(
+/// Backtest comparatif de l'**expérience** `share-meteo@2` (addendum ADR-0028) :
+/// météo vs `share-clim@1` vs persistance sur les **mêmes** origines/cibles.
+/// Modèle **non servi** — même politique de promotion que `gbdt@1` : le GATE
+/// (battre `share-clim@1` en RMSE global, zéro faux `pass`) se mesure ici,
+/// séparément du GATE de production de `backtest-share`.
+async fn run_backtest_share_meteo() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let params = BacktestParams::from_env()?;
+    anyhow::ensure!(
+        params.region == Region::National,
+        "share-meteo@2 est national-only (zone de dépôt FR, ADR-0026)"
+    );
+
+    let lookback = Duration::days(SHARE_LOOKBACK_DAYS);
+    let horizon = Duration::hours(SHARE_MAX_HORIZON_HOURS);
+    let calib_weeks = share_calibrate_weeks()?;
+    anyhow::ensure!(
+        calib_weeks > 0,
+        "CARBONFR_SHARE_CALIBRATE_WEEKS doit être > 0 en backtest"
+    );
+    let calib_start = params.test.start() - Duration::days(calib_weeks * 7);
+
+    info!(
+        model = carbonfr_eligibility::SHARE_METEO_MODEL,
+        from = %params.test.start(), to = %params.test.end(),
+        calib_weeks, "backtest share-meteo@2 démarré (comparaison à trois, vérité dérivée du mix)"
+    );
+
+    let full = TimeRange::new(
         calib_start - lookback,
         params.test.end() + horizon + params.step,
     )
-    .context("fenêtre météo invalide")?;
+    .context("fenêtre d'historique invalide")?;
+    let history = repo
+        .range(Region::National, &params.methodology, full)
+        .await
+        .context("lecture de l'historique de mix")?;
+    anyhow::ensure!(
+        !history.is_empty(),
+        "aucun historique de mix sur la fenêtre demandée"
+    );
     let weather_rows = repo
-        .weather_range(weather_window)
+        .weather_range(full)
         .await
         .context("lecture de l'historique météo")?;
-    if weather_rows.is_empty() {
-        info!("pas d'historique météo sur la fenêtre — comparaison share-meteo@2 sautée");
-        return Ok(());
-    }
+    anyhow::ensure!(
+        !weather_rows.is_empty(),
+        "aucun historique météo sur la fenêtre demandée (table weather_forecast)"
+    );
+
+    let clim_params = ClimatologyParams {
+        step: params.step,
+        tau: Duration::days(14),
+    };
+    let calib = TimeRange::new(calib_start, params.test.start())
+        .context("fenêtre de calibration invalide")?;
     let index = carbonfr_eligibility::WeatherIndex::build(&weather_rows);
     let meteo_bands = carbonfr_eligibility::calibrate_share_meteo_bands(
         &history,
@@ -744,9 +788,17 @@ async fn run_backtest_share() -> anyhow::Result<()> {
         0.1,
     );
     if meteo_bands.is_none() {
-        warn!("bandes share-meteo non calibrées — verdicts fermes non mesurés");
+        warn!(
+            "bandes share-meteo non calibrées (fenêtre de calibration vide ?) — verdicts fermes non mesurés"
+        );
     }
-    let meteo_report = carbonfr_eligibility::backtest_share_meteo(
+    let checkpoints = [
+        Duration::hours(1),
+        Duration::hours(6),
+        Duration::hours(24),
+        Duration::hours(72),
+    ];
+    let report = carbonfr_eligibility::backtest_share_meteo(
         &history,
         &index,
         params.test,
@@ -758,18 +810,15 @@ async fn run_backtest_share() -> anyhow::Result<()> {
         0.90,
     )
     .context("backtest share-meteo@2 : série inexploitable")?;
+
+    let pts = |v: f64| (v * 10_000.0).round() / 10_000.0;
     info!(
-        model = carbonfr_eligibility::SHARE_METEO_MODEL,
-        origins = meteo_report.origins,
-        weather_driven = meteo_report.weather_driven,
-        fallback = meteo_report.fallback,
-        "comparaison météo (mêmes origines/cibles, repli = share-clim@1)"
+        origins = report.origins,
+        weather_driven = report.weather_driven,
+        fallback = report.fallback,
+        "origines évaluées (walk-forward ; repli = share-clim@1 hors couverture météo)"
     );
-    if let (Some(m), Some(c), Some(p)) = (
-        &meteo_report.meteo,
-        &meteo_report.clim,
-        &meteo_report.persistence,
-    ) {
+    if let (Some(m), Some(c), Some(p)) = (&report.meteo, &report.clim, &report.persistence) {
         info!(
             meteo_rmse = pts(m.rmse),
             clim_rmse = pts(c.rmse),
@@ -778,7 +827,7 @@ async fn run_backtest_share() -> anyhow::Result<()> {
             "erreur GLOBALE de part renouvelable (fraction 0-1)"
         );
     }
-    for h in &meteo_report.by_horizon {
+    for h in &report.by_horizon {
         if let (Some(m), Some(c)) = (&h.meteo, &h.clim) {
             info!(
                 horizon_h = h.horizon.whole_hours(),
@@ -790,15 +839,15 @@ async fn run_backtest_share() -> anyhow::Result<()> {
         }
     }
     info!(
-        firm_pass = meteo_report.firm_pass,
-        false_pass = meteo_report.false_pass,
-        firm_fail = meteo_report.firm_fail,
-        false_fail = meteo_report.false_fail,
-        straddle = meteo_report.straddle,
+        firm_pass = report.firm_pass,
+        false_pass = report.false_pass,
+        firm_fail = report.firm_fail,
+        false_fail = report.false_fail,
+        straddle = report.straddle,
         "verdicts fermes share-meteo@2 au seuil 0,90"
     );
     info!(
-        go = meteo_report.passes_gate(),
+        go = report.passes_gate(),
         "GATE share-meteo@2 : bat share-clim@1 (RMSE global) ET zéro faux pass ?"
     );
     Ok(())

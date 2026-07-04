@@ -8,6 +8,11 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+## [0.6.1] - 2026-07-04
+
+La page carte `GET /hydrogene` devient embarquable par le site vitrine
+(CSP `frame-ancestors`). Hors contrat `/v1`, aucun changement d'API.
+
 ### Modifié
 
 - **`GET /hydrogene` embarquable par le site vitrine** : la page carte porte

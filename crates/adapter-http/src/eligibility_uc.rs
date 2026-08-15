@@ -6,11 +6,16 @@
 //! de `carbonfr-eligibility`.
 //!
 //! Choix assumés :
-//! - **Part renouvelable** : **observée** pour les créneaux `at ≤ now_at`
-//!   (intervalle dégénéré, comportement historique) ; **prévue** au-delà via
+//! - **Part renouvelable** : **observée** pour les créneaux couverts par la
+//!   dernière mesure (`at ≤ now_at`, à moins d'un pas — intervalle dégénéré) ;
+//!   pour un créneau passé plus ancien (`from` rétrospectif), la part observée
+//!   **au créneau** est relue dans le batch d'historique — jamais la part
+//!   courante (audit 2026-08 : les deux piliers d'un même verdict doivent être
+//!   évalués au même horodatage) ; **prévue** au-delà du nowcast via
 //!   `share-clim@1` (ADR-0028) **seulement si** le modèle est câblé (bandes
 //!   calibrées au démarrage) — sinon `None` → `Indeterminate`, comme avant.
-//!   L'historique de mix est lu en **un seul** aller-retour batch (même
+//!   L'historique de mix est lu en aller-retour **batch** (un seul, deux si
+//!   `from` précède la fenêtre climatologique — jamais un par créneau, même
 //!   discipline que le prix, audit F05) et **seulement** pour `rfnbo`.
 //! - **Prix = day-ahead frais** (PIÈGE 2) : la fraîcheur est filtrée par
 //!   l'implémentation de `spot_price_at` ; au-delà du day-ahead, `None`.
@@ -23,6 +28,13 @@ use carbonfr_eligibility::{
     SlotInput, evaluate, renewable_share,
 };
 use time::{Duration, OffsetDateTime};
+
+/// Couverture temporelle de la dernière mesure nationale (cadence quart
+/// d'heure éCO2mix) : elle ne vaut « nowcast » que pour les créneaux à moins
+/// d'un pas d'elle — la relecture historique applique la même tolérance.
+/// Constante (et non `ShareForecastConfig::params.step`) : le modèle share est
+/// optionnel alors que la borne doit toujours s'appliquer (audit 2026-08).
+const NOWCAST_COVERAGE: Duration = Duration::minutes(15);
 
 /// Configuration du modèle `share-clim@1` (ADR-0028), câblée par la composition
 /// root quand les bandes ont pu être calibrées au démarrage. Absente → la part
@@ -69,16 +81,20 @@ pub(crate) async fn evaluate_eligibility(
         Vec::new()
     };
 
-    // ADR-0028 : climatologie de part renouvelable pour les créneaux futurs.
-    // Un seul batch d'historique (jamais de N+1), et seulement pour un cadre qui
-    // consomme la part (rfnbo) avec un modèle câblé. L'ancre de persistance est
-    // le nowcast déjà lu ci-dessus (repli : dernière observation de la fenêtre).
-    let share_model = match (share, ruleset.framework) {
+    // ADR-0028 : historique national en batch (jamais de N+1), seulement pour
+    // un cadre qui consomme la part (rfnbo) avec un modèle câblé. Il nourrit la
+    // climatologie (créneaux futurs) ET la part observée AU créneau (créneaux
+    // passés d'un `from` rétrospectif — audit 2026-08). L'ancre de persistance
+    // est le nowcast déjà lu ci-dessus (repli : dernière observation de la
+    // fenêtre).
+    let share_history = match (share, ruleset.framework) {
         (Some(cfg), carbonfr_eligibility::EligibilityFramework::Rfnbo) => {
-            build_share_climatology(repo, cfg, now_at)
-                .await
-                .map(|c| (c, cfg))
+            fetch_share_history(repo, cfg, now_at, points).await
         }
+        _ => None,
+    };
+    let share_model = match (share, &share_history) {
+        (Some(cfg), Some(h)) => h.climatology.as_ref().map(|c| (c, cfg)),
         _ => None,
     };
     let anchor = match (now_at, now_share) {
@@ -89,16 +105,24 @@ pub(crate) async fn evaluate_eligibility(
     let mut slots = Vec::with_capacity(points.len());
     for p in points {
         let spot = freshest_price(&prices, p.at);
-        let is_nowcast = now_at.map(|t| p.at <= t).unwrap_or(false);
-        // Part observée au nowcast (dégénérée) ; prévue au-delà (share-clim@1,
-        // bornée à l'horizon calibré) ; sinon None → Indeterminate, avec la
-        // CAUSE (hors horizon calibré vs donnée manquante — F12).
-        let renewable = if is_nowcast {
-            now_share.map(ShareEstimate::observed)
-        } else {
-            share_model.as_ref().and_then(|(climo, cfg)| {
+        // Part observée au nowcast (dégénérée) — restreinte aux créneaux que la
+        // dernière mesure couvre réellement (≤ un pas). Un créneau passé plus
+        // ancien (`from` rétrospectif) relit sa PROPRE part observée dans le
+        // batch d'historique — jamais la part courante (audit 2026-08). Au-delà
+        // du nowcast : part prévue (share-clim@1, bornée à l'horizon calibré) ;
+        // sinon None → Indeterminate, avec la CAUSE (hors horizon calibré vs
+        // donnée manquante — F12).
+        let renewable = match now_at {
+            Some(t) if p.at <= t && t - p.at <= NOWCAST_COVERAGE => {
+                now_share.map(ShareEstimate::observed)
+            }
+            Some(t) if p.at <= t => share_history
+                .as_ref()
+                .and_then(|h| h.observed_share_at(p.at))
+                .map(ShareEstimate::observed),
+            _ => share_model.and_then(|(climo, cfg)| {
                 climo.forecast_at(p.at, anchor, cfg.params.tau, &cfg.bands, cfg.max_horizon)
-            })
+            }),
         };
         let renewable_share_gap = match (&renewable, share, anchor) {
             (Some(_), _, _) => carbonfr_eligibility::IndeterminateReason::MissingData,
@@ -127,20 +151,80 @@ pub(crate) async fn evaluate_eligibility(
     evaluate(&slots, ruleset, FR_BIDDING_ZONE)
 }
 
-/// Construit la climatologie de part renouvelable depuis **un seul** batch
-/// d'historique national (`[ancre − lookback, ancre)`). `None` si l'historique
-/// est vide/inexploitable — la part future restera `Indeterminate`.
-async fn build_share_climatology(
+/// Historique national chargé en batch pour l'overlay `rfnbo` : climatologie
+/// de part (créneaux futurs) + série observée `(at, part)` triée par horodatage
+/// croissant (part AU créneau pour les créneaux passés d'un `from`
+/// rétrospectif — audit 2026-08).
+struct ShareHistory {
+    climatology: Option<ShareClimatology>,
+    observed: Vec<(OffsetDateTime, f64)>,
+}
+
+impl ShareHistory {
+    /// Part observée AU créneau `at` : la mesure la plus récente telle que
+    /// `m.at ≤ at` et `at − m.at ≤` un pas (même couverture que le nowcast).
+    /// `None` sinon → `Indeterminate` (donnée manquante), jamais la part d'un
+    /// autre horodatage.
+    fn observed_share_at(&self, at: OffsetDateTime) -> Option<f64> {
+        let idx = self.observed.partition_point(|&(t, _)| t <= at);
+        let &(t, share) = self.observed.get(idx.checked_sub(1)?)?;
+        (at - t <= NOWCAST_COVERAGE).then_some(share)
+    }
+}
+
+/// Charge l'historique de mix national en **batch** : fenêtre climatologique
+/// `[ancre − lookback, ancre + 1 min)`, plus — quand `from` la précède — un
+/// second batch borné à l'étendue des créneaux demandés (≤ horizon, jamais une
+/// extension d'un seul tenant jusqu'à `from` : un `from` très ancien chargerait
+/// des années d'historique). `None` sans nowcast (aucune ancre de fenêtre) —
+/// la part restera `Indeterminate`.
+async fn fetch_share_history(
     repo: &dyn crate::EligibilityRepo,
     cfg: &ShareForecastConfig,
     now_at: Option<OffsetDateTime>,
-) -> Option<ShareClimatology> {
-    // Sans nowcast, on ancre la fenêtre sur l'horloge du dernier point connu ;
-    // à défaut de toute référence, on ne prévoit pas.
+    points: &[ForecastPoint],
+) -> Option<ShareHistory> {
     let end = now_at?;
-    let range = TimeRange::new(end - cfg.lookback, end + Duration::minutes(1))?;
-    let history = repo.national_mix_range(range).await;
-    ShareClimatology::build(&history, cfg.params.step)
+    let climatology_start = end - cfg.lookback;
+    let range = TimeRange::new(climatology_start, end + Duration::minutes(1))?;
+    let mut history = repo.national_mix_range(range).await;
+
+    // `from` rétrospectif plus ancien que la fenêtre climatologique : les
+    // créneaux concernés (préfixe des `points`, triés) relisent leur part dans
+    // un batch supplémentaire couvrant exactement leur étendue.
+    if let Some(first) = points.first()
+        && first.at < climatology_start
+    {
+        let below_end = points
+            .iter()
+            .map(|p| p.at)
+            .take_while(|&at| at < climatology_start)
+            .last()
+            .unwrap_or(first.at);
+        if let Some(extra) = TimeRange::new(
+            first.at - NOWCAST_COVERAGE,
+            (below_end + Duration::minutes(1)).min(climatology_start),
+        ) {
+            history.extend(repo.national_mix_range(extra).await);
+        }
+    }
+    if !history.is_sorted_by_key(|m| m.at) {
+        history.sort_by_key(|m| m.at);
+    }
+
+    // Le `lookback` est un paramètre du modèle (ADR-0028) : la climatologie ne
+    // se nourrit que de sa fenêtre — l'extension passée ne sert qu'à la
+    // relecture observée.
+    let suffix = history.partition_point(|m| m.at < climatology_start);
+    let climatology = ShareClimatology::build(&history[suffix..], cfg.params.step);
+    let observed = history
+        .iter()
+        .filter_map(|m| Some((m.at, renewable_share(m.mix.as_ref()?)?)))
+        .collect();
+    Some(ShareHistory {
+        climatology,
+        observed,
+    })
 }
 
 /// Un **seul** aller-retour prix couvrant tous les créneaux. La borne basse
@@ -163,16 +247,19 @@ async fn fetch_prices_once(
 }
 
 /// Prix day-ahead **frais** au créneau `at` : le plus récent tel que
-/// `price.at ≤ at` et `at − price.at ≤ 1 h` (pas d'extrapolation au-delà du
-/// day-ahead, PIÈGE 2). Même sémantique que `spot_price_at`, appliquée en mémoire
-/// sur la série déjà chargée. `prices` triés par horodatage croissant.
+/// `price.at ≤ at` et `at − price.at < 1 h` — borne STRICTE : un prix horaire
+/// couvre `[t, t + 1 h)`, à `t + 1 h` exactement c'est l'heure de livraison
+/// suivante, jamais le prix précédent reconduit (audit 2026-08 ; pas
+/// d'extrapolation au-delà du day-ahead, PIÈGE 2). Même sémantique que
+/// `spot_price_at`, appliquée en mémoire sur la série déjà chargée. `prices`
+/// triés par horodatage croissant.
 fn freshest_price(prices: &[(OffsetDateTime, f64)], at: OffsetDateTime) -> Option<f64> {
     prices
         .iter()
         .rev()
         .find(|(t, _)| {
             let age = at - *t;
-            age >= Duration::ZERO && age <= Duration::hours(1)
+            age >= Duration::ZERO && age < Duration::hours(1)
         })
         .map(|(_, eur)| *eur)
 }
@@ -599,5 +686,135 @@ mod tests {
         )
         .await;
         assert_eq!(repo.mix_calls.load(Ordering::SeqCst), 0);
+    }
+
+    // ---- `from` rétrospectif (audit 2026-08) --------------------------------
+
+    /// Signal `renewable-share` d'un verdict.
+    fn share_signal(v: &EligibilityVerdict) -> carbonfr_eligibility::EligibilitySignal {
+        v.signals
+            .iter()
+            .find(|s| s.pillar() == carbonfr_eligibility::Pillar::RenewableShare)
+            .copied()
+            .expect("signal renewable-share")
+    }
+
+    /// Audit 2026-08 : un `from` passé ne sert JAMAIS la part courante sur les
+    /// créneaux passés — chaque créneau relit sa PROPRE part observée dans le
+    /// batch d'historique, et la branche nowcast reste bornée à un pas de la
+    /// dernière mesure.
+    #[tokio::test]
+    async fn past_from_serves_observed_share_of_each_slot_never_current() {
+        let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(30);
+        // Historique à 0,25 partout… sauf à t0 − 2 h : 100 % renouvelable.
+        let special = t0 - Duration::hours(2);
+        let mut history = quarter_history(t0, 21);
+        for m in &mut history {
+            if m.at == special {
+                m.mix = Some(renewable_mix());
+            }
+        }
+        let repo = FakeRepo {
+            latest: Some(measurement(t0, quarter_mix())),
+            price: None,
+            history,
+        };
+        // Fenêtre rétrospective : t0 − 2 h et t0 − 1 h (passés), t0 (nowcast).
+        let points = [
+            point(special, 20.0),
+            point(t0 - Duration::hours(1), 20.0),
+            point(t0, 20.0),
+        ];
+        let r = EligibilityRuleset::rfnbo_2023_1184();
+        let verdicts = evaluate_eligibility(
+            &repo,
+            &points,
+            &r,
+            WindowEstimator::Central,
+            Some(&share_config()),
+        )
+        .await;
+
+        // t0 − 2 h : la part observée DE CE créneau (1,0 — pas les 0,25 du
+        // nowcast), provenance `observed`, verdict ferme.
+        let s = share_signal(&verdicts[0]);
+        assert_eq!(s.provenance(), Some("observed"));
+        assert_eq!(s.value(), Some(1.0));
+        assert_eq!(s.passed(), Some(true));
+        // t0 − 1 h : la part observée du créneau (0,25), pas celle du nowcast.
+        let s = share_signal(&verdicts[1]);
+        assert_eq!(s.provenance(), Some("observed"));
+        assert_eq!(s.passed(), Some(false));
+        assert!((s.value().unwrap() - 0.25).abs() < 1e-9);
+        // t0 : nowcast (à ≤ un pas de la dernière mesure) → part courante.
+        let s = share_signal(&verdicts[2]);
+        assert_eq!(s.provenance(), Some("observed"));
+        assert!((s.value().unwrap() - 0.25).abs() < 1e-9);
+    }
+
+    /// Audit 2026-08 : sans modèle share câblé, un créneau passé plus ancien
+    /// qu'un pas n'hérite plus de la part courante — `Indeterminate` (donnée
+    /// manquante), jamais un verdict ferme à un autre horodatage.
+    #[tokio::test]
+    async fn past_slot_without_wired_model_is_indeterminate_not_current_share() {
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let repo = FakeRepo {
+            latest: Some(measurement(t0, renewable_mix())), // part courante = 1,0
+            price: None,
+            ..Default::default()
+        };
+        let points = [point(t0 - Duration::hours(3), 20.0)];
+        let r = EligibilityRuleset::rfnbo_2023_1184();
+        let verdicts =
+            evaluate_eligibility(&repo, &points, &r, WindowEstimator::Central, None).await;
+        // Avant correctif : part 1,0 `observed` → éligible FERME sur un créneau
+        // vieux de 3 h. Désormais : indéterminé.
+        assert!(!verdicts[0].eligible);
+        assert!(verdicts[0].is_indeterminate());
+        assert_eq!(share_signal(&verdicts[0]).passed(), None);
+    }
+
+    /// Audit 2026-08 : quand `from` précède la fenêtre climatologique, un
+    /// second batch borné à l'étendue des créneaux est chargé — la part
+    /// observée du créneau reste servie (jamais celle du nowcast).
+    #[tokio::test]
+    async fn past_from_beyond_lookback_reads_bounded_extra_batch() {
+        let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(60);
+        let old = t0 - Duration::days(30); // bien avant le lookback (21 j)
+        let mut history = quarter_history(t0, 21);
+        history.push(measurement(old, renewable_mix()));
+        let repo = FakeRepo {
+            latest: Some(measurement(t0, quarter_mix())),
+            price: None,
+            history,
+        };
+        let points = [point(old, 20.0)];
+        let r = EligibilityRuleset::rfnbo_2023_1184();
+        let verdicts = evaluate_eligibility(
+            &repo,
+            &points,
+            &r,
+            WindowEstimator::Central,
+            Some(&share_config()),
+        )
+        .await;
+        let s = share_signal(&verdicts[0]);
+        assert_eq!(s.provenance(), Some("observed"));
+        assert_eq!(s.value(), Some(1.0));
+    }
+
+    /// Audit 2026-08 : la fraîcheur prix est STRICTE — un prix horaire couvre
+    /// `[t, t + 1 h)` ; à `t + 1 h` exactement, c'est l'heure de livraison
+    /// suivante (jamais le prix précédent reconduit).
+    #[test]
+    fn freshest_price_rejects_exactly_one_hour_old_price() {
+        let t = OffsetDateTime::UNIX_EPOCH;
+        let prices = vec![(t, 10.0)];
+        assert_eq!(
+            freshest_price(&prices, t + Duration::minutes(59)),
+            Some(10.0)
+        );
+        assert_eq!(freshest_price(&prices, t + Duration::hours(1)), None);
+        assert_eq!(freshest_price(&prices, t - Duration::minutes(1)), None);
     }
 }

@@ -1326,6 +1326,9 @@ async fn eligibility_adapter_price_freshness_is_strictly_one_hour() {
     let adapter = EligibilityRepoAdapter(repo);
     // 30 min d'ancienneté → frais.
     assert_eq!(adapter.spot_price_at(t).await, Some(12.0));
+    // Pile 1 h d'ancienneté → heure de livraison suivante → périmé (borne
+    // STRICTE, audit 2026-08 : un prix horaire couvre `[t, t + 1 h)`).
+    assert_eq!(adapter.spot_price_at(t + Duration::minutes(30)).await, None);
     // 90 min d'ancienneté (> 1 h) → périmé → None (le bug le laissait passer).
     assert_eq!(adapter.spot_price_at(t + Duration::minutes(60)).await, None);
     // Pile 1 h 59 d'ancienneté → périmé (whole_hours l'acceptait à tort).

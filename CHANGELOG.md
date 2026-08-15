@@ -60,6 +60,28 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `carbonfr_poller_last_flows_timestamp_seconds` (sur le modèle de
   `last_price`) : une panne ENTSO-E côté flux n'était visible que dans les
   logs, contrairement à l'esprit de l'ADR-0022 (« alerte phare = fraîcheur »).
+- **Éligibilité : part « observée » du nowcast bornée à un pas** (audit
+  2026-08) — avec un `?from=` passé sur
+  `greenest-window?eligibility=rfnbo`, tous les créneaux passés recevaient la
+  part renouvelable de la DERNIÈRE mesure, servie `observed` avec verdict
+  ferme, alors que le pilier prix du même verdict était, lui, évalué à
+  l'horodatage du créneau. La branche nowcast est désormais restreinte aux
+  créneaux à ≤ 15 min de la dernière mesure ; un créneau passé plus ancien
+  relit sa **propre** part observée dans le batch d'historique (second batch
+  borné à l'étendue des créneaux si `from` précède la fenêtre climatologique),
+  sinon `Indeterminate` (donnée manquante) — jamais la part courante.
+- **Éligibilité : fraîcheur du prix day-ahead stricte** (audit 2026-08) — la
+  garde « ≤ 1 h » inclusive appliquait le prix de l'heure de livraison
+  précédente à un créneau situé exactement 1 h après (un prix horaire couvre
+  `[t, t + 1 h)`) : borne désormais stricte (`< 1 h`) dans `freshest_price`
+  et `spot_price_at` — à défaut de prix propre au créneau, le pilier prix est
+  indéterminé, jamais reconduit.
+- **`share-meteo@2` : mix dégénérés écartés de l'apprentissage** (audit
+  2026-08) — un mix présent mais de total ≤ 0 (trou de donnée) alimentait les
+  climatologies de canal (zéros dans les moyennes de créneau) et la
+  calibration éolien/solaire (0 MW face à une vraie météo) ; ces mesures sont
+  désormais ignorées entièrement (l'ancre, déjà protégée, ne change pas).
+  Expérience non servie — aucun impact sur le contrat `/v1`.
 
 ## [0.6.0] - 2026-07-03
 

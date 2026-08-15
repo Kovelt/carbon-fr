@@ -202,6 +202,14 @@ impl<'w> ShareMeteoModel<'w> {
         for m in window {
             let Some(mix) = m.mix.as_ref() else { continue };
             let ch = channels(mix);
+            // Mix dégénéré (présent mais total ≤ 0 — trou de donnée) : aucune
+            // part n'est calculable, et ses zéros pollueraient les
+            // climatologies de canal comme la calibration éolien/solaire
+            // (0 MW face à une vraie météo). La mesure est ignorée
+            // entièrement (audit 2026-08).
+            if ch.iter().sum::<f64>() <= 0.0 {
+                continue;
+            }
             for (i, series) in per_channel.iter_mut().enumerate() {
                 series.push((m.at, ch[i]));
             }
@@ -699,6 +707,50 @@ mod tests {
             model.anchor_at, model.fallback_anchor.0,
             "les deux ancres suivent la même règle"
         );
+    }
+
+    #[test]
+    fn degenerate_mixes_do_not_pollute_climatologies_or_calibration() {
+        // Audit 2026-08 : un mix présent mais total ≤ 0 (trou de donnée) ne
+        // doit alimenter NI les climatologies de canal (zéros dans les
+        // moyennes de créneau) NI la calibration éolien/solaire (0 MW face à
+        // une vraie météo) : le modèle bâti avec ces trous doit être
+        // IDENTIQUE au modèle bâti sans.
+        let start = monday();
+        let train_hours = 6 * 7 * 24;
+        let rows = weather_rows(start, train_hours + 24);
+        let clean = history(train_hours, &rows);
+        let zero = GenerationMix {
+            nucleaire: 0.0,
+            gaz: 0.0,
+            charbon: 0.0,
+            fioul: 0.0,
+            hydraulique: 0.0,
+            eolien: 0.0,
+            solaire: 0.0,
+            bioenergies: 0.0,
+            pompage: 0.0,
+            echanges: 0.0,
+            thermique: None,
+        };
+        let mut polluted = clean.clone();
+        // Trous à des heures couvertes par la météo (candidates à la
+        // calibration) et dans des créneaux de la climatologie de canal.
+        for h in [10i64, 100, 500] {
+            polluted.push(measurement(
+                start + Duration::hours(h) + Duration::minutes(30),
+                zero,
+            ));
+        }
+        polluted.sort_by_key(|m| m.at);
+        let index = WeatherIndex::build(&rows);
+        let origin = start + Duration::hours(train_hours);
+        let a = ShareMeteoModel::build(&clean, &index, origin, params()).expect("modèle");
+        let b = ShareMeteoModel::build(&polluted, &index, origin, params()).expect("modèle");
+        for h in [2i64, 7, 12] {
+            let t = origin + Duration::hours(h);
+            assert_eq!(a.expected_at(t), b.expected_at(t), "h+{h}");
+        }
     }
 
     #[test]

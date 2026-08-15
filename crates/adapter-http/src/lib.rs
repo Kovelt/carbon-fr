@@ -331,13 +331,31 @@ impl<F> ForecastState<F> {
 #[derive(Clone)]
 pub struct StreamState {
     pub(crate) updates: tokio::sync::broadcast::Sender<carbonfr_core::domain::IntensityUpdate>,
+    /// Jeton d'**arrêt** propagé par la composition root (audit 2026-08) : son
+    /// annulation clôt les flux SSE ouverts. Sans cette clôture, l'arrêt
+    /// gracieux (`with_graceful_shutdown`) attendrait indéfiniment ces
+    /// connexions infinies — le `Sender` broadcast vit dans l'app possédée par
+    /// `serve`, le flux ne peut donc jamais se terminer de lui-même. Défaut :
+    /// jeton jamais annulé (tests, usages sans arrêt orchestré).
+    pub(crate) shutdown: tokio_util::sync::CancellationToken,
 }
 
 impl StreamState {
     pub fn new(
         updates: tokio::sync::broadcast::Sender<carbonfr_core::domain::IntensityUpdate>,
     ) -> Self {
-        Self { updates }
+        Self {
+            updates,
+            shutdown: tokio_util::sync::CancellationToken::new(),
+        }
+    }
+
+    /// Propage le jeton d'arrêt de la composition root : à son annulation, les
+    /// flux SSE en cours se terminent proprement et le drain de l'arrêt
+    /// gracieux peut aboutir (audit 2026-08).
+    pub fn with_shutdown(mut self, token: tokio_util::sync::CancellationToken) -> Self {
+        self.shutdown = token;
+        self
     }
 }
 

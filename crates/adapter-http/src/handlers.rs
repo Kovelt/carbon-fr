@@ -1267,6 +1267,14 @@ pub(crate) async fn intensity_stream(
         let json = serde_json::to_string(&body).ok()?;
         Some(Ok(Event::default().event("intensity").data(json)))
     });
+    // Clôture à l'arrêt (audit 2026-08) : le flux est infini par construction
+    // (le `Sender` broadcast vit dans l'app) — sans `take_until` sur le jeton
+    // d'arrêt, une seule connexion SSE ouverte empêchait `with_graceful_shutdown`
+    // de se terminer (SIGKILL systématique du superviseur au déploiement).
+    // Appel qualifié : `futures_util::StreamExt` et `tokio_stream::StreamExt`
+    // partagent plusieurs noms de combinateurs.
+    let stream =
+        futures_util::StreamExt::take_until(stream, state.shutdown.clone().cancelled_owned());
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }

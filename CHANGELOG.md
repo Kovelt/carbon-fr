@@ -182,6 +182,44 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   TTL) — la sémantique mono-forecast (ADR-0026 D16) est préservée : fenêtre
   verte et overlay partagent toujours la même série. ADR-0009 intact : la
   prévision reste calculée à la lecture, jamais persistée.
+- **Arrêt gracieux : les flux SSE se ferment à l'arrêt, sortie bornée** (audit
+  2026-08) — `with_graceful_shutdown` attendait la fin de **toutes** les
+  connexions en vol, or `/v1/intensity/stream` est un flux infini par
+  construction (le `Sender` broadcast vit dans l'app) : un seul client SSE
+  connecté (ou un onglet `/hydrogene` ouvert) suffisait à ce que chaque arrêt
+  orchestré finisse en SIGKILL du superviseur (Docker 10 s, systemd 30 s),
+  coupant net les requêtes et écritures en vol. Un `CancellationToken`
+  partagé, annulé au signal, déclenche désormais l'arrêt, **clôt les flux
+  SSE** (`take_until` propagé via `StreamState`) et arme un délai de grâce
+  (8 s) qui force la sortie si le drain traîne malgré tout.
+- **Démarrage : les quatre calibrations s'exécutent en parallèle** (audit
+  2026-08) — empilées en séquence avant le bind (`climatology@1`,
+  `acv-ademe@2`, `share-clim@1`, modèle renouvelable), leurs timeouts
+  individuels de 120 s se cumulaient : jusqu'à ~8 min sans écoute HTTP
+  (`/health` compris, 502 côté proxy) sur base dégradée, trahissant l'intention
+  de `CALIBRATION_TIMEOUT` de borner le boot. `tokio::join!` ramène le pire
+  cas au timeout unitaire (calibrations indépendantes, seul le pool sqlx est
+  partagé).
+- **Poller : plus de rattrapage en rafale des ticks manqués** (audit 2026-08) —
+  le comportement tokio par défaut (`Burst`) rejouait d'affilée tous les ticks
+  manqués (machine suspendue, cycle plus long que l'intervalle) : autant
+  d'appels ODRÉ/ENTSO-E consécutifs pour ré-ingérer la même donnée. Passage à
+  `MissedTickBehavior::Delay` — on repart du tick courant en respectant
+  l'espacement.
+- **`CARBONFR_POLL_SECS=0` refusé à la configuration** (audit 2026-08) — la
+  valeur était acceptée puis faisait paniquer le poller à l'exécution
+  (`tokio::time::interval` refuse une période nulle) : validation au parse,
+  message d'erreur explicite au démarrage.
+- **Poller : erreur de lecture de la dernière mesure tracée** (audit 2026-08) —
+  une erreur de `latest()` après ingestion était avalée : le SSE et la jauge
+  `carbonfr_poller_last_measurement_timestamp_seconds` gelaient sans aucune
+  trace au journal. Un `warn` explicite est désormais émis.
+- **`share-clim@1` : env de calibration invalide tracée** (audit 2026-08) —
+  `CARBONFR_SHARE_CALIBRATE_WEEKS` invalide coupait la feature et
+  `CARBONFR_SHARE_CALIBRATE_TO` invalide était remplacée par « maintenant »,
+  en silence dans les deux cas (indiscernable d'un opt-out volontaire au
+  journal) : un `warn` explicite est désormais émis, comportement de repli
+  inchangé.
 
 ### Sécurité
 

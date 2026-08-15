@@ -456,6 +456,39 @@ async fn stable_reads_carry_cache_control_others_do_not() {
     );
 }
 
+/// Audit 2026-08 (arrêt gracieux) : l'annulation du jeton d'arrêt **clôt** le
+/// flux SSE. Sans cette clôture, le flux était infini par construction (le
+/// `Sender` broadcast vit dans l'app) et `with_graceful_shutdown` ne se
+/// terminait jamais tant qu'un client `/v1/intensity/stream` restait connecté
+/// (SIGKILL systématique du superviseur à chaque déploiement).
+#[tokio::test]
+async fn sse_stream_closes_when_shutdown_token_is_cancelled() {
+    let repo = FakeRepo::default();
+    let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1");
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    let token = tokio_util::sync::CancellationToken::new();
+    let app = router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates).with_shutdown(token.clone()),
+        None,
+    );
+
+    let response = get(app, "/v1/intensity/stream").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    token.cancel();
+    // Le corps du flux doit se terminer : sans la clôture, `to_bytes` pendrait
+    // indéfiniment (le timeout borne le test, pas le comportement).
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        to_bytes(response.into_body(), usize::MAX),
+    )
+    .await
+    .expect("le flux SSE doit se clore à l'annulation du jeton d'arrêt")
+    .unwrap();
+}
+
 #[tokio::test]
 async fn price_decomposes_with_spot_energy() {
     let repo = FakeRepo {

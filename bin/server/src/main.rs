@@ -23,7 +23,7 @@
 //! |------------------------------|----------------|-----------------------------------|
 //! | `DATABASE_URL`               | — (requis)     | DSN PostgreSQL                    |
 //! | `CARBONFR_BIND`              | `0.0.0.0:8080` | adresse d'écoute de l'API         |
-//! | `CARBONFR_POLL_SECS`         | `900` (15 min) | période d'ingestion ODRÉ          |
+//! | `CARBONFR_POLL_SECS`         | `900` (15 min) | période d'ingestion ODRÉ (et TTL des caches de prévision), > 0 |
 //! | `CARBONFR_BACKFILL_FROM`     | `2012-01-01T00:00:00Z` | début du backfill (RFC 3339) |
 //! | `CARBONFR_BACKFILL_TO`       | maintenant     | fin du backfill (RFC 3339)        |
 //! | `CARBONFR_BACKFILL_WINDOW_DAYS` | `90`        | largeur de tranche d'export       |
@@ -47,6 +47,7 @@
 //! | `CARBONFR_RATELIMIT_FREE_PER_MIN` | `600`     | quota clé gratuite (req/min)        |
 //! | `CARBONFR_KEY_LABEL`         | `` (vide)      | `mint-key` : libellé de la clé      |
 //! | `CARBONFR_TRUST_PROXY`       | `0` (off)      | faire confiance à `X-Forwarded-For` (derrière un reverse proxy) |
+//! | `CARBONFR_REAL_IP_HEADER`    | (non défini)   | en-tête d'IP réelle dédié (ex. `x-real-ip`) — **uniquement** si le proxy l'écrase systématiquement ; défaut = dernier segment de `X-Forwarded-For` (audit 2026-08) |
 //! | `CARBONFR_DB_MAX_CONNECTIONS` | `20`         | taille du pool PostgreSQL           |
 //! | `CARBONFR_DB_STATEMENT_TIMEOUT_MS` | `30000` | borne serveur `statement_timeout` + `idle_in_transaction_session_timeout` |
 //! | `CARBONFR_VISIT_SALT`        | `carbon-fr` (⚠ requis si TRUST_PROXY) | sel du hachage des IP visiteurs |
@@ -59,13 +60,13 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use carbonfr_adapter_entsoe::EntsoeClient;
-use carbonfr_adapter_forecast::{AcvAdemeForecaster, ClimatologyForecaster};
+use carbonfr_adapter_forecast::{AcvAdemeForecaster, CachedForecaster, ClimatologyForecaster};
 use carbonfr_adapter_gbdt::{
     GbdtForecaster, GbdtHyperParams, build_training_examples, train_model,
 };
 use carbonfr_adapter_http::{
     AppState, AuthConfig, AuthState, EligibilityRepoAdapter, ForecastState, ShareForecastConfig,
-    StreamState, enforce, key_fingerprint, router,
+    StreamState, key_fingerprint, router,
 };
 use carbonfr_adapter_meteo::OpenMeteoClient;
 use carbonfr_adapter_odre::OdreClient;
@@ -179,11 +180,27 @@ async fn run_server() -> anyhow::Result<()> {
     // repository. Intervalles **calibrés** au démarrage par quantiles de résidus
     // par horizon (ADR-0011), repli sur la dispersion par créneau si l'historique
     // récent est insuffisant. Son identité versionnée est annoncée au client.
-    let forecaster = build_calibrated_forecaster(repo.clone()).await;
+    // Les **quatre calibrations de démarrage** (intervalles climatology@1 et
+    // acv-ademe@2, bandes share-clim@1, modèle renouvelable) sont indépendantes
+    // — elles ne partagent que le pool sqlx — et s'exécutent **en parallèle**
+    // (audit 2026-08) : empilées en séquence, leurs timeouts individuels de
+    // 120 s se cumulaient (jusqu'à ~8 min sans écoute HTTP, `/health` compris,
+    // sur base dégradée), trahissant l'intention de `CALIBRATION_TIMEOUT` de
+    // borner le temps de boot.
+    let (climatology, acv, share_config, renewable_model) = tokio::join!(
+        build_calibrated_forecaster(repo.clone()),
+        build_calibrated_acv_forecaster(repo.clone()),
+        build_share_forecast_config(repo.clone(), config.poll_interval),
+        build_calibrated_renewable_model(repo.clone()),
+    );
+    // Cache TTL des séries prévues (audit perf 2026-08) : la donnée ne change
+    // qu'au cycle du poller — sans cache, chaque requête des 5 endpoints de
+    // prévision relisait ~10 semaines d'historique et rebâtissait le modèle.
+    let forecaster = CachedForecaster::new(climatology, config.poll_interval);
     let model = format!("{CLIMATOLOGY_ID}@{CLIMATOLOGY_VERSION}");
     // Prévision `acv-ademe@2` (ADR-0013) : climatologie des entrées (mix + import)
-    // + calculateur. Servie via `?methodology=acv-ademe&version=2`.
-    let acv_forecaster = build_calibrated_acv_forecaster(repo.clone()).await;
+    // + calculateur. Servie via `?methodology=acv-ademe&version=2`. Même cache.
+    let acv_forecaster = CachedForecaster::new(acv, config.poll_interval);
     let acv_model = format!("{ACV_FORECAST_ID}@{ACV_FORECAST_VERSION}");
     let forecast_state = ForecastState::new(forecaster, model)
         .with_consumption(std::sync::Arc::new(acv_forecaster), acv_model)
@@ -193,33 +210,50 @@ async fn run_server() -> anyhow::Result<()> {
     // `share-clim@1` (ADR-0028) : part renouvelable prévue du pilier rfnbo,
     // seulement si les bandes ont pu être calibrées au démarrage (sinon la part
     // future reste `Indeterminate` — comportement d'avant ADR-0028, gate oblige).
-    let forecast_state = match build_share_forecast_config(repo.clone()).await {
+    let forecast_state = match share_config {
         Some(cfg) => forecast_state.with_share_forecast(std::sync::Arc::new(cfg)),
         None => forecast_state,
     };
 
-    let renewable_model = build_calibrated_renewable_model(repo.clone()).await;
     let mut state = AppState::new(repo.clone())
         .with_trust_proxy(config.trust_proxy)
+        .with_real_ip_header(config.real_ip_header.clone())
         .with_renewable_model(renewable_model);
     if let Some(salt) = config.visit_salt {
         state = state.with_visit_salt(salt);
     }
-    let stream_state = StreamState::new(updates_tx);
+    // Arrêt gracieux **borné** (audit 2026-08) : un jeton partagé, annulé au
+    // signal, (1) déclenche `with_graceful_shutdown`, (2) **clôt les flux SSE**
+    // via `StreamState` — sans quoi `serve` attendait indéfiniment ces
+    // connexions infinies (le `Sender` broadcast vit dans l'app) et le
+    // superviseur finissait par SIGKILL à chaque déploiement dès qu'un client
+    // `/v1/intensity/stream` (ou un onglet `/hydrogene`) restait ouvert — et
+    // (3) arme le délai de grâce qui force la sortie si le drain traîne.
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    {
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            shutdown.cancel();
+        });
+    }
+    let stream_state = StreamState::new(updates_tx).with_shutdown(shutdown.clone());
     // `/metrics` (hors contrat `/v1`, comme `/health`) : exposition Prometheus en
     // texte, pas du JSON versionné → fusionnée ici plutôt que dans le routeur de
     // l'adapter. En prod, restreindre l'accès au scrapeur côté reverse proxy.
     let metrics_router = axum::Router::new()
         .route("/metrics", axum::routing::get(serve_metrics))
         .with_state(metrics);
-    let mut app = router(state, forecast_state, stream_state).merge(metrics_router);
-
     // Tier hébergé (ADR-0015) : middleware clés API + quota, **opt-in**. Désactivé
     // par défaut → l'API reste anonyme et sans limite (parité self-hosting).
-    if let Some(auth_state) = build_auth_state(repo.clone()) {
+    // Appliqué PAR le routeur, sous sa couche CORS (audit 2026-08 : posé ici en
+    // `.layer()`, il devenait la couche la plus externe → préflights décomptés
+    // du quota et 401/429 sans en-têtes CORS, illisibles en navigateur).
+    let auth_state = build_auth_state(repo.clone());
+    if auth_state.is_some() {
         info!("tier hébergé activé : auth par clé + quota par minute");
-        app = app.layer(axum::middleware::from_fn_with_state(auth_state, enforce));
     }
+    let app = router(state, forecast_state, stream_state, auth_state).merge(metrics_router);
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("écoute sur {}", config.bind))?;
@@ -231,10 +265,13 @@ async fn run_server() -> anyhow::Result<()> {
     // webhooks muets). Le superviseur (systemd `Restart=on-failure`) relance.
     let mut poller = poller;
     let mut webhook_watcher = webhook_watcher;
-    let serve = async {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
-            .await
+    let serve = {
+        let shutdown = shutdown.clone();
+        async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown.cancelled_owned())
+                .await
+        }
     };
     tokio::pin!(serve);
 
@@ -246,6 +283,19 @@ async fn run_server() -> anyhow::Result<()> {
         joined = &mut webhook_watcher => Err(anyhow::anyhow!(
             "le watcher de webhooks s'est arrêté ({joined:?})"
         )),
+        // Filet de sécurité (audit 2026-08) : si une connexion refuse de se
+        // drainer malgré la clôture des flux SSE, on force la sortie après le
+        // délai de grâce plutôt que d'attendre le SIGKILL du superviseur.
+        _ = async {
+            shutdown.cancelled().await;
+            tokio::time::sleep(SHUTDOWN_GRACE).await;
+        } => {
+            warn!(
+                grace_secs = SHUTDOWN_GRACE.as_secs(),
+                "arrêt gracieux non terminé dans le délai de grâce — sortie forcée"
+            );
+            Ok(())
+        }
     };
 
     poller.abort();
@@ -295,9 +345,23 @@ fn build_auth_state(repo: PgIntensityRepository) -> Option<AuthState> {
             std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
             Ok("1") | Ok("true")
         ),
+        real_ip_header: real_ip_header_from_env(),
     };
     let keys: std::sync::Arc<dyn ApiKeyRepository> = std::sync::Arc::new(repo);
     Some(AuthState::new(keys, config))
+}
+
+/// `CARBONFR_REAL_IP_HEADER` : en-tête d'IP réelle dédié, **opt-in** (audit
+/// 2026-08). ⚠️ À ne configurer que si le reverse proxy **écrase**
+/// systématiquement cet en-tête (ex. Caddy avec `header_up X-Real-IP
+/// {remote_host}`) : sinon il est fourni par le client → quota contournable et
+/// compteur de visiteurs pollué. Non défini (défaut) : dernier segment de
+/// `X-Forwarded-For`, sûr avec tout proxy qui appende l'IP réelle à droite.
+fn real_ip_header_from_env() -> Option<String> {
+    std::env::var("CARBONFR_REAL_IP_HEADER")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .filter(|v| !v.is_empty())
 }
 
 /// Mode `mint-key` : génère une clé API gratuite, en stocke l'empreinte, et
@@ -391,11 +455,15 @@ async fn run_backfill() -> anyhow::Result<()> {
     // GBDT, par tranches de 30 j (limite raisonnable de l'API). `run_at =
     // valid_at − 24 h` (anti-fuite). Échec non bloquant (best-effort).
     //
-    // L'API Historical Forecast d'Open-Meteo ne couvre que **2016-01-01→** : on
-    // borne le départ pour ne pas émettre de requêtes vouées au 400 sur tout
-    // l'historique antérieur (sans ce garde-fou, 2012→2016 = ~49 tranches inutiles).
+    // L'API Historical Forecast d'Open-Meteo accepte des requêtes dès
+    // 2016-01-01, mais les variables utilisées ici (`wind_speed_100m`,
+    // `shortwave_radiation`) répondent tout-`null` sur **toute 2016** (données
+    // réelles ~2017→, vérifié live — audit 2026-08 ; l'agrégation saute
+    // désormais ces créneaux plutôt que fabriquer des 0,0). On borne donc le
+    // départ à **2017-01-01** : sans ce garde-fou, 2012→2017 = ~61 tranches
+    // inutiles (400 avant 2016, tout-`null` ensuite).
     let weather_min = OffsetDateTime::new_utc(
-        time::Date::from_calendar_date(2016, time::Month::January, 1)
+        time::Date::from_calendar_date(2017, time::Month::January, 1)
             .context("date plancher de l'archive météo")?,
         time::Time::MIDNIGHT,
     );
@@ -1096,6 +1164,13 @@ fn print_metrics_row(label: &str, metrics: Option<ErrorMetrics>) {
 /// on démarre quand même en mode non-calibré plutôt que de pendre indéfiniment.
 const CALIBRATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// Délai de grâce de l'arrêt (audit 2026-08) : après le signal, temps laissé au
+/// drain des connexions en vol (les flux SSE, eux, sont clos immédiatement via
+/// le jeton d'arrêt) avant de **forcer** la sortie. Sous les bornes des
+/// superviseurs (Docker `stop-timeout` 10 s, systemd `TimeoutStopSec=30` du
+/// `deploy/carbonfr.service`) pour sortir proprement plutôt que par SIGKILL.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(8);
+
 /// Profondeur de la climatologie de part renouvelable `share-clim@1`
 /// (ADR-0028) : 10 semaines, alignée sur `climatology@1` (N calé, ADR-0009).
 const SHARE_LOOKBACK_DAYS: i64 = 70;
@@ -1119,18 +1194,41 @@ fn share_calibrate_weeks() -> anyhow::Result<i64> {
 /// récent, quantiles de résidus par horizon (ADR-0011 §5). `None` (le pilier
 /// reste `Indeterminate` au-delà du nowcast, comportement d'avant ADR-0028) si
 /// l'historique est trop maigre, `…_WEEKS=0`, ou timeout.
-async fn build_share_forecast_config(repo: PgIntensityRepository) -> Option<ShareForecastConfig> {
-    let weeks = share_calibrate_weeks().ok()?;
+async fn build_share_forecast_config(
+    repo: PgIntensityRepository,
+    cache_ttl: std::time::Duration,
+) -> Option<ShareForecastConfig> {
+    // Env invalide **tracée** (audit 2026-08) : avalée, la feature était coupée
+    // (ou la date de calibration remplacée) en silence — indiscernable d'un
+    // opt-out volontaire au journal.
+    let weeks = match share_calibrate_weeks() {
+        Ok(weeks) => weeks,
+        Err(err) => {
+            warn!(
+                error = %err,
+                "share-clim@1 : CARBONFR_SHARE_CALIBRATE_WEEKS invalide — calibration désactivée \
+                 (part renouvelable future Indeterminate)"
+            );
+            return None;
+        }
+    };
     if weeks <= 0 {
         return None;
     }
     // Fin de la fenêtre de calibration : maintenant par défaut ;
     // `CARBONFR_SHARE_CALIBRATE_TO` (RFC 3339) pour une calibration reproductible
     // (dev, self-hosting sur historique figé, re-jeu du GATE de neutralité).
-    let now = parse_rfc3339_env("CARBONFR_SHARE_CALIBRATE_TO")
-        .ok()
-        .flatten()
-        .unwrap_or_else(OffsetDateTime::now_utc);
+    let now = match parse_rfc3339_env("CARBONFR_SHARE_CALIBRATE_TO") {
+        Ok(Some(to)) => to,
+        Ok(None) => OffsetDateTime::now_utc(),
+        Err(err) => {
+            warn!(
+                error = %err,
+                "share-clim@1 : CARBONFR_SHARE_CALIBRATE_TO invalide — fin de calibration = maintenant"
+            );
+            OffsetDateTime::now_utc()
+        }
+    };
     let lookback = Duration::days(SHARE_LOOKBACK_DAYS);
     let horizon = Duration::hours(SHARE_MAX_HORIZON_HOURS);
     let params = ClimatologyParams::default();
@@ -1159,12 +1257,11 @@ async fn build_share_forecast_config(repo: PgIntensityRepository) -> Option<Shar
                 horizons = bands.len(),
                 "bandes share-clim@1 calibrées (part renouvelable prévue, ADR-0028)"
             );
-            Some(ShareForecastConfig {
-                bands,
-                params,
-                lookback,
-                max_horizon: horizon,
-            })
+            // `cache_ttl` = intervalle de poll : durée de vie du cache de la
+            // fenêtre climatologique de part (audit perf 2026-08).
+            Some(ShareForecastConfig::new(
+                bands, params, lookback, horizon, cache_ttl,
+            ))
         }
         Ok(None) => {
             warn!(
@@ -1559,6 +1656,9 @@ struct ServerConfig {
     poll_interval: std::time::Duration,
     visit_salt: Option<String>,
     trust_proxy: bool,
+    /// En-tête d'IP réelle dédié (`CARBONFR_REAL_IP_HEADER`, opt-in — cf.
+    /// [`real_ip_header_from_env`]).
+    real_ip_header: Option<String>,
 }
 
 impl ServerConfig {
@@ -1571,12 +1671,7 @@ impl ServerConfig {
             .parse()
             .context("CARBONFR_BIND : adresse d'écoute invalide")?;
 
-        let poll_secs = std::env::var("CARBONFR_POLL_SECS")
-            .ok()
-            .map(|raw| raw.parse::<u64>())
-            .transpose()
-            .context("CARBONFR_POLL_SECS : durée invalide")?
-            .unwrap_or(900);
+        let poll_secs = parse_poll_secs(std::env::var("CARBONFR_POLL_SECS").ok().as_deref())?;
 
         let trust_proxy = matches!(
             std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
@@ -1607,8 +1702,23 @@ impl ServerConfig {
             poll_interval: std::time::Duration::from_secs(poll_secs),
             visit_salt,
             trust_proxy,
+            real_ip_header: real_ip_header_from_env(),
         })
     }
+}
+
+/// Période du poller (`CARBONFR_POLL_SECS`, défaut 900 s). **Refusée si nulle**
+/// (audit 2026-08) : `tokio::time::interval` panique sur une période de zéro —
+/// on échoue à la configuration, avec un message clair, plutôt qu'à l'exécution
+/// du poller.
+fn parse_poll_secs(raw: Option<&str>) -> anyhow::Result<u64> {
+    let secs = raw
+        .map(|raw| raw.parse::<u64>())
+        .transpose()
+        .context("CARBONFR_POLL_SECS : durée invalide")?
+        .unwrap_or(900);
+    anyhow::ensure!(secs > 0, "CARBONFR_POLL_SECS doit être > 0 (secondes)");
+    Ok(secs)
 }
 
 /// Résout l'intervalle et la largeur de tranche du backfill depuis l'environnement.
@@ -1674,6 +1784,11 @@ where
     let ingest = IngestLatest::new(source.clone(), repo.clone());
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
+        // Ticks manqués (cycle plus long que l'intervalle, machine suspendue…) :
+        // le défaut tokio (`Burst`) les rattrape en rafale — autant d'appels
+        // ODRÉ/ENTSO-E consécutifs pour ré-ingérer la même donnée. `Delay`
+        // repart du tick courant et respecte l'espacement (audit 2026-08).
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticker.tick().await;
 
@@ -1700,10 +1815,19 @@ where
 
             // Diffusion live (ADR-0014 §2) : on pousse la dernière mesure
             // nationale `rte-direct` aux abonnés SSE. `send` échoue sans abonné —
-            // sans conséquence (canal sans rétention forte).
-            if let Ok(Some(m)) = repo.latest(Region::National, "rte-direct").await {
-                metrics.set_last_measurement(m.at.unix_timestamp());
-                let _ = updates.send(IntensityUpdate::from_measurement(&m));
+            // sans conséquence (canal sans rétention forte). Une erreur de
+            // lecture est **tracée** (audit 2026-08) : avalée, le SSE et la
+            // jauge de fraîcheur gelaient sans aucun indice au journal.
+            match repo.latest(Region::National, "rte-direct").await {
+                Ok(Some(m)) => {
+                    metrics.set_last_measurement(m.at.unix_timestamp());
+                    let _ = updates.send(IntensityUpdate::from_measurement(&m));
+                }
+                Ok(None) => {}
+                Err(err) => warn!(
+                    error = %err,
+                    "lecture de la dernière mesure impossible — SSE et jauge de fraîcheur non rafraîchis"
+                ),
             }
 
             // Charge nationale : consommation récente + prévisions RTE — entrée
@@ -1740,7 +1864,10 @@ where
                 match entsoe.recent_flows().await {
                     Ok(snapshots) if !snapshots.is_empty() => {
                         match repo.upsert_flows(&snapshots).await {
-                            Ok(n) => info!(flows = n, "ingestion contexte d'import (ENTSO-E)"),
+                            Ok(n) => {
+                                metrics.set_last_flows(OffsetDateTime::now_utc().unix_timestamp());
+                                info!(flows = n, "ingestion contexte d'import (ENTSO-E)");
+                            }
                             Err(err) => {
                                 warn!(error = %err, "échec d'écriture du contexte d'import")
                             }
@@ -1908,5 +2035,31 @@ fn init_tracing() {
         builder.json().init();
     } else {
         builder.init();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_poll_secs;
+
+    /// Audit 2026-08 : `CARBONFR_POLL_SECS=0` était accepté à la config puis
+    /// faisait paniquer le poller (`tokio::time::interval` refuse une période
+    /// nulle). La validation échoue désormais **au parse**, avec un message clair.
+    #[test]
+    fn poll_secs_zero_is_rejected_at_parse() {
+        let err = parse_poll_secs(Some("0")).unwrap_err();
+        assert!(err.to_string().contains("CARBONFR_POLL_SECS"));
+    }
+
+    #[test]
+    fn poll_secs_invalid_is_rejected() {
+        assert!(parse_poll_secs(Some("quinze")).is_err());
+        assert!(parse_poll_secs(Some("-60")).is_err());
+    }
+
+    #[test]
+    fn poll_secs_default_and_explicit() {
+        assert_eq!(parse_poll_secs(None).unwrap(), 900);
+        assert_eq!(parse_poll_secs(Some("60")).unwrap(), 60);
     }
 }

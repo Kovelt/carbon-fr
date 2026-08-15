@@ -395,6 +395,31 @@ async fn weather_keeps_run_history_per_valid_time() {
     assert_eq!(latest.len(), 1, "une seule ligne par échéance");
     assert_eq!(latest[0].run_at, run2);
     assert_eq!(latest[0].wind, 25.0);
+
+    // Audit 2026-08 : un même couple `(valid_at, run_at)` dupliqué dans le MÊME
+    // lot ne fait plus échouer tout l'INSERT (« ON CONFLICT ne peut affecter
+    // deux fois la même ligne ») — dédup avant l'upsert, dernière occurrence
+    // conservée (même sémantique que l'upsert lui-même).
+    repo.upsert_weather(&[
+        WeatherForecast {
+            valid_at: valid,
+            run_at: run2,
+            wind: 30.0,
+            irradiance: 130.0,
+        },
+        WeatherForecast {
+            valid_at: valid,
+            run_at: run2,
+            wind: 31.0,
+            irradiance: 131.0,
+        },
+    ])
+    .await
+    .unwrap();
+    let latest = repo.weather_latest(window).await.unwrap();
+    assert_eq!(latest.len(), 1, "toujours une seule ligne par échéance");
+    assert_eq!(latest[0].run_at, run2);
+    assert_eq!(latest[0].wind, 31.0, "dernière occurrence du lot conservée");
 }
 
 /// F24 : deux `LoadRecord` **complémentaires** (réalisée seule + prévue seule)
@@ -717,6 +742,15 @@ async fn cross_border_snapshot_roundtrips_and_picks_nearest() {
     // Avant tout → None.
     assert!(
         repo.flows_at(t0 - Duration::hours(1))
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // Contexte périmé (dernier snapshot vieux de 2 h > tolérance) → None,
+    // plutôt qu'une extension illimitée du dernier snapshot connu.
+    assert!(
+        repo.flows_at(t1 + Duration::hours(2))
             .await
             .unwrap()
             .is_none()

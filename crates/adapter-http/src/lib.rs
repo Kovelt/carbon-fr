@@ -73,6 +73,10 @@ pub struct AppState<R> {
     /// un reverse proxy de confiance, ADR-0007). Faux par défaut : sans proxy,
     /// l'en-tête est spoofable.
     pub(crate) trust_proxy: bool,
+    /// En-tête d'IP réelle **écrasé par le proxy** (ex. `x-real-ip`), opt-in via
+    /// `CARBONFR_REAL_IP_HEADER`. `None` (défaut) : dernier segment de
+    /// `X-Forwarded-For` (cf. `AuthConfig::real_ip_header`, audit 2026-08).
+    pub(crate) real_ip_header: Option<String>,
     /// Modèle de dérivation renouvelable **calibré au démarrage** (ADR-0018),
     /// servi par `/v1/renewable`. `None` si la calibration a échoué (historique
     /// insuffisant) → l'endpoint répond `503`.
@@ -87,6 +91,7 @@ impl<R> AppState<R> {
             methodology: "rte-direct".to_string(),
             visit_salt: DEFAULT_VISIT_SALT.to_string(),
             trust_proxy: false,
+            real_ip_header: None,
             renewable_model: None,
         }
     }
@@ -100,9 +105,16 @@ impl<R> AppState<R> {
         self
     }
 
-    /// Active la confiance dans `X-Forwarded-For`/`X-Real-IP` (derrière un proxy).
+    /// Active la confiance dans `X-Forwarded-For` (derrière un proxy).
     pub fn with_trust_proxy(mut self, trust: bool) -> Self {
         self.trust_proxy = trust;
+        self
+    }
+
+    /// Configure l'en-tête d'IP réelle dédié (`CARBONFR_REAL_IP_HEADER`,
+    /// opt-in) — uniquement si le proxy l'**écrase** systématiquement.
+    pub fn with_real_ip_header(mut self, header: Option<String>) -> Self {
+        self.real_ip_header = header;
         self
     }
 
@@ -181,7 +193,9 @@ where
 
     async fn spot_price_at(&self, at: time::OffsetDateTime) -> Option<f64> {
         // `price_at` renvoie le prix au plus proche ≤ at. On REFUSE un prix périmé
-        // de plus d'1 h pour ne pas propager le dernier day-ahead sur le futur
+        // d'1 h ou plus (borne STRICTE : un prix horaire couvre `[t, t + 1 h)` —
+        // à `t + 1 h` exactement, c'est l'heure de livraison suivante, audit
+        // 2026-08) pour ne pas propager le dernier day-ahead sur le futur
         // (PIÈGE 2 : au-delà du day-ahead, le signal prix reste indéterminé).
         // NB : comparer les `Duration` directement, PAS `whole_hours()` (division
         // entière → tolérerait jusqu'à ~2 h). Garde `>= ZERO` au cas où une autre
@@ -193,7 +207,7 @@ where
             .flatten()
             .filter(|p| {
                 let age = at - p.at;
-                age >= time::Duration::ZERO && age <= time::Duration::hours(1)
+                age >= time::Duration::ZERO && age < time::Duration::hours(1)
             })
             .map(|p| p.eur_per_mwh)
     }
@@ -317,13 +331,31 @@ impl<F> ForecastState<F> {
 #[derive(Clone)]
 pub struct StreamState {
     pub(crate) updates: tokio::sync::broadcast::Sender<carbonfr_core::domain::IntensityUpdate>,
+    /// Jeton d'**arrêt** propagé par la composition root (audit 2026-08) : son
+    /// annulation clôt les flux SSE ouverts. Sans cette clôture, l'arrêt
+    /// gracieux (`with_graceful_shutdown`) attendrait indéfiniment ces
+    /// connexions infinies — le `Sender` broadcast vit dans l'app possédée par
+    /// `serve`, le flux ne peut donc jamais se terminer de lui-même. Défaut :
+    /// jeton jamais annulé (tests, usages sans arrêt orchestré).
+    pub(crate) shutdown: tokio_util::sync::CancellationToken,
 }
 
 impl StreamState {
     pub fn new(
         updates: tokio::sync::broadcast::Sender<carbonfr_core::domain::IntensityUpdate>,
     ) -> Self {
-        Self { updates }
+        Self {
+            updates,
+            shutdown: tokio_util::sync::CancellationToken::new(),
+        }
+    }
+
+    /// Propage le jeton d'arrêt de la composition root : à son annulation, les
+    /// flux SSE en cours se terminent proprement et le drain de l'arrêt
+    /// gracieux peut aboutir (audit 2026-08).
+    pub fn with_shutdown(mut self, token: tokio_util::sync::CancellationToken) -> Self {
+        self.shutdown = token;
+        self
     }
 }
 
@@ -333,7 +365,20 @@ impl StreamState {
 /// routes de **prévision** ont leur propre [`ForecastState`] (un
 /// [`ForecastModel`]). Deux sous-routeurs, chacun avec son état, **fusionnés**
 /// (`merge`) — ce qui évite d'imposer le type du modèle aux handlers existants.
-pub fn router<R, F>(state: AppState<R>, forecast: ForecastState<F>, stream: StreamState) -> Router
+///
+/// `auth` (tier hébergé, ADR-0015, opt-in) : le middleware [`enforce`] est
+/// appliqué **ici**, sous la couche CORS, et plus par la composition root
+/// (audit 2026-08) : posé au-dessus du routeur, il devenait la couche la plus
+/// externe → les préflights `OPTIONS` étaient décomptés du seau anonyme et ses
+/// 401/429/503 partaient sans `Access-Control-Allow-Origin` (réponses opaques
+/// en navigateur, `RateLimit-*`/`Retry-After` illisibles malgré
+/// `expose_headers`).
+pub fn router<R, F>(
+    state: AppState<R>,
+    forecast: ForecastState<F>,
+    stream: StreamState,
+    auth: Option<AuthState>,
+) -> Router
 where
     R: IntensityRepository
         + VisitCounter
@@ -406,7 +451,8 @@ where
         .route("/v1/intensity/stream", get(handlers::intensity_stream))
         .with_state(stream);
 
-    core.merge(forecasting)
+    let mut app = core
+        .merge(forecasting)
         .merge(streaming)
         // Fallback AVANT les couches : un chemin inconnu doit traverser CORS/Trace
         // comme une réponse normale (sinon un client navigateur ne peut pas lire le
@@ -415,15 +461,74 @@ where
         // Limite de corps serrée : nos seuls POST (webhook, visite) sont de petits
         // JSON. 16 Kio plafonne un corps abusif bien sous le défaut axum (2 Mio).
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
+        // En-tête `Cache-Control` sur les lectures stables (audit perf 2026-08).
+        .layer(axum::middleware::from_fn(cache_control))
         // Trace HTTP (méthode, chemin, statut, latence) — observabilité prod.
-        .layer(tower_http::trace::TraceLayer::new_for_http())
-        // CORS **permissif** : l'API sert de la donnée publique en lecture et se
-        // veut dev-first (cf. carbonintensity.org.uk). Toute origine peut donc lire
-        // les réponses depuis un navigateur — nécessaire pour qu'un site tiers (dont
-        // carbon-fr.kovelt.fr) consomme l'API. Pas de cookies : `Any` est sûr (les
-        // clés API passent par l'en-tête `Authorization`, pas par `credentials`).
-        // Couche la plus externe : gère le préflight `OPTIONS` avant le routage.
-        .layer(cors_layer())
+        .layer(tower_http::trace::TraceLayer::new_for_http());
+    // Tier hébergé (ADR-0015, opt-in) : auth + quota, appliqué SOUS la couche
+    // CORS (dernier `.layer()` = plus externe) — cf. doc de `router()`.
+    if let Some(auth) = auth {
+        app = app.layer(axum::middleware::from_fn_with_state(auth, enforce));
+    }
+    // CORS **permissif** : l'API sert de la donnée publique en lecture et se
+    // veut dev-first (cf. carbonintensity.org.uk). Toute origine peut donc lire
+    // les réponses depuis un navigateur — nécessaire pour qu'un site tiers (dont
+    // carbon-fr.kovelt.fr) consomme l'API. Pas de cookies : `Any` est sûr (les
+    // clés API passent par l'en-tête `Authorization`, pas par `credentials`).
+    // Couche la plus externe : gère le préflight `OPTIONS` avant le routage
+    // (donc avant `enforce` : un préflight n'est jamais décompté du quota) et
+    // ajoute `Access-Control-Allow-Origin` aux réponses d'`enforce`.
+    app.layer(cors_layer())
+}
+
+/// Chemins `GET` de **lecture stable** : leurs données ne changent qu'au cycle
+/// du poller (~15 min) ou au démarrage (catalogues, constantes versionnées).
+/// Exclus volontairement : le SSE (`/v1/intensity/stream`), les endpoints à
+/// clé (`/v1/webhooks…`), le compteur de visiteurs (`/v1/stats`) et les sondes.
+const CACHEABLE_PATHS: &[&str] = &[
+    "/v1/intensity/now",
+    "/v1/intensity/date",
+    "/v1/intensity/stats",
+    "/v1/mix",
+    "/v1/exchanges",
+    "/v1/exchanges/date",
+    "/v1/weather",
+    "/v1/weather/date",
+    "/v1/renewable",
+    "/v1/methodologies",
+    "/v1/factors",
+    "/v1/eligibility/rulesets",
+    "/v1/price",
+    "/v1/price/date",
+    "/v1/cost-reference",
+    "/v1/intensity/forecast",
+    "/v1/intensity/greenest-window",
+    "/v1/schedule",
+    "/v1/schedule/slots",
+    "/v1/intensity/below",
+];
+
+/// Marque les réponses `200` des lectures stables ([`CACHEABLE_PATHS`]) d'un
+/// `Cache-Control: public, max-age=60` (audit perf 2026-08) : un cache HTTP
+/// intermédiaire (navigateur, proxy, CDN d'une instance self-hostée) peut
+/// absorber les rafales de polling sans risquer de servir plus d'une minute de
+/// retard sur une donnée rafraîchie toutes les ~15 min. Pas d'`ETag` (les
+/// corps sont petits, la revalidation n'apporterait rien) ; les erreurs ne
+/// sont jamais marquées.
+async fn cache_control(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let cacheable = request.method() == axum::http::Method::GET
+        && CACHEABLE_PATHS.contains(&request.uri().path());
+    let mut response = next.run(request).await;
+    if cacheable && response.status() == axum::http::StatusCode::OK {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("public, max-age=60"),
+        );
+    }
+    response
 }
 
 /// Fallback du routeur : tout chemin qui ne correspond à aucune route déclarée
@@ -448,4 +553,7 @@ fn cors_layer() -> tower_http::cors::CorsLayer {
         .allow_methods(Any)
         .allow_headers(Any)
         .expose_headers(Any)
+        // Cache du préflight côté navigateur : sans `Access-Control-Max-Age`,
+        // les navigateurs re-préflightent ~toutes les 5 s (audit 2026-08).
+        .max_age(std::time::Duration::from_secs(3600))
 }

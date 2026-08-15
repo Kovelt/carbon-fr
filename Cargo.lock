@@ -217,6 +217,7 @@ dependencies = [
  "carbonfr-adapter-forecast",
  "carbonfr-core",
  "carbonfr-eligibility",
+ "futures-util",
  "rand 0.9.4",
  "serde",
  "serde_json",
@@ -224,6 +225,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-stream",
+ "tokio-util",
  "tower",
  "tower-http 0.7.0",
  "utoipa",
@@ -1687,6 +1689,7 @@ dependencies = [
  "rand 0.9.4",
  "time",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]

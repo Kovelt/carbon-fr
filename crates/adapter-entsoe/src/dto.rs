@@ -8,6 +8,13 @@
 //!   `Publication_MarketDocument`, `Period/Point` → série de puissance.
 //!
 //! Chemins XML **validés contre l'API live** le 2026-06-16 (test `--ignored`).
+//!
+//! IEC 62325 définit deux types de courbe (`curveType`) : `A01` (bloc fixe,
+//! toutes les positions présentes) et `A03` (blocs de taille variable : une
+//! valeur reste valable jusqu'à la position suivante, les **répétitions sont
+//! omises** du document — cas des flux A11 et des prix A44). Le développement
+//! des périodes comble donc les positions omises en reconduisant la dernière
+//! valeur jusqu'au point suivant ou à la fin de période (cf. `expand_curve`).
 
 use std::collections::BTreeMap;
 
@@ -28,6 +35,8 @@ pub(crate) struct Point {
 #[derive(Debug, Deserialize)]
 pub(crate) struct TimeInterval {
     pub start: String,
+    /// Fin de période : borne du comblement des positions omises (courbe A03).
+    pub end: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,14 +49,18 @@ pub(crate) struct Period {
 }
 
 impl Period {
-    /// Développe la période en couples `(horodatage, MW)`.
+    /// Développe la période en couples `(horodatage, MW)`, en reconduisant
+    /// chaque point jusqu'au suivant ou à la fin de période (courbe A03).
     fn expand(&self) -> Result<Vec<(OffsetDateTime, f64)>, EntsoeError> {
         let start = parse_instant(&self.time_interval.start)?;
+        let end = parse_instant(&self.time_interval.end)?;
         let step = parse_resolution_minutes(&self.resolution)?;
-        self.points
-            .iter()
-            .map(|p| Ok((expand_position(start, step, p.position)?, p.quantity)))
-            .collect()
+        expand_curve(
+            start,
+            end,
+            step,
+            self.points.iter().map(|p| (p.position, p.quantity)),
+        )
     }
 }
 
@@ -67,6 +80,11 @@ pub(crate) struct MktPsrType {
 pub(crate) struct GenerationTimeSeries {
     #[serde(default, rename = "inBiddingZone_Domain.mRID")]
     pub in_domain: Option<String>,
+    /// Type de courbe IEC 62325 (`A01`/`A03`). Lu pour documenter le contrat :
+    /// le comblement d'`expand_curve` est inconditionnel et couvre les deux cas.
+    #[serde(default, rename = "curveType")]
+    #[allow(dead_code)]
+    pub curve_type: Option<String>,
     #[serde(rename = "MktPSRType")]
     pub psr: MktPsrType,
     #[serde(default, rename = "Period")]
@@ -83,6 +101,11 @@ pub(crate) struct GenerationDocument {
 /// `TimeSeries` d'un document de flux physique (`Publication_MarketDocument`).
 #[derive(Debug, Deserialize)]
 pub(crate) struct FlowTimeSeries {
+    /// Type de courbe IEC 62325 (`A01`/`A03`). Lu pour documenter le contrat :
+    /// le comblement d'`expand_curve` est inconditionnel et couvre les deux cas.
+    #[serde(default, rename = "curveType")]
+    #[allow(dead_code)]
+    pub curve_type: Option<String>,
     #[serde(default, rename = "Period")]
     pub periods: Vec<Period>,
 }
@@ -131,15 +154,72 @@ pub(crate) struct PricePeriod {
 }
 
 impl PricePeriod {
-    /// Développe la période en couples `(horodatage, €/MWh)`.
+    /// Développe la période en couples `(horodatage, €/MWh)`, en reconduisant
+    /// chaque point jusqu'au suivant ou à la fin de période (courbe A03).
     fn expand(&self) -> Result<Vec<(OffsetDateTime, f64)>, EntsoeError> {
         let start = parse_instant(&self.time_interval.start)?;
+        let end = parse_instant(&self.time_interval.end)?;
         let step = parse_resolution_minutes(&self.resolution)?;
-        self.points
-            .iter()
-            .map(|p| Ok((expand_position(start, step, p.position)?, p.amount)))
-            .collect()
+        expand_curve(
+            start,
+            end,
+            step,
+            self.points.iter().map(|p| (p.position, p.amount)),
+        )
     }
+}
+
+/// Nombre maximal de pas comblés par période : garde (esprit audit F14) contre
+/// un XML malformé/hostile dont l'intervalle démesuré ferait exploser le
+/// comblement en mémoire/CPU (repère : un an au pas 15 min = 35 136 pas).
+const MAX_EXPAND_STEPS: i64 = 100_000;
+
+/// Développe des points `(position, valeur)` en série `(horodatage, valeur)`,
+/// en **reconduisant** chaque valeur jusqu'à la position du point suivant ou à
+/// la fin de période (`timeInterval.end`) : c'est le contrat de la courbe A03
+/// (blocs de taille variable, répétitions omises — cf. doc de module). Le
+/// comblement est inconditionnel : sans effet sur une courbe A01 complète.
+fn expand_curve(
+    start: OffsetDateTime,
+    end: OffsetDateTime,
+    step_minutes: i64,
+    points: impl Iterator<Item = (u32, f64)>,
+) -> Result<Vec<(OffsetDateTime, f64)>, EntsoeError> {
+    // Dernière position couverte par la période (division entière : une fin
+    // non alignée sur le pas n'étend pas le comblement au-delà ; une fin
+    // antérieure au début désactive simplement le comblement).
+    let span_steps = (end - start).whole_minutes() / step_minutes;
+    if span_steps > MAX_EXPAND_STEPS {
+        return Err(EntsoeError::Parse(format!(
+            "période démesurée : {span_steps} pas de {step_minutes} min"
+        )));
+    }
+    let last_position = span_steps.max(0) as u32;
+    // Les positions doivent croître pour borner le comblement (l'ordre du XML
+    // n'est pas garanti par le parseur) : tri, sans déduplication.
+    let mut sorted: Vec<(u32, f64)> = points.collect();
+    sorted.sort_by_key(|&(position, _)| position);
+    let mut out = Vec::new();
+    for (i, &(position, value)) in sorted.iter().enumerate() {
+        // Borne d'exclusion du comblement : position du point suivant, sinon
+        // fin de période — jamais au-delà de la période (position suivante
+        // malformée comprise).
+        let until = sorted
+            .get(i + 1)
+            .map_or(u32::MAX, |&(next, _)| next)
+            .min(last_position.saturating_add(1));
+        // Le point explicite est toujours émis (une position hors bornes
+        // propage une erreur, F14) ; le comblement suit jusqu'à `until`.
+        let mut p = position;
+        loop {
+            out.push((expand_position(start, step_minutes, p)?, value));
+            p = match p.checked_add(1) {
+                Some(next) if next < until => next,
+                _ => break,
+            };
+        }
+    }
+    Ok(out)
 }
 
 /// Décale `start` de `(position − 1) × step` minutes **sans paniquer** en cas de
@@ -165,6 +245,11 @@ fn expand_position(
 /// `TimeSeries` d'un document de prix day-ahead (`Publication_MarketDocument`).
 #[derive(Debug, Deserialize)]
 pub(crate) struct PriceTimeSeries {
+    /// Type de courbe IEC 62325 (`A01`/`A03`). Lu pour documenter le contrat :
+    /// le comblement d'`expand_curve` est inconditionnel et couvre les deux cas.
+    #[serde(default, rename = "curveType")]
+    #[allow(dead_code)]
+    pub curve_type: Option<String>,
     #[serde(default, rename = "Period")]
     pub periods: Vec<PricePeriod>,
 }
@@ -372,10 +457,56 @@ mod tests {
     #[test]
     fn parses_official_a11_flow() {
         let doc: FlowDocument = quick_xml::de::from_str(REAL_A11).unwrap();
+        // La fixture officielle est en courbe A03 : un unique Point (position 1)
+        // couvre 24 h — la valeur doit être reconduite sur TOUS les pas, pas
+        // seulement le premier (complétude, audit 2026-08).
+        assert_eq!(doc.series[0].curve_type.as_deref(), Some("A03"));
+        let first = doc.series[0].periods[0].expand().unwrap();
+        assert_eq!(first.len(), 24, "24 pas horaires attendus (A03 comblée)");
+        assert!(first.iter().all(|&(_, mw)| mw == 100.0));
+        assert_eq!(first[0].0, datetime!(2013-12-18 23:00 UTC));
+        assert_eq!(first[23].0, datetime!(2013-12-19 22:00 UTC));
+        let second = doc.series[1].periods[0].expand().unwrap();
+        assert_eq!(second.len(), 24);
+        assert!(second.iter().all(|&(_, mw)| mw == 10.0));
+        assert_eq!(second[0].0, datetime!(2013-12-18 22:00 UTC));
+        // Agrégat du document : les deux directions de l'exemple se recouvrent
+        // de 23:00 à 21:00 et se somment (en requête réelle, une seule
+        // direction par appel — pas de recouvrement).
         let series = doc.flow_series().unwrap();
-        // Deux directions dans l'exemple (en requête réelle, une seule par appel).
-        assert_eq!(series.get(&datetime!(2013-12-18 23:00 UTC)), Some(&100.0));
+        assert_eq!(series.len(), 25);
         assert_eq!(series.get(&datetime!(2013-12-18 22:00 UTC)), Some(&10.0));
+        assert_eq!(series.get(&datetime!(2013-12-18 23:00 UTC)), Some(&110.0));
+        assert_eq!(series.get(&datetime!(2013-12-19 22:00 UTC)), Some(&100.0));
+    }
+
+    #[test]
+    fn price_a03_carries_omitted_positions_forward() {
+        // Courbe A03 au MTU 15 min : les positions 2-4 (prix inchangé) sont
+        // omises du document ; chaque quart d'heure doit néanmoins porter un
+        // prix — un trou ici rendrait le pilier prix rfnbo indéterminé à tort.
+        let xml = r#"<?xml version="1.0"?>
+<Publication_MarketDocument xmlns="urn:iec62325.351:tc57wg16:451-3:publicationdocument:7:0">
+  <TimeSeries>
+    <in_Domain.mRID codingScheme="A01">10YFR-RTE------C</in_Domain.mRID>
+    <out_Domain.mRID codingScheme="A01">10YFR-RTE------C</out_Domain.mRID>
+    <curveType>A03</curveType>
+    <Period>
+      <timeInterval><start>2026-01-01T00:00Z</start><end>2026-01-01T01:30Z</end></timeInterval>
+      <resolution>PT15M</resolution>
+      <Point><position>1</position><price.amount>60</price.amount></Point>
+      <Point><position>5</position><price.amount>20</price.amount></Point>
+    </Period>
+  </TimeSeries>
+</Publication_MarketDocument>"#;
+        let doc: DayAheadPriceDocument = quick_xml::de::from_str(xml).unwrap();
+        let series = doc.price_series().unwrap();
+        assert_eq!(series.len(), 6, "6 quarts d'heure attendus (A03 comblée)");
+        assert_eq!(series.get(&datetime!(2026-01-01 00:00 UTC)), Some(&60.0));
+        assert_eq!(series.get(&datetime!(2026-01-01 00:15 UTC)), Some(&60.0));
+        assert_eq!(series.get(&datetime!(2026-01-01 00:45 UTC)), Some(&60.0));
+        assert_eq!(series.get(&datetime!(2026-01-01 01:00 UTC)), Some(&20.0));
+        assert_eq!(series.get(&datetime!(2026-01-01 01:15 UTC)), Some(&20.0));
     }
 
     #[test]

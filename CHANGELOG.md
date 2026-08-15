@@ -25,6 +25,241 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   production ; à re-mesurer quand la couverture météo de service dépassera le
   cadre du backtest.
 
+- **`Cache-Control: public, max-age=60` sur les lectures stables** (audit perf
+  2026-08) — les `GET` dont la donnée ne change qu'au cycle du poller (~15 min)
+  ou au démarrage (`/now`, `/mix`, `/forecast`, `/greenest-window`, `/price`,
+  `/cost-reference`, catalogues…) n'annonçaient aucune politique de cache : un
+  navigateur, un proxy ou le CDN d'une instance self-hostée re-frappait l'API à
+  chaque polling. En-tête posé sur les seules réponses `200` de ces chemins —
+  jamais sur le SSE (`no-cache` d'axum conservé), les endpoints à clé, le
+  compteur de visiteurs ni les erreurs. Pas d'`ETag` (corps petits, la
+  revalidation n'apporterait rien).
+
+### Modifié
+
+- **`/v1/intensity/date` et `/v1/intensity/stats` en `acv-ademe@2` : fenêtre
+  plafonnée à 92 jours** (audit perf 2026-08) — la série `@2` est dérivée à la
+  lecture (mix × flux transfrontaliers rechargés et joints en mémoire, sans
+  rollup — ADR-0010 §6) : la garde générique de 366 j autorisait ~175 k lignes
+  de flux lues + jointure + sérialisation par requête anonyme. Le plafond des
+  **séries denses** (92 j, celui de `/exchanges/date`, `/weather/date` et
+  `/price/date`) s'applique désormais à ces deux chemins : 400 explicite
+  au-delà (OpenAPI mise à jour). Les autres méthodologies conservent 366 j.
+
+### Corrigé
+
+- **Rollups : fin des parcours séquentiels complets à chaque cycle de poll**
+  (audit perf 2026-08) — le rafraîchissement incrémental filtre par `at >= $1`
+  seul, prédicat qu'aucun index ne servait (PK `(region, at, …)`, index
+  `(region, methodology_id, at DESC)`) : chaque cycle faisait 2 seq scans de
+  toute la table `measurement` (~600 k lignes, en croissance), contredisant le
+  « coût O(7 j) » visé par la migration 0010. Nouvelle migration `0012` : index
+  **BRIN** sur `measurement (at)` (table écrite en ordre chronologique — index
+  de quelques pages, scan borné aux blocs récents).
+- **`weather_latest` : plus de lecture de tous les runs de la fenêtre** (audit
+  perf 2026-08) — le `DISTINCT ON` lisait (et heap-fetchait) chaque run de
+  chaque échéance avant de n'en garder qu'un, or la table anti-fuite (ADR-0012)
+  les conserve tous (~192 par échéance en régime établi) : ~420 k tuples lus
+  pour ~2 200 rendus sur `GET /v1/weather/date` à 92 j. Remplacé par une
+  descente d'index par échéance (`DISTINCT valid_at` index-only + `LATERAL …
+  LIMIT 1`) — un tuple rapatrié par échéance, réponse inchangée.
+- **`upsert_weather` : doublon de clé toléré dans un même lot** (audit
+  2026-08) — un couple `(valid_at, run_at)` dupliqué dans le même lot faisait
+  échouer tout l'INSERT multi-lignes (« ON CONFLICT ne peut affecter deux fois
+  la même ligne ») : dédup avant l'upsert (dernière occurrence conservée, même
+  sémantique que l'upsert), sur le patron de `upsert_flows`/`dedup_by_key`.
+- **ENTSO-E : courbes `A03` développées en série complète** (audit 2026-08) —
+  le parseur IEC 62325 ignorait `curveType` et `timeInterval.end` : les
+  positions omises d'une courbe A03 (valeur reconduite jusqu'au point suivant)
+  étaient traitées comme absentes. Un flux A11 stable (une seule position
+  émise) se réduisait à son premier pas — net transfrontalier faussé jusqu'à
+  l'inversion de signe dans `acv-ademe@2` et `/v1/exchanges` — et un prix A44
+  constant laissait des trous dans `spot_price` (pilier prix rfnbo indéterminé
+  à tort). Chaque point est désormais reconduit jusqu'à la position du point
+  suivant ou la fin de période (comblement inconditionnel, sans effet sur une
+  courbe A01 complète), dans les trois développements (flux, génération, prix),
+  avec garde contre les périodes démesurées (esprit F14) ; complétude testée
+  sur la fixture officielle A11 (24 pas) + prix PT15M à positions omises.
+- **`acv-ademe@2` : contexte d'import borné en fraîcheur** (audit 2026-08) — la
+  jointure « au plus proche ≤ » reconduisait le dernier snapshot d'échanges sans
+  limite d'ancienneté : en cas de panne ENTSO-E, `/v1/intensity/now`, `/date` et
+  `/stats` en `?methodology=acv-ademe&version=2` servaient un contexte figé
+  (heures, voire jours) sous l'horodatage frais du mix. Nouvelle constante de
+  domaine `MAX_FLOW_CONTEXT_AGE` (1 h, cadence des flux A11) appliquée à la
+  jointure de série (créneau omis), au chemin courant (`404` plutôt qu'une
+  valeur périmée) et à `flows_at` côté SQL — `/v1/exchanges` cesse de même de
+  servir un snapshot périmé comme courant.
+- **`/v1/price/date` : prix spot borné en fraîcheur** (audit 2026-08) — la série
+  reportait le dernier prix spot connu sur tous les créneaux suivants, sans
+  limite : après un trou d'ingestion ENTSO-E, une semaine entière pouvait
+  recevoir le prix d'avant la panne, présenté comme factuel. La jointure de
+  `price_series` omet désormais les créneaux dont le prix a plus de 6 h
+  (`MAX_SPOT_STALENESS`, promue constante de domaine partagée avec la garde du
+  chemin courant `/v1/price`).
+- **Fraîcheur de l'ingestion des flux transfrontaliers observable** (audit
+  2026-08) — nouvelle jauge Prometheus
+  `carbonfr_poller_last_flows_timestamp_seconds` (sur le modèle de
+  `last_price`) : une panne ENTSO-E côté flux n'était visible que dans les
+  logs, contrairement à l'esprit de l'ADR-0022 (« alerte phare = fraîcheur »).
+- **Éligibilité : part « observée » du nowcast bornée à un pas** (audit
+  2026-08) — avec un `?from=` passé sur
+  `greenest-window?eligibility=rfnbo`, tous les créneaux passés recevaient la
+  part renouvelable de la DERNIÈRE mesure, servie `observed` avec verdict
+  ferme, alors que le pilier prix du même verdict était, lui, évalué à
+  l'horodatage du créneau. La branche nowcast est désormais restreinte aux
+  créneaux à ≤ 15 min de la dernière mesure ; un créneau passé plus ancien
+  relit sa **propre** part observée dans le batch d'historique (second batch
+  borné à l'étendue des créneaux si `from` précède la fenêtre climatologique),
+  sinon `Indeterminate` (donnée manquante) — jamais la part courante.
+- **Éligibilité : fraîcheur du prix day-ahead stricte** (audit 2026-08) — la
+  garde « ≤ 1 h » inclusive appliquait le prix de l'heure de livraison
+  précédente à un créneau situé exactement 1 h après (un prix horaire couvre
+  `[t, t + 1 h)`) : borne désormais stricte (`< 1 h`) dans `freshest_price`
+  et `spot_price_at` — à défaut de prix propre au créneau, le pilier prix est
+  indéterminé, jamais reconduit.
+- **`share-meteo@2` : mix dégénérés écartés de l'apprentissage** (audit
+  2026-08) — un mix présent mais de total ≤ 0 (trou de donnée) alimentait les
+  climatologies de canal (zéros dans les moyennes de créneau) et la
+  calibration éolien/solaire (0 MW face à une vraie météo) ; ces mesures sont
+  désormais ignorées entièrement (l'ancre, déjà protégée, ne change pas).
+  Expérience non servie — aucun impact sur le contrat `/v1`.
+- **`/v1/intensity/forecast` : 400 (et non 500) pour `acv-ademe@2` hors
+  national** (audit 2026-08) — le handler était le seul chemin `@2` sans garde
+  de région : l'erreur client finissait en `ForecastError::Unavailable` → 500
+  `internal`, en contradiction avec `/now`, `/date` et `/stats` (400 explicite,
+  ADR-0010 §8). La garde 400 est posée avant l'état de câblage du modèle (la
+  faute client prime sur le 404 « non câblé »).
+- **`POST /v1/webhooks` : rejets du corps JSON en Problem Details** (audit
+  2026-08, ADR-0021) — l'extracteur `axum::Json` brut renvoyait ses rejets en
+  `text/plain` (JSON malformé, champ manquant, Content-Type absent, corps trop
+  grand) sans `type`/`title`/`code`. Nouvel extracteur `ValidatedJson`
+  (symétrique de `ValidatedQuery`, audit F15) : corps `application/problem+json`
+  au code stable `bad_request`, statut de la réjection conservé
+  (400/413/415/422) ; le 422 (champ manquant/mal typé) est désormais documenté
+  dans l'OpenAPI.
+- **`version` validée sur `greenest-window`, `/schedule`, `/schedule/slots` et
+  `/intensity/below`** (audit 2026-08) — le paramètre y était silencieusement
+  ignoré : `?methodology=acv-ademe&version=2` servait la prévision `@1` en
+  laissant croire à du `@2`. Comme `/v1/mix` (audit F12) : version inconnue →
+  400, et `acv-ademe&version=2` (servie uniquement par
+  `/v1/intensity/forecast`) → 400 explicite. Paramètre ajouté à l'OpenAPI.
+- **NaN/infini rejetés pour `energy_kwh` (`/v1/schedule`) et `below`
+  (`/v1/intensity/stream`)** (audit 2026-08) — `energy_kwh=NaN` passait la
+  validation `< 0` et infectait toute l'économie calculée ; `below=NaN`
+  désactivait silencieusement le filtre SSE (toute comparaison avec NaN est
+  fausse). Rejet 400 « nombre fini » exigé, comme `threshold` sur `/below`.
+- **CORS redevenue la couche la plus externe** (audit 2026-08) — le middleware
+  d'auth/quota (`enforce`, tier hébergé opt-in) était posé par la composition
+  root **au-dessus** de la `CorsLayer` : les préflights `OPTIONS` étaient
+  décomptés du seau anonyme (jusqu'à bloquer une appli navigateur à clé dont le
+  quota propre était intact) et les 401/429/503 partaient sans
+  `Access-Control-Allow-Origin` — réponses opaques en navigateur, `RateLimit-*`/
+  `Retry-After` illisibles malgré `expose_headers`. Le layer d'auth est
+  désormais appliqué par `router()` **sous** la couche CORS, les `OPTIONS` sont
+  exemptés de quota dans `enforce` (défense en profondeur) et le préflight est
+  mis en cache côté navigateur (`Access-Control-Max-Age: 3600`).
+- **RateLimiter : purge au changement de minute + plafond dur** (audit
+  2026-08) — la « purge légère » (`len` > 10 000 → `retain` de la minute
+  courante) ne retirait rien pendant une inondation d'identifiants distincts
+  (tous de la minute courante) et re-scannait toute la carte **sous le mutex
+  partagé à chaque requête** `/v1` (sérialisation de tout le trafic). La purge
+  ne tourne plus qu'une fois par changement de minute, et au-delà de 10 000
+  identifiants suivis, les identifiants inédits partagent un seau de
+  débordement unique — mémoire et CPU bornés même sous rotation d'adresses.
+- **Prévision : fin de la relecture de ~10 semaines d'historique à chaque
+  requête** (audit perf 2026-08) — les 5 endpoints de prévision (`/forecast`,
+  `/greenest-window`, `/schedule`, `/schedule/slots`, `/below`) relisaient
+  ~70 j de mesures en base et rebâtissaient la climatologie **par requête**
+  (jusqu'à ~13 500 lignes avec `?eligibility=rfnbo`), pour une donnée qui ne
+  change qu'au cycle du poller. Nouveau décorateur `CachedForecaster`
+  (adapter, port `ForecastModel` inchangé) : série mémorisée par clé
+  `(region, methodology, from aligné sur le pas, horizon)`, TTL = intervalle
+  de poll (`CARBONFR_POLL_SECS`), taille bornée — seul le trafic
+  `from ≈ maintenant` est mis en cache (un `from` explicite passé/futur garde
+  exactement le comportement d'avant), appliqué à `climatology@1` **et**
+  `acv-ademe@2`. La fenêtre climatologique de part renouvelable de l'overlay
+  `rfnbo` (`share-clim@1`) est de même mise en cache (clé = ancre nowcast +
+  TTL) — la sémantique mono-forecast (ADR-0026 D16) est préservée : fenêtre
+  verte et overlay partagent toujours la même série. ADR-0009 intact : la
+  prévision reste calculée à la lecture, jamais persistée.
+- **Arrêt gracieux : les flux SSE se ferment à l'arrêt, sortie bornée** (audit
+  2026-08) — `with_graceful_shutdown` attendait la fin de **toutes** les
+  connexions en vol, or `/v1/intensity/stream` est un flux infini par
+  construction (le `Sender` broadcast vit dans l'app) : un seul client SSE
+  connecté (ou un onglet `/hydrogene` ouvert) suffisait à ce que chaque arrêt
+  orchestré finisse en SIGKILL du superviseur (Docker 10 s, systemd 30 s),
+  coupant net les requêtes et écritures en vol. Un `CancellationToken`
+  partagé, annulé au signal, déclenche désormais l'arrêt, **clôt les flux
+  SSE** (`take_until` propagé via `StreamState`) et arme un délai de grâce
+  (8 s) qui force la sortie si le drain traîne malgré tout.
+- **Démarrage : les quatre calibrations s'exécutent en parallèle** (audit
+  2026-08) — empilées en séquence avant le bind (`climatology@1`,
+  `acv-ademe@2`, `share-clim@1`, modèle renouvelable), leurs timeouts
+  individuels de 120 s se cumulaient : jusqu'à ~8 min sans écoute HTTP
+  (`/health` compris, 502 côté proxy) sur base dégradée, trahissant l'intention
+  de `CALIBRATION_TIMEOUT` de borner le boot. `tokio::join!` ramène le pire
+  cas au timeout unitaire (calibrations indépendantes, seul le pool sqlx est
+  partagé).
+- **Poller : plus de rattrapage en rafale des ticks manqués** (audit 2026-08) —
+  le comportement tokio par défaut (`Burst`) rejouait d'affilée tous les ticks
+  manqués (machine suspendue, cycle plus long que l'intervalle) : autant
+  d'appels ODRÉ/ENTSO-E consécutifs pour ré-ingérer la même donnée. Passage à
+  `MissedTickBehavior::Delay` — on repart du tick courant en respectant
+  l'espacement.
+- **`CARBONFR_POLL_SECS=0` refusé à la configuration** (audit 2026-08) — la
+  valeur était acceptée puis faisait paniquer le poller à l'exécution
+  (`tokio::time::interval` refuse une période nulle) : validation au parse,
+  message d'erreur explicite au démarrage.
+- **Poller : erreur de lecture de la dernière mesure tracée** (audit 2026-08) —
+  une erreur de `latest()` après ingestion était avalée : le SSE et la jauge
+  `carbonfr_poller_last_measurement_timestamp_seconds` gelaient sans aucune
+  trace au journal. Un `warn` explicite est désormais émis.
+- **`share-clim@1` : env de calibration invalide tracée** (audit 2026-08) —
+  `CARBONFR_SHARE_CALIBRATE_WEEKS` invalide coupait la feature et
+  `CARBONFR_SHARE_CALIBRATE_TO` invalide était remplacée par « maintenant »,
+  en silence dans les deux cas (indiscernable d'un opt-out volontaire au
+  journal) : un `warn` explicite est désormais émis, comportement de repli
+  inchangé.
+- **Open-Meteo : plus de zéros fabriqués sur les créneaux sans donnée** (audit
+  2026-08) — un créneau dont tous les points de mesure répondaient `null`
+  était enregistré `{ wind: 0,0, irradiance: 0,0 }`, indistinguable d'un calme
+  plat mesuré. Le bord touché est le **début** de l'archive : les variables
+  utilisées (`wind_speed_100m`, `shortwave_radiation`) sont tout-`null` sur
+  toute 2016 (données réelles ~2017→, vérifié live), et le plancher
+  `weather_min = 2016-01-01` du backfill fabriquait ~8 784 lignes à 0,0
+  servies ensuite par `/v1/weather/date`. L'agrégation nationale **saute**
+  désormais ces créneaux (série creuse, tolérée par tous les consommateurs) et
+  le plancher du backfill est remonté à **2017-01-01** (~12 tranches d'appels
+  API voués au tout-`null` économisées ; commentaire de couverture corrigé).
+
+### Sécurité
+
+- **Les clés API invalides ne contournent plus le quota** (audit 2026-08) —
+  une requête à Bearer inconnu sortait en 401 **avant** le contrôle de quota :
+  le chemin non authentifié le plus coûteux (SHA-256 + un SELECT Postgres par
+  requête, pool partagé avec le poller) était le seul jamais throttlé. Les
+  échecs de résolution (clé inconnue, base injoignable) sont désormais
+  décomptés du **seau anonyme de l'IP** (429 au-delà de la limite), un seau
+  déjà épuisé coupe court **avant** l'aller-retour base, et un cache négatif
+  borné (empreinte → inconnue, TTL 60 s) évite de re-résoudre la même clé
+  invalide rejouée en boucle.
+- **`X-Real-Ip` n'est plus lu par défaut, IP toujours validée** (audit
+  2026-08) — sous `CARBONFR_TRUST_PROXY=1`, l'en-tête `X-Real-Ip` **cru**
+  primait sur le dernier segment de `X-Forwarded-For` : derrière un proxy qui
+  ne l'écrase pas (dont l'exemple `deploy/Caddyfile` du dépôt tel quel), le
+  quota anonyme était contournable à volonté et le compteur de visiteurs
+  gonflable par valeurs forgées. Défaut désormais : **dernier segment de
+  `X-Forwarded-For`** (sûr par construction avec tout proxy qui appende),
+  valeur toujours parsée comme adresse IP — sinon seau `unknown` ; en-tête
+  dédié en **opt-in** explicite via `CARBONFR_REAL_IP_HEADER` (le proxy doit
+  l'écraser — `header_up X-Real-IP {remote_host}` ajouté au Caddyfile,
+  `deploy/README.md` corrigé).
+- **Swagger UI (`/docs`) : version épinglée + Subresource Integrity** (audit
+  2026-08) — les assets jsDelivr étaient chargés en version flottante `@5`
+  sans SRI : toute release future (ou compromission CDN) exécutait du script
+  arbitraire dans la page. Épinglage exact `swagger-ui-dist@5.32.13` +
+  attributs `integrity` (SHA-384, vérifiés croisés jsDelivr/unpkg) et
+  `crossorigin="anonymous"` sur la feuille de style et le bundle.
 ## [0.6.1] - 2026-07-04
 
 La page carte `GET /hydrogene` devient embarquable par le site vitrine

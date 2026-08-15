@@ -63,6 +63,13 @@ reqwest = { version = "0.12.24", default-features = false, features = [
 ] }
 tokio = { version = "1.52.3", features = ["macros", "rt"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
+# Jeton d'annulation (`CancellationToken`) : arrêt gracieux borné (audit
+# 2026-08) — partagé entre la composition root et les flux SSE de l'adapter
+# HTTP. Licence MIT, déjà dans l'arbre (transitif sqlx/axum).
+tokio-util = "0.7"
+# Combinateur `take_until` (clôture des flux SSE à l'arrêt). Déjà dans l'arbre
+# via axum/hyper ; sans features par défaut (calcul pur, pas d'IO).
+futures-util = { version = "0.3", default-features = false }
 tower-http = { version = "0.7.0", features = ["trace", "cors"] }
 quick-xml = { version = "0.41.0", features = ["serialize"] }
 # Analyse d'URL WHATWG (identique à celle de reqwest) — calcul pur, pas d'IO :

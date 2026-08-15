@@ -362,7 +362,12 @@ async fn json_body(response: axum::response::Response) -> serde_json::Value {
 fn build(repo: FakeRepo) -> axum::Router {
     let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1");
     let (updates, _) = tokio::sync::broadcast::channel(8);
-    router(AppState::new(repo), forecast, StreamState::new(updates))
+    router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        None,
+    )
 }
 
 fn app(measurement: Option<Measurement>) -> axum::Router {
@@ -397,6 +402,91 @@ async fn intensity_now_returns_latest() {
     assert_eq!(body["methodology"], "rte-direct");
     assert_eq!(body["vintage"], "tr");
     assert_eq!(body["timestamp"], "1970-01-01T00:00:00Z");
+}
+
+/// Audit perf 2026-08 : les lectures stables (rafraîchies au cycle du poller)
+/// portent `Cache-Control: public, max-age=60` — jamais le SSE, les endpoints
+/// à clé, le compteur de visiteurs ni les erreurs.
+#[tokio::test]
+async fn stable_reads_carry_cache_control_others_do_not() {
+    // Lecture stable en 200 → en-tête présent.
+    let response = get(app(Some(national_measurement())), "/v1/intensity/now").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("public, max-age=60")
+    );
+    let response = get(app(None), "/v1/methodologies").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .headers()
+            .contains_key(axum::http::header::CACHE_CONTROL)
+    );
+
+    // Erreur sur un chemin stable → jamais marquée.
+    let response = get(app(None), "/v1/intensity/now").await;
+    assert_ne!(response.status(), StatusCode::OK);
+    assert!(
+        !response
+            .headers()
+            .contains_key(axum::http::header::CACHE_CONTROL)
+    );
+
+    // SSE : jamais marqué « public » — axum pose lui-même `no-cache`.
+    let response = get(app(None), "/v1/intensity/stream").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("no-cache")
+    );
+    // Compteur de visiteurs → jamais marqué.
+    let response = get(app(None), "/v1/stats").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        !response
+            .headers()
+            .contains_key(axum::http::header::CACHE_CONTROL)
+    );
+}
+
+/// Audit 2026-08 (arrêt gracieux) : l'annulation du jeton d'arrêt **clôt** le
+/// flux SSE. Sans cette clôture, le flux était infini par construction (le
+/// `Sender` broadcast vit dans l'app) et `with_graceful_shutdown` ne se
+/// terminait jamais tant qu'un client `/v1/intensity/stream` restait connecté
+/// (SIGKILL systématique du superviseur à chaque déploiement).
+#[tokio::test]
+async fn sse_stream_closes_when_shutdown_token_is_cancelled() {
+    let repo = FakeRepo::default();
+    let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1");
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    let token = tokio_util::sync::CancellationToken::new();
+    let app = router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates).with_shutdown(token.clone()),
+        None,
+    );
+
+    let response = get(app, "/v1/intensity/stream").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    token.cancel();
+    // Le corps du flux doit se terminer : sans la clôture, `to_bytes` pendrait
+    // indéfiniment (le timeout borne le test, pas le comportement).
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        to_bytes(response.into_body(), usize::MAX),
+    )
+    .await
+    .expect("le flux SSE doit se clore à l'annulation du jeton d'arrêt")
+    .unwrap();
 }
 
 #[tokio::test]
@@ -695,6 +785,7 @@ async fn renewable_estimates_from_weather() {
         AppState::new(repo).with_renewable_model(Some(model)),
         forecast,
         StreamState::new(updates),
+        None,
     );
     let response = get(app, "/v1/renewable").await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -1136,30 +1227,41 @@ fn build_with_eligibility(repo: FakeRepo) -> axum::Router {
     let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1")
         .with_eligibility(Arc::new(EligibilityRepoAdapter(repo.clone())));
     let (updates, _) = tokio::sync::broadcast::channel(8);
-    router(AppState::new(repo), forecast, StreamState::new(updates))
+    router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        None,
+    )
 }
 
 /// Monte le routeur avec l'overlay d'éligibilité ET `share-clim@1` câblés
 /// (part renouvelable prévue, ADR-0028) — bandes dégénérées sur 72 h.
 fn build_with_share_forecast(repo: FakeRepo) -> axum::Router {
-    let config = carbonfr_adapter_http::ShareForecastConfig {
-        bands: carbonfr_core::domain::HorizonBands::from_residuals(
+    let config = carbonfr_adapter_http::ShareForecastConfig::new(
+        carbonfr_core::domain::HorizonBands::from_residuals(
             Duration::minutes(15),
             &vec![Vec::new(); 289],
             0.1,
         ),
-        params: carbonfr_core::domain::ClimatologyParams {
+        carbonfr_core::domain::ClimatologyParams {
             step: Duration::minutes(15),
             tau: Duration::days(14),
         },
-        lookback: Duration::days(21),
-        max_horizon: Duration::hours(72),
-    };
+        Duration::days(21),
+        Duration::hours(72),
+        std::time::Duration::from_secs(900),
+    );
     let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1")
         .with_eligibility(Arc::new(EligibilityRepoAdapter(repo.clone())))
         .with_share_forecast(Arc::new(config));
     let (updates, _) = tokio::sync::broadcast::channel(8);
-    router(AppState::new(repo), forecast, StreamState::new(updates))
+    router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        None,
+    )
 }
 
 /// Mesure nationale avec mix à 25 % renouvelable (250 MW EnR / 1000 MW).
@@ -1326,6 +1428,9 @@ async fn eligibility_adapter_price_freshness_is_strictly_one_hour() {
     let adapter = EligibilityRepoAdapter(repo);
     // 30 min d'ancienneté → frais.
     assert_eq!(adapter.spot_price_at(t).await, Some(12.0));
+    // Pile 1 h d'ancienneté → heure de livraison suivante → périmé (borne
+    // STRICTE, audit 2026-08 : un prix horaire couvre `[t, t + 1 h)`).
+    assert_eq!(adapter.spot_price_at(t + Duration::minutes(30)).await, None);
     // 90 min d'ancienneté (> 1 h) → périmé → None (le bug le laissait passer).
     assert_eq!(adapter.spot_price_at(t + Duration::minutes(60)).await, None);
     // Pile 1 h 59 d'ancienneté → périmé (whole_hours l'acceptait à tort).
@@ -1638,7 +1743,12 @@ async fn greenest_window_eligibility_uses_a_single_forecast_call() {
     let forecast = ForecastState::new(spy, "climatology@1")
         .with_eligibility(Arc::new(EligibilityRepoAdapter(repo.clone())));
     let (updates, _) = tokio::sync::broadcast::channel(8);
-    let app = router(AppState::new(repo), forecast, StreamState::new(updates));
+    let app = router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        None,
+    );
     let response = get(
         app,
         "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&eligibility=low-carbon",
@@ -1797,7 +1907,8 @@ async fn stream_rejects_unknown_region() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
-/// Série `acv-ademe@1` (porte le mix FR) sur `n` heures depuis l'epoch.
+/// Série `acv-ademe@1` (porte le mix FR) sur `n` heures depuis l'epoch, avec un
+/// contexte d'import **horaire** aligné (fraîcheur ≤ 1 h sur chaque créneau).
 fn consumption_history_repo(n: i32) -> FakeRepo {
     use carbonfr_core::domain::{CrossBorderFlow, CrossBorderFlows, Neighbor};
     let t0 = OffsetDateTime::UNIX_EPOCH;
@@ -1813,16 +1924,19 @@ fn consumption_history_repo(n: i32) -> FakeRepo {
             mix: Some(mix),
         })
         .collect();
-    FakeRepo {
-        series,
-        flows: Some(CrossBorderSnapshot {
-            at: t0,
+    let flow_series: Vec<CrossBorderSnapshot> = (0..n)
+        .map(|i| CrossBorderSnapshot {
+            at: t0 + step * i,
             flows: CrossBorderFlows::new(vec![CrossBorderFlow {
                 neighbor: Neighbor::Germany,
                 flow_mw: 5000.0,
                 neighbor_intensity: CarbonIntensity::new(400.0).unwrap(),
             }]),
-        }),
+        })
+        .collect();
+    FakeRepo {
+        series,
+        flow_series,
         ..Default::default()
     }
 }
@@ -1868,6 +1982,39 @@ async fn intensity_date_consumption_v2_rejects_regional() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
+// Audit perf 2026-08 : la série `@2` est dérivée à la lecture (mix × flux joints
+// en mémoire, sans rollup) → plafond dense de 92 j, comme /exchanges/date. La
+// même fenêtre reste servie par les autres méthodologies (plafond 366 j).
+#[tokio::test]
+async fn intensity_date_consumption_v2_window_over_92_days_is_400() {
+    let response = get(
+        app(None),
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-04-15T00:00:00Z&methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(response).await["code"], "bad_request");
+
+    // Fenêtre identique (104 j) en rte-direct : toujours acceptée.
+    let response = get(
+        app(None),
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-04-15T00:00:00Z",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn intensity_stats_consumption_v2_window_over_92_days_is_400() {
+    let response = get(
+        app(None),
+        "/v1/intensity/stats?from=1970-01-01T00:00:00Z&to=1970-04-15T00:00:00Z&methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(response).await["code"], "bad_request");
+}
+
 /// Monte le routeur avec le modèle de prévision acv-ademe@2 câblé (ADR-0013).
 fn build_with_acv(repo: FakeRepo) -> axum::Router {
     use carbonfr_adapter_forecast::AcvAdemeForecaster;
@@ -1878,7 +2025,12 @@ fn build_with_acv(repo: FakeRepo) -> axum::Router {
             "acv-clim@1",
         );
     let (updates, _) = tokio::sync::broadcast::channel(8);
-    router(AppState::new(repo), forecast, StreamState::new(updates))
+    router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        None,
+    )
 }
 
 #[tokio::test]
@@ -1946,11 +2098,14 @@ use carbonfr_core::ports::{ApiKeyRecord, ApiKeyRepository, ApiTier};
 
 struct FakeKeys {
     valid_hash: String,
+    /// Nombre d'appels à `resolve` (vérifie le cache négatif, audit 2026-08).
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[async_trait]
 impl ApiKeyRepository for FakeKeys {
     async fn resolve(&self, key_hash: &str) -> Result<Option<ApiKeyRecord>, RepositoryError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok((key_hash == self.valid_hash).then(|| ApiKeyRecord {
             tier: ApiTier::Free,
             label: "test".to_string(),
@@ -1961,19 +2116,17 @@ impl ApiKeyRepository for FakeKeys {
     }
 }
 
-fn guarded_app() -> axum::Router {
-    use std::sync::Arc;
-    let keys = Arc::new(FakeKeys {
-        valid_hash: key_fingerprint("good-key"),
-    });
-    let state = AuthState::new(
-        keys,
-        AuthConfig {
-            anonymous_per_min: 2,
-            free_per_min: 100,
-            trust_proxy: false,
-        },
-    );
+fn auth_config(anonymous_per_min: u32) -> AuthConfig {
+    AuthConfig {
+        anonymous_per_min,
+        free_per_min: 100,
+        trust_proxy: false,
+        real_ip_header: None,
+    }
+}
+
+fn guarded_app_with_keys(keys: std::sync::Arc<FakeKeys>) -> axum::Router {
+    let state = AuthState::new(keys, auth_config(2));
     axum::Router::new()
         // Route sous contrat `/v1` : soumise au quota/auth.
         .route("/v1/protected", axum::routing::get(|| async { "ok" }))
@@ -1982,6 +2135,13 @@ fn guarded_app() -> axum::Router {
         .route("/health/ready", axum::routing::get(|| async { "ok" }))
         .route("/metrics", axum::routing::get(|| async { "ok" }))
         .layer(axum::middleware::from_fn_with_state(state, enforce))
+}
+
+fn guarded_app() -> axum::Router {
+    guarded_app_with_keys(std::sync::Arc::new(FakeKeys {
+        valid_hash: key_fingerprint("good-key"),
+        calls: Default::default(),
+    }))
 }
 
 async fn get_auth(app: axum::Router, uri: &str, bearer: Option<&str>) -> axum::response::Response {
@@ -2034,6 +2194,46 @@ async fn auth_valid_key_gets_higher_limit() {
 }
 
 #[tokio::test]
+async fn auth_invalid_key_flood_is_rate_limited() {
+    // Audit 2026-08 : les échecs d'auth sont décomptés du seau anonyme de l'IP.
+    // Avant : un Bearer aléatoire différent à chaque requête n'était JAMAIS
+    // throttlé (401 en boucle, un SELECT Postgres par requête).
+    let app = guarded_app(); // anonymous_per_min = 2
+    assert_eq!(
+        get_auth(app.clone(), "/v1/protected", Some("bad-1"))
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get_auth(app.clone(), "/v1/protected", Some("bad-2"))
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    // 3e clé inédite : seau anonyme épuisé → 429 (sans résolution en base).
+    let limited = get_auth(app.clone(), "/v1/protected", Some("bad-3")).await;
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(limited.headers().contains_key("retry-after"));
+}
+
+#[tokio::test]
+async fn auth_repeated_invalid_key_resolves_once() {
+    // Audit 2026-08 : cache négatif — la même empreinte invalide rejouée ne
+    // coûte qu'un seul aller-retour au registre de clés.
+    let keys = std::sync::Arc::new(FakeKeys {
+        valid_hash: key_fingerprint("good-key"),
+        calls: Default::default(),
+    });
+    let app = guarded_app_with_keys(keys.clone());
+    for _ in 0..2 {
+        let resp = get_auth(app.clone(), "/v1/protected", Some("wrong")).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(keys.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn operational_routes_bypass_quota_and_auth() {
     // F07 : `/health`, `/health/ready`, `/metrics` (hors `/v1`) ne sont jamais
     // soumis au quota anonyme (2/min ici) ni à l'auth, même sous `enforce`.
@@ -2048,6 +2248,92 @@ async fn operational_routes_bypass_quota_and_auth() {
         let resp = get_auth(app.clone(), route, Some("wrong")).await;
         assert_eq!(resp.status(), StatusCode::OK, "route {route} sans auth");
     }
+}
+
+/// Routeur complet avec le tier hébergé câblé (comme la composition root avec
+/// `CARBONFR_RATELIMIT_ENABLED=1`) : vérifie l'ordre des couches CORS/enforce.
+fn app_with_auth(anonymous_per_min: u32) -> axum::Router {
+    let repo = FakeRepo {
+        measurement: Some(national_measurement()),
+        ..Default::default()
+    };
+    let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1");
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    let auth = AuthState::new(
+        std::sync::Arc::new(FakeKeys {
+            valid_hash: key_fingerprint("good-key"),
+            calls: Default::default(),
+        }),
+        auth_config(anonymous_per_min),
+    );
+    router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        Some(auth),
+    )
+}
+
+#[tokio::test]
+async fn cors_preflight_not_counted_against_quota() {
+    // Audit 2026-08 : `enforce` posé au-dessus de CORS décomptait chaque
+    // préflight OPTIONS du seau anonyme. CORS est désormais la couche la plus
+    // externe : le préflight est servi avant `enforce` et ne consomme rien.
+    let app = app_with_auth(1); // 1 seule requête anonyme par minute
+    for _ in 0..3 {
+        let preflight = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/v1/intensity/now")
+                    .header("origin", "https://exemple.fr")
+                    .header("access-control-request-method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(preflight.status(), StatusCode::OK);
+        assert!(
+            preflight
+                .headers()
+                .contains_key("access-control-allow-origin")
+        );
+        // Préflight caché par le navigateur (Access-Control-Max-Age posé).
+        assert!(preflight.headers().contains_key("access-control-max-age"));
+    }
+    // Le quota anonyme (1/min) est intact : la vraie requête passe…
+    let first = get(app.clone(), "/v1/intensity/now").await;
+    assert_eq!(first.status(), StatusCode::OK);
+    // …et le 429 suivant traverse la couche CORS (lisible en navigateur).
+    let limited = get(app.clone(), "/v1/intensity/now").await;
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        limited
+            .headers()
+            .contains_key("access-control-allow-origin")
+    );
+}
+
+#[tokio::test]
+async fn auth_errors_carry_cors_headers() {
+    // Audit 2026-08 : les 401 émis par `enforce` court-circuitaient la
+    // CorsLayer → réponse opaque en navigateur. CORS externe : l'en-tête
+    // Access-Control-Allow-Origin est présent sur les erreurs d'auth.
+    let app = app_with_auth(5);
+    let resp = app
+        .oneshot(
+            Request::get("/v1/intensity/now")
+                .header("origin", "https://exemple.fr")
+                .header("authorization", "Bearer wrong")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert!(resp.headers().contains_key("access-control-allow-origin"));
 }
 
 // ── Endpoints webhooks (ADR-0016) ─────────────────────────────────────────────
@@ -2304,4 +2590,101 @@ async fn webhook_callback_url_too_long_is_400() {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn forecast_consumption_v2_rejects_regional() {
+    // Garde 400 symétrique de `/v1/intensity/now`/`/date` (ADR-0010 §8) — avant
+    // le correctif, l'erreur client finissait en 500 `internal` via
+    // `ForecastError::Unavailable` (audit 2026-08).
+    let response = get(
+        build_with_acv(FakeRepo::default()),
+        "/v1/intensity/forecast?region=bretagne&methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    // La faute client (400) prime sur l'état de câblage serveur (404 non câblé).
+    let unwired = get(
+        app(None),
+        "/v1/intensity/forecast?region=bretagne&methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(unwired.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn webhook_malformed_json_is_problem_details_400() {
+    // ADR-0021 : les rejets du corps JSON passent aussi par Problem Details
+    // (miroir de `query_deserialization_error_is_problem_json_400`).
+    let resp = send(
+        webhook_app(),
+        "POST",
+        "/v1/webhooks",
+        Some("wh-key"),
+        Some(r#"{"callback_url": }"#),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/problem+json")
+    );
+    assert_eq!(json_body(resp).await["code"], "bad_request");
+}
+
+#[tokio::test]
+async fn webhook_missing_field_is_problem_details_422() {
+    // JSON syntaxiquement valide mais `threshold` absent : statut de la
+    // réjection axum conservé (422), corps Problem Details.
+    let resp = send(
+        webhook_app(),
+        "POST",
+        "/v1/webhooks",
+        Some("wh-key"),
+        Some(r#"{"direction":"below","callback_url":"https://hooks.example.com/c"}"#),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/problem+json")
+    );
+    assert_eq!(json_body(resp).await["code"], "bad_request");
+}
+
+#[tokio::test]
+async fn schedule_energy_kwh_nan_is_400() {
+    // NaN passait la comparaison `< 0.0` et infectait l'économie calculée.
+    let r = get(app(None), "/v1/schedule?energy_kwh=NaN").await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn stream_below_nan_is_400() {
+    // `below=NaN` désactivait silencieusement le filtre (toute comparaison
+    // avec NaN est fausse).
+    let r = get(app(None), "/v1/intensity/stream?below=NaN").await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn forecast_usage_endpoints_validate_version() {
+    // `version` n'est plus silencieusement ignorée sur les endpoints de
+    // prévision/usage (audit 2026-08) : version inconnue → 400, et
+    // `acv-ademe&version=2` (servie uniquement par /v1/intensity/forecast)
+    // → 400 explicite, comme `/v1/mix`.
+    for uri in [
+        "/v1/intensity/greenest-window?methodology=acv-ademe&version=2",
+        "/v1/schedule?methodology=acv-ademe&version=2",
+        "/v1/schedule/slots?count=2&methodology=acv-ademe&version=2",
+        "/v1/intensity/below?threshold=50&methodology=acv-ademe&version=2",
+        "/v1/intensity/greenest-window?version=9",
+    ] {
+        let r = get(app(None), uri).await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST, "uri : {uri}");
+    }
 }

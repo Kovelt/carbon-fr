@@ -32,6 +32,8 @@ tokio = { workspace = true, features = [
     "time",
     "net",
 ] }
+# Jeton d'arrêt gracieux borné (audit 2026-08), propagé aux flux SSE.
+tokio-util = { workspace = true }
 anyhow = { workspace = true }
 rand = { workspace = true }
 tracing = { workspace = true }

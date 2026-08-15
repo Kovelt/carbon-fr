@@ -5,12 +5,10 @@
 //! **contexte d'import** au même horodatage, puis on applique le calculateur de
 //! domaine. La cohérence aux révisions est ainsi automatique.
 
-use time::Duration;
-
 use crate::domain::{
-    AcvAdemeConsumption, EmissionFactors, Granularity, IntensityStats, Measurement,
-    MethodologyCalculator, MethodologyContext, Region, RollupBucket, TD_LOSS_FACTOR_V1, TimeRange,
-    bucketize, derive_consumption_series, summarize,
+    AcvAdemeConsumption, EmissionFactors, Granularity, IntensityStats, MAX_FLOW_CONTEXT_AGE,
+    Measurement, MethodologyCalculator, MethodologyContext, Region, RollupBucket,
+    TD_LOSS_FACTOR_V1, TimeRange, bucketize, derive_consumption_series, summarize,
 };
 use crate::ports::{CrossBorderRepository, IntensityRepository};
 
@@ -32,7 +30,9 @@ impl<R: IntensityRepository, C: CrossBorderRepository> GetConsumptionIntensity<R
     }
 
     /// Calcule l'intensité consommation courante. [`ApplicationError::NotFound`]
-    /// si le mix ou le contexte d'import manque pour le dernier horodatage.
+    /// si le mix ou le contexte d'import manque — ou si le contexte est
+    /// **périmé** (plus vieux que [`MAX_FLOW_CONTEXT_AGE`]) : la mesure servie
+    /// portant l'horodatage frais du mix, un contexte ancien y serait invisible.
     pub async fn execute(&self, region: Region) -> Result<Measurement, ApplicationError> {
         // Le mix vit sur la mesure `acv-ademe@1` (dérivée et stockée à l'ingestion).
         let base = self
@@ -47,6 +47,13 @@ impl<R: IntensityRepository, C: CrossBorderRepository> GetConsumptionIntensity<R
             .flows_at(base.at)
             .await?
             .ok_or(ApplicationError::NotFound(region))?;
+
+        // Fraîcheur : un contexte d'import périmé (panne ENTSO-E) ne doit pas
+        // être servi sous l'horodatage frais du mix — `NotFound`, sur le modèle
+        // de `MAX_SPOT_STALENESS` pour le prix spot.
+        if base.at - snapshot.at > MAX_FLOW_CONTEXT_AGE {
+            return Err(ApplicationError::NotFound(region));
+        }
 
         let factors = EmissionFactors::acv_ademe_v1();
         let ctx = MethodologyContext {
@@ -73,17 +80,18 @@ impl<R: IntensityRepository, C: CrossBorderRepository> GetConsumptionIntensity<R
 
     /// Série `acv-ademe@2` sur `range` : dérivée à la lecture en joignant le mix
     /// stocké (`acv-ademe@1`) au contexte d'import (ADR-0010 §6). Les créneaux
-    /// sans contexte d'import disponible sont omis.
+    /// sans contexte d'import **frais** (≤ [`MAX_FLOW_CONTEXT_AGE`]) sont omis.
     pub async fn history(
         &self,
         region: Region,
         range: TimeRange,
     ) -> Result<Vec<Measurement>, ApplicationError> {
         let mix = self.repository.range(region, "acv-ademe", range).await?;
-        // On élargit la borne basse d'1 h pour capter le contexte d'import « au
-        // plus proche ≤ » des tout premiers créneaux de l'intervalle.
+        // On élargit la borne basse de la tolérance de fraîcheur pour capter le
+        // contexte d'import « au plus proche ≤ » des tout premiers créneaux de
+        // l'intervalle (au-delà, il serait périmé de toute façon).
         let flow_range =
-            TimeRange::new(range.start() - Duration::hours(1), range.end()).unwrap_or(range);
+            TimeRange::new(range.start() - MAX_FLOW_CONTEXT_AGE, range.end()).unwrap_or(range);
         let snapshots = self.cross_border.flows_range(flow_range).await?;
         Ok(derive_consumption_series(
             &mix,
@@ -249,6 +257,28 @@ mod tests {
         let at = OffsetDateTime::UNIX_EPOCH;
         let repo = FakeRepo { at };
         let cross = FakeCross { snapshot: None };
+        let err = GetConsumptionIntensity::new(repo, cross)
+            .execute(Region::National)
+            .await;
+        assert!(matches!(err, Err(ApplicationError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn stale_import_context_is_not_found() {
+        // Contexte d'import vieux de 2 h (> tolérance) : la panne ENTSO-E ne
+        // doit pas être masquée par l'horodatage frais du mix → NotFound.
+        let at = OffsetDateTime::UNIX_EPOCH + time::Duration::days(30);
+        let repo = FakeRepo { at };
+        let cross = FakeCross {
+            snapshot: Some(CrossBorderSnapshot {
+                at: at - time::Duration::hours(2),
+                flows: CrossBorderFlows::new(vec![CrossBorderFlow {
+                    neighbor: Neighbor::Germany,
+                    flow_mw: 5000.0,
+                    neighbor_intensity: CarbonIntensity::new(400.0).unwrap(),
+                }]),
+            }),
+        };
         let err = GetConsumptionIntensity::new(repo, cross)
             .execute(Region::National)
             .await;

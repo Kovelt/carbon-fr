@@ -157,7 +157,8 @@ where
     check_version(&methodology, query.version)?;
 
     // Chemin `acv-ademe@2` consumption-based : calculé à la lecture depuis le mix
-    // FR + le contexte d'import (ADR-0010). National uniquement (§8).
+    // FR + le contexte d'import (ADR-0010). National uniquement (§8). 404 si le
+    // contexte d'import est absent ou périmé (> 1 h — panne ENTSO-E).
     if methodology == "acv-ademe" && query.version == Some(2) {
         if region != Region::National {
             return Err(ApiError::bad_request(
@@ -221,7 +222,9 @@ where
 /// `GET /v1/exchanges` — échanges transfrontaliers : flux net signé par
 /// frontière (`> 0` = import vers la France) + intensité carbone du voisin
 /// (ADR-0017). Donnée ENTSO-E déjà ingérée pour `acv-ademe@2`, servie au pas
-/// quart d'heure, alignée sur la dernière mesure nationale.
+/// quart d'heure, alignée sur la dernière mesure nationale. `404` si aucun
+/// snapshot **frais** (≤ 1 h de la dernière mesure) n'est disponible — un
+/// contexte périmé (panne d'ingestion) n'est pas servi comme courant.
 #[utoipa::path(
     get,
     path = "/v1/exchanges",
@@ -1569,7 +1572,9 @@ pub(crate) struct PriceHistoryQuery {
 
 /// `GET /v1/price/date?from=&to=` — série de décompositions de prix sur un
 /// intervalle RFC 3339 (fenêtre ≤ 92 jours), pour la primitive « cheapest +
-/// greenest window » (ADR-0023). National uniquement.
+/// greenest window » (ADR-0023). National uniquement. Les créneaux sans prix
+/// spot **frais** (≤ 6 h) sont omis — jamais de report d'un prix périmé
+/// (trou d'ingestion ENTSO-E).
 #[utoipa::path(
     get,
     path = "/v1/price/date",

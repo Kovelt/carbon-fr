@@ -17,8 +17,8 @@ mod mapping;
 use async_trait::async_trait;
 use carbonfr_core::domain::{
     CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Granularity,
-    IntensityStats, LoadRecord, Measurement, Neighbor, Region, RollupBucket, SpotPrice,
-    Subscription, ThresholdDirection, TimeRange, VisitStats, WeatherForecast,
+    IntensityStats, LoadRecord, MAX_FLOW_CONTEXT_AGE, Measurement, Neighbor, Region, RollupBucket,
+    SpotPrice, Subscription, ThresholdDirection, TimeRange, VisitStats, WeatherForecast,
 };
 use carbonfr_core::ports::{
     ApiKeyRecord, ApiKeyRepository, ApiTier, ConsumptionRepository, CrossBorderRepository,
@@ -655,12 +655,16 @@ impl CrossBorderRepository for PgIntensityRepository {
         &self,
         at: OffsetDateTime,
     ) -> Result<Option<CrossBorderSnapshot>, RepositoryError> {
-        // Dernier horodatage disponible ≤ cible.
-        let row = sqlx::query("SELECT max(at) AS at FROM cross_border_flow WHERE at <= $1")
-            .bind(at)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| backend(format!("flows_at (max) : {e}")))?;
+        // Dernier horodatage disponible ≤ cible, borné en fraîcheur : au-delà
+        // de `MAX_FLOW_CONTEXT_AGE`, le contexte est périmé (panne d'ingestion
+        // ENTSO-E) → `None` plutôt qu'un snapshot arbitrairement ancien.
+        let row =
+            sqlx::query("SELECT max(at) AS at FROM cross_border_flow WHERE at <= $1 AND at >= $2")
+                .bind(at)
+                .bind(at - MAX_FLOW_CONTEXT_AGE)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| backend(format!("flows_at (max) : {e}")))?;
         let Some(snap_at): Option<OffsetDateTime> =
             row.try_get("at").map_err(|e| backend(e.to_string()))?
         else {

@@ -722,6 +722,15 @@ async fn cross_border_snapshot_roundtrips_and_picks_nearest() {
             .is_none()
     );
 
+    // Contexte périmé (dernier snapshot vieux de 2 h > tolérance) → None,
+    // plutôt qu'une extension illimitée du dernier snapshot connu.
+    assert!(
+        repo.flows_at(t1 + Duration::hours(2))
+            .await
+            .unwrap()
+            .is_none()
+    );
+
     // Ré-ingestion du même créneau → mise à jour, pas de doublon.
     let rewritten = repo.upsert_flows(&[snap(t0, 1500.0, 410.0)]).await.unwrap();
     assert_eq!(rewritten, 2);

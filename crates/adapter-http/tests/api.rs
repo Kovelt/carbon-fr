@@ -1770,7 +1770,8 @@ async fn stream_rejects_unknown_region() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
-/// Série `acv-ademe@1` (porte le mix FR) sur `n` heures depuis l'epoch.
+/// Série `acv-ademe@1` (porte le mix FR) sur `n` heures depuis l'epoch, avec un
+/// contexte d'import **horaire** aligné (fraîcheur ≤ 1 h sur chaque créneau).
 fn consumption_history_repo(n: i32) -> FakeRepo {
     use carbonfr_core::domain::{CrossBorderFlow, CrossBorderFlows, Neighbor};
     let t0 = OffsetDateTime::UNIX_EPOCH;
@@ -1786,16 +1787,19 @@ fn consumption_history_repo(n: i32) -> FakeRepo {
             mix: Some(mix),
         })
         .collect();
-    FakeRepo {
-        series,
-        flows: Some(CrossBorderSnapshot {
-            at: t0,
+    let flow_series: Vec<CrossBorderSnapshot> = (0..n)
+        .map(|i| CrossBorderSnapshot {
+            at: t0 + step * i,
             flows: CrossBorderFlows::new(vec![CrossBorderFlow {
                 neighbor: Neighbor::Germany,
                 flow_mw: 5000.0,
                 neighbor_intensity: CarbonIntensity::new(400.0).unwrap(),
             }]),
-        }),
+        })
+        .collect();
+    FakeRepo {
+        series,
+        flow_series,
         ..Default::default()
     }
 }

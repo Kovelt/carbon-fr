@@ -1740,7 +1740,10 @@ where
                 match entsoe.recent_flows().await {
                     Ok(snapshots) if !snapshots.is_empty() => {
                         match repo.upsert_flows(&snapshots).await {
-                            Ok(n) => info!(flows = n, "ingestion contexte d'import (ENTSO-E)"),
+                            Ok(n) => {
+                                metrics.set_last_flows(OffsetDateTime::now_utc().unix_timestamp());
+                                info!(flows = n, "ingestion contexte d'import (ENTSO-E)");
+                            }
                             Err(err) => {
                                 warn!(error = %err, "échec d'écriture du contexte d'import")
                             }

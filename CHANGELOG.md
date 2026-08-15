@@ -39,6 +39,27 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   courbe A01 complète), dans les trois développements (flux, génération, prix),
   avec garde contre les périodes démesurées (esprit F14) ; complétude testée
   sur la fixture officielle A11 (24 pas) + prix PT15M à positions omises.
+- **`acv-ademe@2` : contexte d'import borné en fraîcheur** (audit 2026-08) — la
+  jointure « au plus proche ≤ » reconduisait le dernier snapshot d'échanges sans
+  limite d'ancienneté : en cas de panne ENTSO-E, `/v1/intensity/now`, `/date` et
+  `/stats` en `?methodology=acv-ademe&version=2` servaient un contexte figé
+  (heures, voire jours) sous l'horodatage frais du mix. Nouvelle constante de
+  domaine `MAX_FLOW_CONTEXT_AGE` (1 h, cadence des flux A11) appliquée à la
+  jointure de série (créneau omis), au chemin courant (`404` plutôt qu'une
+  valeur périmée) et à `flows_at` côté SQL — `/v1/exchanges` cesse de même de
+  servir un snapshot périmé comme courant.
+- **`/v1/price/date` : prix spot borné en fraîcheur** (audit 2026-08) — la série
+  reportait le dernier prix spot connu sur tous les créneaux suivants, sans
+  limite : après un trou d'ingestion ENTSO-E, une semaine entière pouvait
+  recevoir le prix d'avant la panne, présenté comme factuel. La jointure de
+  `price_series` omet désormais les créneaux dont le prix a plus de 6 h
+  (`MAX_SPOT_STALENESS`, promue constante de domaine partagée avec la garde du
+  chemin courant `/v1/price`).
+- **Fraîcheur de l'ingestion des flux transfrontaliers observable** (audit
+  2026-08) — nouvelle jauge Prometheus
+  `carbonfr_poller_last_flows_timestamp_seconds` (sur le modèle de
+  `last_price`) : une panne ENTSO-E côté flux n'était visible que dans les
+  logs, contrairement à l'esprit de l'ADR-0022 (« alerte phare = fraîcheur »).
 
 ## [0.6.0] - 2026-07-03
 

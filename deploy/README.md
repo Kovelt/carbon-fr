@@ -31,7 +31,7 @@ Cadrer une release : `git tag v0.3.3 && git push origin v0.3.3` (le workflow vé
 - **[`Caddyfile`](Caddyfile)** — reverse proxy TLS (Let's Encrypt auto, en-têtes de sécurité, sonde `/health/ready`). `caddy run --config deploy/Caddyfile`.
 - **[`carbonfr.service`](carbonfr.service)** — unité systemd bare-metal (durcie : `NoNewPrivileges`, `ProtectSystem=strict`, arrêt gracieux SIGTERM).
 
-Dans tous les cas : **API derrière un reverse proxy TLS** + `CARBONFR_TRUST_PROXY=1` (pour lire l'IP réelle du client via `X-Real-Ip` / `X-Forwarded-For`). Sans proxy de confiance, laisser `CARBONFR_TRUST_PROXY=0` (l'en-tête est spoofable). Cf. [`.env.example`](../.env.example).
+Dans tous les cas : **API derrière un reverse proxy TLS** + `CARBONFR_TRUST_PROXY=1` (pour lire l'IP réelle du client via le **dernier segment** de `X-Forwarded-For`, que le proxy ajoute). `X-Real-Ip` n'est **pas** lu par défaut (audit 2026-08 : beaucoup de proxys — dont Caddy sans `header_up` — relaient l'en-tête client tel quel, donc spoofable) : pour l'utiliser, définir `CARBONFR_REAL_IP_HEADER=x-real-ip` **et** s'assurer que le proxy écrase cet en-tête (cf. le `header_up` du [`Caddyfile`](Caddyfile)). Sans proxy de confiance, laisser `CARBONFR_TRUST_PROXY=0` (l'en-tête est spoofable). Cf. [`.env.example`](../.env.example).
 
 ## 2. Production Kovelt — derrière Traefik (org)
 

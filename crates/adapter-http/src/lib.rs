@@ -73,6 +73,10 @@ pub struct AppState<R> {
     /// un reverse proxy de confiance, ADR-0007). Faux par défaut : sans proxy,
     /// l'en-tête est spoofable.
     pub(crate) trust_proxy: bool,
+    /// En-tête d'IP réelle **écrasé par le proxy** (ex. `x-real-ip`), opt-in via
+    /// `CARBONFR_REAL_IP_HEADER`. `None` (défaut) : dernier segment de
+    /// `X-Forwarded-For` (cf. `AuthConfig::real_ip_header`, audit 2026-08).
+    pub(crate) real_ip_header: Option<String>,
     /// Modèle de dérivation renouvelable **calibré au démarrage** (ADR-0018),
     /// servi par `/v1/renewable`. `None` si la calibration a échoué (historique
     /// insuffisant) → l'endpoint répond `503`.
@@ -87,6 +91,7 @@ impl<R> AppState<R> {
             methodology: "rte-direct".to_string(),
             visit_salt: DEFAULT_VISIT_SALT.to_string(),
             trust_proxy: false,
+            real_ip_header: None,
             renewable_model: None,
         }
     }
@@ -100,9 +105,16 @@ impl<R> AppState<R> {
         self
     }
 
-    /// Active la confiance dans `X-Forwarded-For`/`X-Real-IP` (derrière un proxy).
+    /// Active la confiance dans `X-Forwarded-For` (derrière un proxy).
     pub fn with_trust_proxy(mut self, trust: bool) -> Self {
         self.trust_proxy = trust;
+        self
+    }
+
+    /// Configure l'en-tête d'IP réelle dédié (`CARBONFR_REAL_IP_HEADER`,
+    /// opt-in) — uniquement si le proxy l'**écrase** systématiquement.
+    pub fn with_real_ip_header(mut self, header: Option<String>) -> Self {
+        self.real_ip_header = header;
         self
     }
 
@@ -335,7 +347,20 @@ impl StreamState {
 /// routes de **prévision** ont leur propre [`ForecastState`] (un
 /// [`ForecastModel`]). Deux sous-routeurs, chacun avec son état, **fusionnés**
 /// (`merge`) — ce qui évite d'imposer le type du modèle aux handlers existants.
-pub fn router<R, F>(state: AppState<R>, forecast: ForecastState<F>, stream: StreamState) -> Router
+///
+/// `auth` (tier hébergé, ADR-0015, opt-in) : le middleware [`enforce`] est
+/// appliqué **ici**, sous la couche CORS, et plus par la composition root
+/// (audit 2026-08) : posé au-dessus du routeur, il devenait la couche la plus
+/// externe → les préflights `OPTIONS` étaient décomptés du seau anonyme et ses
+/// 401/429/503 partaient sans `Access-Control-Allow-Origin` (réponses opaques
+/// en navigateur, `RateLimit-*`/`Retry-After` illisibles malgré
+/// `expose_headers`).
+pub fn router<R, F>(
+    state: AppState<R>,
+    forecast: ForecastState<F>,
+    stream: StreamState,
+    auth: Option<AuthState>,
+) -> Router
 where
     R: IntensityRepository
         + VisitCounter
@@ -408,7 +433,8 @@ where
         .route("/v1/intensity/stream", get(handlers::intensity_stream))
         .with_state(stream);
 
-    core.merge(forecasting)
+    let mut app = core
+        .merge(forecasting)
         .merge(streaming)
         // Fallback AVANT les couches : un chemin inconnu doit traverser CORS/Trace
         // comme une réponse normale (sinon un client navigateur ne peut pas lire le
@@ -418,14 +444,21 @@ where
         // JSON. 16 Kio plafonne un corps abusif bien sous le défaut axum (2 Mio).
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
         // Trace HTTP (méthode, chemin, statut, latence) — observabilité prod.
-        .layer(tower_http::trace::TraceLayer::new_for_http())
-        // CORS **permissif** : l'API sert de la donnée publique en lecture et se
-        // veut dev-first (cf. carbonintensity.org.uk). Toute origine peut donc lire
-        // les réponses depuis un navigateur — nécessaire pour qu'un site tiers (dont
-        // carbon-fr.kovelt.fr) consomme l'API. Pas de cookies : `Any` est sûr (les
-        // clés API passent par l'en-tête `Authorization`, pas par `credentials`).
-        // Couche la plus externe : gère le préflight `OPTIONS` avant le routage.
-        .layer(cors_layer())
+        .layer(tower_http::trace::TraceLayer::new_for_http());
+    // Tier hébergé (ADR-0015, opt-in) : auth + quota, appliqué SOUS la couche
+    // CORS (dernier `.layer()` = plus externe) — cf. doc de `router()`.
+    if let Some(auth) = auth {
+        app = app.layer(axum::middleware::from_fn_with_state(auth, enforce));
+    }
+    // CORS **permissif** : l'API sert de la donnée publique en lecture et se
+    // veut dev-first (cf. carbonintensity.org.uk). Toute origine peut donc lire
+    // les réponses depuis un navigateur — nécessaire pour qu'un site tiers (dont
+    // carbon-fr.kovelt.fr) consomme l'API. Pas de cookies : `Any` est sûr (les
+    // clés API passent par l'en-tête `Authorization`, pas par `credentials`).
+    // Couche la plus externe : gère le préflight `OPTIONS` avant le routage
+    // (donc avant `enforce` : un préflight n'est jamais décompté du quota) et
+    // ajoute `Access-Control-Allow-Origin` aux réponses d'`enforce`.
+    app.layer(cors_layer())
 }
 
 /// Fallback du routeur : tout chemin qui ne correspond à aucune route déclarée
@@ -450,4 +483,7 @@ fn cors_layer() -> tower_http::cors::CorsLayer {
         .allow_methods(Any)
         .allow_headers(Any)
         .expose_headers(Any)
+        // Cache du préflight côté navigateur : sans `Access-Control-Max-Age`,
+        // les navigateurs re-préflightent ~toutes les 5 s (audit 2026-08).
+        .max_age(std::time::Duration::from_secs(3600))
 }

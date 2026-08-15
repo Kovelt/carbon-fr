@@ -1403,22 +1403,24 @@ where
     }
 }
 
-/// Adresse IP du client, lue des en-têtes posés par le reverse proxy
-/// (`X-Real-Ip`, sinon **dernier** segment de `X-Forwarded-For` ; ADR-0007).
-/// `unknown` à défaut (accès direct sans proxy) — toutes ces visites tombent alors
-/// dans un même seau.
+/// Adresse IP du client, lue des en-têtes posés par le reverse proxy (ADR-0007) :
+/// **dernier** segment de `X-Forwarded-For` (appendé par le proxy), ou l'en-tête
+/// dédié `real_ip_header` si configuré (`CARBONFR_REAL_IP_HEADER`, opt-in —
+/// audit 2026-08 : `X-Real-Ip` n'est plus lu par défaut, spoofable si le proxy
+/// ne l'écrase pas). Toujours validée comme adresse IP ; `unknown` à défaut —
+/// toutes ces visites tombent alors dans un même seau.
 /// `unknown` si `trust_proxy` est faux : sans proxy de confiance, `X-Forwarded-For`
 /// est **fourni par le client** donc spoofable — on ne s'y fie pas (sinon
 /// contournement du quota anonyme et pollution du compteur). Derrière le reverse
 /// proxy de prod (ADR-0007), activer `trust_proxy` pour lire l'IP réelle.
-fn client_ip(headers: &HeaderMap, trust_proxy: bool) -> String {
+fn client_ip(headers: &HeaderMap, trust_proxy: bool, real_ip_header: Option<&str>) -> String {
     if !trust_proxy {
         return "unknown".to_string();
     }
-    // X-Real-Ip (posé par le proxy) en priorité, sinon DERNIER segment de XFF —
-    // les segments de gauche sont fournis par le client (spoofables). Logique
-    // partagée avec le middleware d'auth pour cohérence.
-    crate::auth::forwarded_client_ip(headers).unwrap_or_else(|| "unknown".to_string())
+    // Logique partagée avec le middleware d'auth pour cohérence (même IP → même
+    // seau de quota et même empreinte visiteur).
+    crate::auth::forwarded_client_ip(headers, real_ip_header)
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Clé visiteur anonyme : `SHA-256(sel | ip)`. L'IP n'est jamais stockée.
@@ -1462,7 +1464,7 @@ pub(crate) async fn record_visit<R>(
 where
     R: VisitCounter + Clone + Send + Sync + 'static,
 {
-    let ip = client_ip(&headers, state.trust_proxy);
+    let ip = client_ip(&headers, state.trust_proxy, state.real_ip_header.as_deref());
     let visitor = hash_visitor(&state.visit_salt, &ip);
     let day = OffsetDateTime::now_utc().date();
     let stats = state.repo.record_visit(&visitor, day).await?;

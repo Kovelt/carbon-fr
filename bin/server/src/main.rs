@@ -47,6 +47,7 @@
 //! | `CARBONFR_RATELIMIT_FREE_PER_MIN` | `600`     | quota clé gratuite (req/min)        |
 //! | `CARBONFR_KEY_LABEL`         | `` (vide)      | `mint-key` : libellé de la clé      |
 //! | `CARBONFR_TRUST_PROXY`       | `0` (off)      | faire confiance à `X-Forwarded-For` (derrière un reverse proxy) |
+//! | `CARBONFR_REAL_IP_HEADER`    | (non défini)   | en-tête d'IP réelle dédié (ex. `x-real-ip`) — **uniquement** si le proxy l'écrase systématiquement ; défaut = dernier segment de `X-Forwarded-For` (audit 2026-08) |
 //! | `CARBONFR_DB_MAX_CONNECTIONS` | `20`         | taille du pool PostgreSQL           |
 //! | `CARBONFR_DB_STATEMENT_TIMEOUT_MS` | `30000` | borne serveur `statement_timeout` + `idle_in_transaction_session_timeout` |
 //! | `CARBONFR_VISIT_SALT`        | `carbon-fr` (⚠ requis si TRUST_PROXY) | sel du hachage des IP visiteurs |
@@ -65,7 +66,7 @@ use carbonfr_adapter_gbdt::{
 };
 use carbonfr_adapter_http::{
     AppState, AuthConfig, AuthState, EligibilityRepoAdapter, ForecastState, ShareForecastConfig,
-    StreamState, enforce, key_fingerprint, router,
+    StreamState, key_fingerprint, router,
 };
 use carbonfr_adapter_meteo::OpenMeteoClient;
 use carbonfr_adapter_odre::OdreClient;
@@ -201,6 +202,7 @@ async fn run_server() -> anyhow::Result<()> {
     let renewable_model = build_calibrated_renewable_model(repo.clone()).await;
     let mut state = AppState::new(repo.clone())
         .with_trust_proxy(config.trust_proxy)
+        .with_real_ip_header(config.real_ip_header.clone())
         .with_renewable_model(renewable_model);
     if let Some(salt) = config.visit_salt {
         state = state.with_visit_salt(salt);
@@ -212,14 +214,16 @@ async fn run_server() -> anyhow::Result<()> {
     let metrics_router = axum::Router::new()
         .route("/metrics", axum::routing::get(serve_metrics))
         .with_state(metrics);
-    let mut app = router(state, forecast_state, stream_state).merge(metrics_router);
-
     // Tier hébergé (ADR-0015) : middleware clés API + quota, **opt-in**. Désactivé
     // par défaut → l'API reste anonyme et sans limite (parité self-hosting).
-    if let Some(auth_state) = build_auth_state(repo.clone()) {
+    // Appliqué PAR le routeur, sous sa couche CORS (audit 2026-08 : posé ici en
+    // `.layer()`, il devenait la couche la plus externe → préflights décomptés
+    // du quota et 401/429 sans en-têtes CORS, illisibles en navigateur).
+    let auth_state = build_auth_state(repo.clone());
+    if auth_state.is_some() {
         info!("tier hébergé activé : auth par clé + quota par minute");
-        app = app.layer(axum::middleware::from_fn_with_state(auth_state, enforce));
     }
+    let app = router(state, forecast_state, stream_state, auth_state).merge(metrics_router);
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("écoute sur {}", config.bind))?;
@@ -295,9 +299,23 @@ fn build_auth_state(repo: PgIntensityRepository) -> Option<AuthState> {
             std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
             Ok("1") | Ok("true")
         ),
+        real_ip_header: real_ip_header_from_env(),
     };
     let keys: std::sync::Arc<dyn ApiKeyRepository> = std::sync::Arc::new(repo);
     Some(AuthState::new(keys, config))
+}
+
+/// `CARBONFR_REAL_IP_HEADER` : en-tête d'IP réelle dédié, **opt-in** (audit
+/// 2026-08). ⚠️ À ne configurer que si le reverse proxy **écrase**
+/// systématiquement cet en-tête (ex. Caddy avec `header_up X-Real-IP
+/// {remote_host}`) : sinon il est fourni par le client → quota contournable et
+/// compteur de visiteurs pollué. Non défini (défaut) : dernier segment de
+/// `X-Forwarded-For`, sûr avec tout proxy qui appende l'IP réelle à droite.
+fn real_ip_header_from_env() -> Option<String> {
+    std::env::var("CARBONFR_REAL_IP_HEADER")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .filter(|v| !v.is_empty())
 }
 
 /// Mode `mint-key` : génère une clé API gratuite, en stocke l'empreinte, et
@@ -1559,6 +1577,9 @@ struct ServerConfig {
     poll_interval: std::time::Duration,
     visit_salt: Option<String>,
     trust_proxy: bool,
+    /// En-tête d'IP réelle dédié (`CARBONFR_REAL_IP_HEADER`, opt-in — cf.
+    /// [`real_ip_header_from_env`]).
+    real_ip_header: Option<String>,
 }
 
 impl ServerConfig {
@@ -1607,6 +1628,7 @@ impl ServerConfig {
             poll_interval: std::time::Duration::from_secs(poll_secs),
             visit_salt,
             trust_proxy,
+            real_ip_header: real_ip_header_from_env(),
         })
     }
 }

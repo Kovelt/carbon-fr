@@ -18,7 +18,12 @@ carbon.example.fr {
 	}
 
 	# Caddy réécrit X-Forwarded-For avec l'IP réelle du client (de confiance).
+	# ⚠️ X-Real-IP, lui, n'est PAS écrasé par défaut : un client peut le forger.
+	# On l'écrase explicitement (audit 2026-08) — requis si l'API est configurée
+	# avec CARBONFR_REAL_IP_HEADER=x-real-ip (sinon l'en-tête est ignoré : le
+	# défaut de l'API lit le dernier segment de X-Forwarded-For).
 	reverse_proxy 127.0.0.1:8080 {
+		header_up X-Real-IP {remote_host}
 		health_uri /health/ready
 		health_interval 30s
 	}

@@ -107,6 +107,47 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   validation `< 0` et infectait toute l'économie calculée ; `below=NaN`
   désactivait silencieusement le filtre SSE (toute comparaison avec NaN est
   fausse). Rejet 400 « nombre fini » exigé, comme `threshold` sur `/below`.
+- **CORS redevenue la couche la plus externe** (audit 2026-08) — le middleware
+  d'auth/quota (`enforce`, tier hébergé opt-in) était posé par la composition
+  root **au-dessus** de la `CorsLayer` : les préflights `OPTIONS` étaient
+  décomptés du seau anonyme (jusqu'à bloquer une appli navigateur à clé dont le
+  quota propre était intact) et les 401/429/503 partaient sans
+  `Access-Control-Allow-Origin` — réponses opaques en navigateur, `RateLimit-*`/
+  `Retry-After` illisibles malgré `expose_headers`. Le layer d'auth est
+  désormais appliqué par `router()` **sous** la couche CORS, les `OPTIONS` sont
+  exemptés de quota dans `enforce` (défense en profondeur) et le préflight est
+  mis en cache côté navigateur (`Access-Control-Max-Age: 3600`).
+- **RateLimiter : purge au changement de minute + plafond dur** (audit
+  2026-08) — la « purge légère » (`len` > 10 000 → `retain` de la minute
+  courante) ne retirait rien pendant une inondation d'identifiants distincts
+  (tous de la minute courante) et re-scannait toute la carte **sous le mutex
+  partagé à chaque requête** `/v1` (sérialisation de tout le trafic). La purge
+  ne tourne plus qu'une fois par changement de minute, et au-delà de 10 000
+  identifiants suivis, les identifiants inédits partagent un seau de
+  débordement unique — mémoire et CPU bornés même sous rotation d'adresses.
+
+### Sécurité
+
+- **Les clés API invalides ne contournent plus le quota** (audit 2026-08) —
+  une requête à Bearer inconnu sortait en 401 **avant** le contrôle de quota :
+  le chemin non authentifié le plus coûteux (SHA-256 + un SELECT Postgres par
+  requête, pool partagé avec le poller) était le seul jamais throttlé. Les
+  échecs de résolution (clé inconnue, base injoignable) sont désormais
+  décomptés du **seau anonyme de l'IP** (429 au-delà de la limite), un seau
+  déjà épuisé coupe court **avant** l'aller-retour base, et un cache négatif
+  borné (empreinte → inconnue, TTL 60 s) évite de re-résoudre la même clé
+  invalide rejouée en boucle.
+- **`X-Real-Ip` n'est plus lu par défaut, IP toujours validée** (audit
+  2026-08) — sous `CARBONFR_TRUST_PROXY=1`, l'en-tête `X-Real-Ip` **cru**
+  primait sur le dernier segment de `X-Forwarded-For` : derrière un proxy qui
+  ne l'écrase pas (dont l'exemple `deploy/Caddyfile` du dépôt tel quel), le
+  quota anonyme était contournable à volonté et le compteur de visiteurs
+  gonflable par valeurs forgées. Défaut désormais : **dernier segment de
+  `X-Forwarded-For`** (sûr par construction avec tout proxy qui appende),
+  valeur toujours parsée comme adresse IP — sinon seau `unknown` ; en-tête
+  dédié en **opt-in** explicite via `CARBONFR_REAL_IP_HEADER` (le proxy doit
+  l'écraser — `header_up X-Real-IP {remote_host}` ajouté au Caddyfile,
+  `deploy/README.md` corrigé).
 
 ## [0.6.0] - 2026-07-03
 

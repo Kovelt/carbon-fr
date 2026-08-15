@@ -362,7 +362,12 @@ async fn json_body(response: axum::response::Response) -> serde_json::Value {
 fn build(repo: FakeRepo) -> axum::Router {
     let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1");
     let (updates, _) = tokio::sync::broadcast::channel(8);
-    router(AppState::new(repo), forecast, StreamState::new(updates))
+    router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        None,
+    )
 }
 
 fn app(measurement: Option<Measurement>) -> axum::Router {
@@ -695,6 +700,7 @@ async fn renewable_estimates_from_weather() {
         AppState::new(repo).with_renewable_model(Some(model)),
         forecast,
         StreamState::new(updates),
+        None,
     );
     let response = get(app, "/v1/renewable").await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -1136,7 +1142,12 @@ fn build_with_eligibility(repo: FakeRepo) -> axum::Router {
     let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1")
         .with_eligibility(Arc::new(EligibilityRepoAdapter(repo.clone())));
     let (updates, _) = tokio::sync::broadcast::channel(8);
-    router(AppState::new(repo), forecast, StreamState::new(updates))
+    router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        None,
+    )
 }
 
 /// Monte le routeur avec l'overlay d'éligibilité ET `share-clim@1` câblés
@@ -1159,7 +1170,12 @@ fn build_with_share_forecast(repo: FakeRepo) -> axum::Router {
         .with_eligibility(Arc::new(EligibilityRepoAdapter(repo.clone())))
         .with_share_forecast(Arc::new(config));
     let (updates, _) = tokio::sync::broadcast::channel(8);
-    router(AppState::new(repo), forecast, StreamState::new(updates))
+    router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        None,
+    )
 }
 
 /// Mesure nationale avec mix à 25 % renouvelable (250 MW EnR / 1000 MW).
@@ -1614,7 +1630,12 @@ async fn greenest_window_eligibility_uses_a_single_forecast_call() {
     let forecast = ForecastState::new(spy, "climatology@1")
         .with_eligibility(Arc::new(EligibilityRepoAdapter(repo.clone())));
     let (updates, _) = tokio::sync::broadcast::channel(8);
-    let app = router(AppState::new(repo), forecast, StreamState::new(updates));
+    let app = router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        None,
+    );
     let response = get(
         app,
         "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&eligibility=low-carbon",
@@ -1858,7 +1879,12 @@ fn build_with_acv(repo: FakeRepo) -> axum::Router {
             "acv-clim@1",
         );
     let (updates, _) = tokio::sync::broadcast::channel(8);
-    router(AppState::new(repo), forecast, StreamState::new(updates))
+    router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        None,
+    )
 }
 
 #[tokio::test]
@@ -1926,11 +1952,14 @@ use carbonfr_core::ports::{ApiKeyRecord, ApiKeyRepository, ApiTier};
 
 struct FakeKeys {
     valid_hash: String,
+    /// Nombre d'appels à `resolve` (vérifie le cache négatif, audit 2026-08).
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[async_trait]
 impl ApiKeyRepository for FakeKeys {
     async fn resolve(&self, key_hash: &str) -> Result<Option<ApiKeyRecord>, RepositoryError> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok((key_hash == self.valid_hash).then(|| ApiKeyRecord {
             tier: ApiTier::Free,
             label: "test".to_string(),
@@ -1941,19 +1970,17 @@ impl ApiKeyRepository for FakeKeys {
     }
 }
 
-fn guarded_app() -> axum::Router {
-    use std::sync::Arc;
-    let keys = Arc::new(FakeKeys {
-        valid_hash: key_fingerprint("good-key"),
-    });
-    let state = AuthState::new(
-        keys,
-        AuthConfig {
-            anonymous_per_min: 2,
-            free_per_min: 100,
-            trust_proxy: false,
-        },
-    );
+fn auth_config(anonymous_per_min: u32) -> AuthConfig {
+    AuthConfig {
+        anonymous_per_min,
+        free_per_min: 100,
+        trust_proxy: false,
+        real_ip_header: None,
+    }
+}
+
+fn guarded_app_with_keys(keys: std::sync::Arc<FakeKeys>) -> axum::Router {
+    let state = AuthState::new(keys, auth_config(2));
     axum::Router::new()
         // Route sous contrat `/v1` : soumise au quota/auth.
         .route("/v1/protected", axum::routing::get(|| async { "ok" }))
@@ -1962,6 +1989,13 @@ fn guarded_app() -> axum::Router {
         .route("/health/ready", axum::routing::get(|| async { "ok" }))
         .route("/metrics", axum::routing::get(|| async { "ok" }))
         .layer(axum::middleware::from_fn_with_state(state, enforce))
+}
+
+fn guarded_app() -> axum::Router {
+    guarded_app_with_keys(std::sync::Arc::new(FakeKeys {
+        valid_hash: key_fingerprint("good-key"),
+        calls: Default::default(),
+    }))
 }
 
 async fn get_auth(app: axum::Router, uri: &str, bearer: Option<&str>) -> axum::response::Response {
@@ -2014,6 +2048,46 @@ async fn auth_valid_key_gets_higher_limit() {
 }
 
 #[tokio::test]
+async fn auth_invalid_key_flood_is_rate_limited() {
+    // Audit 2026-08 : les échecs d'auth sont décomptés du seau anonyme de l'IP.
+    // Avant : un Bearer aléatoire différent à chaque requête n'était JAMAIS
+    // throttlé (401 en boucle, un SELECT Postgres par requête).
+    let app = guarded_app(); // anonymous_per_min = 2
+    assert_eq!(
+        get_auth(app.clone(), "/v1/protected", Some("bad-1"))
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        get_auth(app.clone(), "/v1/protected", Some("bad-2"))
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    // 3e clé inédite : seau anonyme épuisé → 429 (sans résolution en base).
+    let limited = get_auth(app.clone(), "/v1/protected", Some("bad-3")).await;
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(limited.headers().contains_key("retry-after"));
+}
+
+#[tokio::test]
+async fn auth_repeated_invalid_key_resolves_once() {
+    // Audit 2026-08 : cache négatif — la même empreinte invalide rejouée ne
+    // coûte qu'un seul aller-retour au registre de clés.
+    let keys = std::sync::Arc::new(FakeKeys {
+        valid_hash: key_fingerprint("good-key"),
+        calls: Default::default(),
+    });
+    let app = guarded_app_with_keys(keys.clone());
+    for _ in 0..2 {
+        let resp = get_auth(app.clone(), "/v1/protected", Some("wrong")).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+    assert_eq!(keys.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn operational_routes_bypass_quota_and_auth() {
     // F07 : `/health`, `/health/ready`, `/metrics` (hors `/v1`) ne sont jamais
     // soumis au quota anonyme (2/min ici) ni à l'auth, même sous `enforce`.
@@ -2028,6 +2102,92 @@ async fn operational_routes_bypass_quota_and_auth() {
         let resp = get_auth(app.clone(), route, Some("wrong")).await;
         assert_eq!(resp.status(), StatusCode::OK, "route {route} sans auth");
     }
+}
+
+/// Routeur complet avec le tier hébergé câblé (comme la composition root avec
+/// `CARBONFR_RATELIMIT_ENABLED=1`) : vérifie l'ordre des couches CORS/enforce.
+fn app_with_auth(anonymous_per_min: u32) -> axum::Router {
+    let repo = FakeRepo {
+        measurement: Some(national_measurement()),
+        ..Default::default()
+    };
+    let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1");
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    let auth = AuthState::new(
+        std::sync::Arc::new(FakeKeys {
+            valid_hash: key_fingerprint("good-key"),
+            calls: Default::default(),
+        }),
+        auth_config(anonymous_per_min),
+    );
+    router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        Some(auth),
+    )
+}
+
+#[tokio::test]
+async fn cors_preflight_not_counted_against_quota() {
+    // Audit 2026-08 : `enforce` posé au-dessus de CORS décomptait chaque
+    // préflight OPTIONS du seau anonyme. CORS est désormais la couche la plus
+    // externe : le préflight est servi avant `enforce` et ne consomme rien.
+    let app = app_with_auth(1); // 1 seule requête anonyme par minute
+    for _ in 0..3 {
+        let preflight = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/v1/intensity/now")
+                    .header("origin", "https://exemple.fr")
+                    .header("access-control-request-method", "GET")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(preflight.status(), StatusCode::OK);
+        assert!(
+            preflight
+                .headers()
+                .contains_key("access-control-allow-origin")
+        );
+        // Préflight caché par le navigateur (Access-Control-Max-Age posé).
+        assert!(preflight.headers().contains_key("access-control-max-age"));
+    }
+    // Le quota anonyme (1/min) est intact : la vraie requête passe…
+    let first = get(app.clone(), "/v1/intensity/now").await;
+    assert_eq!(first.status(), StatusCode::OK);
+    // …et le 429 suivant traverse la couche CORS (lisible en navigateur).
+    let limited = get(app.clone(), "/v1/intensity/now").await;
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        limited
+            .headers()
+            .contains_key("access-control-allow-origin")
+    );
+}
+
+#[tokio::test]
+async fn auth_errors_carry_cors_headers() {
+    // Audit 2026-08 : les 401 émis par `enforce` court-circuitaient la
+    // CorsLayer → réponse opaque en navigateur. CORS externe : l'en-tête
+    // Access-Control-Allow-Origin est présent sur les erreurs d'auth.
+    let app = app_with_auth(5);
+    let resp = app
+        .oneshot(
+            Request::get("/v1/intensity/now")
+                .header("origin", "https://exemple.fr")
+                .header("authorization", "Bearer wrong")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert!(resp.headers().contains_key("access-control-allow-origin"));
 }
 
 // ── Endpoints webhooks (ADR-0016) ─────────────────────────────────────────────

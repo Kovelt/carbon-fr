@@ -160,7 +160,7 @@ Invariant : `v0.4.0` (code) ≠ `/v1` (contrat) ≠ `acv-ademe@2` (donnée) ≠ 
 
 **Release applicative** : `git tag vX.Y.Z` (doit refléter la version du workspace — garde-fou CI) → le workflow `release.yml` construit et **publie l'image sur GHCR** taguée `X.Y.Z`/`X.Y`/`latest` (`ghcr.io/kovelt/carbon-fr`, publique). Le binaire expose sa version au démarrage (log) et via `--version`. En prod : **épingler une version exacte** (rollback = redéployer le tag précédent). La version OpenAPI servie sur `/docs` est câblée sur `CARGO_PKG_VERSION`.
 
-**Release courante : `v0.6.1`** (2026-07-04) — la page carte `GET /hydrogene` porte `Content-Security-Policy: frame-ancestors 'self' https://carbon-fr.kovelt.fr` (embarquable par le site vitrine ; prime sur le `X-Frame-Options: SAMEORIGIN` global du reverse proxy, qui reste effectif partout ailleurs), aucun changement d'API. Précédentes : `v0.6.0` (carte électrolyseurs × carbone live, ADR-0029), `v0.5.0` (`share-clim@1`, ADR-0028), `v0.4.x` (durcissements audit + patchs RustSec).
+**Release courante : `v0.7.0`** (2026-08-15) — release d'audit multi-agents : 19 défauts confirmés corrigés (parseur ENTSO-E **A03** — flux/prix complets, signe des échanges ; bornes de **fraîcheur** imports/spot ; quota des clés invalides, CORS externe, limiteur borné, `X-Real-Ip` opt-in ; arrêt gracieux borné) + perf API (index **BRIN** rollups, `weather_latest` par échéance, **cache de prévision** ~100×, plafond 92 j sur `@2`, `Cache-Control`) ; expérience `share-meteo@2` embarquée (**non servie**). Resserrements de contrat : cf. CHANGELOG §Modifié. Précédentes : `v0.6.1` (carte embarquable), `v0.6.0` (carte électrolyseurs × carbone live, ADR-0029), `v0.5.0` (`share-clim@1`, ADR-0028).
 
 ## État d'avancement
 

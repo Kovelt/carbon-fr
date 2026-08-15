@@ -6,7 +6,15 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.7.0] - 2026-08-15
+
+Release d'audit : revue multi-agents complète du workspace — 19 défauts
+confirmés corrigés (dont le parseur ENTSO-E A03, qui pouvait inverser le signe
+des flux transfrontaliers) plus une série de mineures, performance de l'API
+(index BRIN, cache de prévision, requêtes bornées) et robustesse
+d'exploitation (fraîcheur des données, arrêt gracieux, quotas). Inclut
+l'expérience `share-meteo@2` (non servie). En 0.x : les resserrements de
+contrat sont listés en « Modifié ».
 
 ### Ajouté
 

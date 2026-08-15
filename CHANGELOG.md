@@ -260,6 +260,20 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   arbitraire dans la page. Épinglage exact `swagger-ui-dist@5.32.13` +
   attributs `integrity` (SHA-384, vérifiés croisés jsDelivr/unpkg) et
   `crossorigin="anonymous"` sur la feuille de style et le bundle.
+## [0.6.1] - 2026-07-04
+
+La page carte `GET /hydrogene` devient embarquable par le site vitrine
+(CSP `frame-ancestors`). Hors contrat `/v1`, aucun changement d'API.
+
+### Modifié
+
+- **`GET /hydrogene` embarquable par le site vitrine** : la page carte porte
+  désormais `Content-Security-Policy: frame-ancestors 'self'
+  https://carbon-fr.kovelt.fr`, ce qui autorise son iframe sur
+  `carbon-fr.kovelt.fr` (vignette de la page Hydrogène) tout en primant sur le
+  `X-Frame-Options: SAMEORIGIN` posé globalement par le reverse proxy — qui
+  reste effectif sur `/docs` et le reste. Uniquement la page : les datasets
+  `/hydrogene/*.json|geojson` sont inchangés.
 
 ## [0.6.0] - 2026-07-03
 

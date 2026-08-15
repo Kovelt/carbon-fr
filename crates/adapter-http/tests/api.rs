@@ -1701,6 +1701,33 @@ async fn hydrogene_page_and_datasets_are_served() {
 }
 
 #[tokio::test]
+async fn hydrogene_page_is_embeddable_by_the_site_only() {
+    // Le site vitrine iframe la carte : `frame-ancestors` prime sur le
+    // `X-Frame-Options: SAMEORIGIN` posé globalement par le reverse proxy.
+    // La dérogation ne porte que sur la page — ni les datasets ni /docs.
+    let app = build(FakeRepo::default());
+    let response = get(app.clone(), "/hydrogene").await;
+    assert_eq!(
+        response
+            .headers()
+            .get("content-security-policy")
+            .and_then(|v| v.to_str().ok()),
+        Some("frame-ancestors 'self' https://carbon-fr.kovelt.fr")
+    );
+    for path in [
+        "/hydrogene/sites.json",
+        "/hydrogene/regions.geojson",
+        "/docs",
+    ] {
+        let response = get(app.clone(), path).await;
+        assert!(
+            response.headers().get("content-security-policy").is_none(),
+            "{path} ne doit pas porter la politique d'embarquement"
+        );
+    }
+}
+
+#[tokio::test]
 async fn greenest_window_eligibility_uses_a_single_forecast_call() {
     // Invariant mono-forecast (ADR-0026 D16) : la fenêtre verte ET l'éligibilité
     // partagent UN SEUL appel forecast().

@@ -31,7 +31,7 @@ use crate::dto::{
     SlotsResponse, StatsResponse, StreamEventBody, VisitStatsResponse, WeatherHistoryResponse,
     WeatherResponse, WebhookListResponse,
 };
-use crate::error::{ApiError, ProblemDetails, ValidatedQuery};
+use crate::error::{ApiError, ProblemDetails, ValidatedJson, ValidatedQuery};
 use crate::{AppState, ForecastState};
 use std::convert::Infallible;
 
@@ -106,6 +106,21 @@ fn resolve_methodology(requested: &Option<String>, default: &str) -> Result<Stri
 /// lecture (ADR-0010). Exige le national (§8) : 400 sinon.
 fn wants_consumption(methodology: &str, version: Option<u32>) -> bool {
     methodology == "acv-ademe" && version == Some(2)
+}
+
+/// Rejette `acv-ademe&version=2` sur les endpoints de prévision servis par le
+/// seul modèle scalaire : la prévision consommation (`@2`, ADR-0013) n'existe
+/// que sur `/v1/intensity/forecast`. Sans ce rejet, la version serait
+/// silencieusement ignorée et l'appelant croirait obtenir `@2` (audit 2026-08,
+/// symétrique de `/v1/mix`).
+fn reject_consumption_version(methodology: &str, version: Option<u32>) -> Result<(), ApiError> {
+    if wants_consumption(methodology, version) {
+        return Err(ApiError::bad_request(
+            "acv-ademe version=2 (consommation) n'est disponible que sur \
+             /v1/intensity/forecast",
+        ));
+    }
+    Ok(())
 }
 
 /// Rejette une `version` **inconnue** pour la méthode demandée (sinon elle serait
@@ -675,6 +690,14 @@ where
     // calculateur, ADR-0013), via le modèle dédié si câblé. Sinon, le modèle
     // scalaire prévoit la série stockée de la méthode demandée.
     let (points, model) = if wants_consumption(&methodology, query.version) {
+        // Même garde 400 que `/v1/intensity/now`/`/date`/`/stats` (ADR-0010 §8),
+        // AVANT l'état de câblage : sinon l'erreur client finissait en 500
+        // `internal` via `ForecastError::Unavailable` (audit 2026-08).
+        if region != Region::National {
+            return Err(ApiError::bad_request(
+                "acv-ademe@2 (consommation) n'est disponible qu'au national",
+            ));
+        }
         let model = state.consumption.as_ref().ok_or_else(|| {
             ApiError::not_found("prévision acv-ademe@2 non disponible (source d'import non câblée)")
         })?;
@@ -710,6 +733,9 @@ pub(crate) struct GreenestWindowQuery {
     region: Option<String>,
     /// Méthodologie à prévoir. Défaut `rte-direct`.
     methodology: Option<String>,
+    /// Version de la méthode. Validée : une version inconnue — ou `acv-ademe`
+    /// version=2, non servie ici — est rejetée (400) plutôt qu'ignorée.
+    version: Option<u32>,
     /// Début de l'horizon (RFC 3339). Défaut : maintenant.
     from: Option<String>,
     /// Profondeur de l'horizon en heures (1..=72). Défaut 24.
@@ -804,6 +830,10 @@ where
 {
     let region = resolve_region(&query.region)?;
     let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
+    // `version` était silencieusement ignorée ici (audit 2026-08) : validée
+    // comme sur `/v1/mix`, et `@2` (non servie ici) explicitement rejetée.
+    check_version(&methodology, query.version)?;
+    reject_consumption_version(&methodology, query.version)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let window_minutes = query.window_minutes.unwrap_or(DEFAULT_WINDOW_MINUTES);
     if window_minutes == 0 || window_minutes as u64 > horizon_hours as u64 * 60 {
@@ -913,6 +943,9 @@ fn estimator_label(estimator: WindowEstimator) -> &'static str {
 pub(crate) struct ScheduleQuery {
     region: Option<String>,
     methodology: Option<String>,
+    /// Version de la méthode. Validée : une version inconnue — ou `acv-ademe`
+    /// version=2, non servie ici — est rejetée (400) plutôt qu'ignorée.
+    version: Option<u32>,
     /// Début de l'horizon (RFC 3339). Défaut : maintenant.
     from: Option<String>,
     /// Profondeur de l'horizon en heures (1..=72). Défaut 24.
@@ -950,6 +983,10 @@ where
 {
     let region = resolve_region(&query.region)?;
     let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
+    // `version` était silencieusement ignorée ici (audit 2026-08) : validée
+    // comme sur `/v1/mix`, et `@2` (non servie ici) explicitement rejetée.
+    check_version(&methodology, query.version)?;
+    reject_consumption_version(&methodology, query.version)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let duration_minutes = query.duration_minutes.unwrap_or(DEFAULT_WINDOW_MINUTES);
     if duration_minutes == 0 || duration_minutes as u64 > horizon_hours as u64 * 60 {
@@ -961,10 +998,14 @@ where
         Some(raw) => Some(parse_timestamp("deadline", raw)?),
         None => None,
     };
+    // NaN passait la comparaison `< 0.0` et infectait toute l'économie calculée
+    // (audit 2026-08) : on exige un nombre fini, comme `threshold` sur `/below`.
     if let Some(kwh) = query.energy_kwh
-        && kwh < 0.0
+        && (!kwh.is_finite() || kwh < 0.0)
     {
-        return Err(ApiError::bad_request("`energy_kwh` doit être positif"));
+        return Err(ApiError::bad_request(
+            "`energy_kwh` doit être un nombre fini et positif",
+        ));
     }
     let estimator = resolve_estimator(&query.estimator)?;
 
@@ -997,6 +1038,9 @@ where
 pub(crate) struct SlotsQuery {
     region: Option<String>,
     methodology: Option<String>,
+    /// Version de la méthode. Validée : une version inconnue — ou `acv-ademe`
+    /// version=2, non servie ici — est rejetée (400) plutôt qu'ignorée.
+    version: Option<u32>,
     from: Option<String>,
     horizon_hours: Option<u32>,
     /// Nombre de créneaux les moins intenses à retourner. Requis, doit être > 0.
@@ -1029,6 +1073,10 @@ where
 {
     let region = resolve_region(&query.region)?;
     let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
+    // `version` était silencieusement ignorée ici (audit 2026-08) : validée
+    // comme sur `/v1/mix`, et `@2` (non servie ici) explicitement rejetée.
+    check_version(&methodology, query.version)?;
+    reject_consumption_version(&methodology, query.version)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let count = query
         .count
@@ -1063,6 +1111,9 @@ where
 pub(crate) struct BelowQuery {
     region: Option<String>,
     methodology: Option<String>,
+    /// Version de la méthode. Validée : une version inconnue — ou `acv-ademe`
+    /// version=2, non servie ici — est rejetée (400) plutôt qu'ignorée.
+    version: Option<u32>,
     from: Option<String>,
     horizon_hours: Option<u32>,
     /// Seuil d'intensité (gCO₂eq/kWh). Requis. Renvoie les créneaux sous ce seuil.
@@ -1091,6 +1142,10 @@ where
 {
     let region = resolve_region(&query.region)?;
     let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
+    // `version` était silencieusement ignorée ici (audit 2026-08) : validée
+    // comme sur `/v1/mix`, et `@2` (non servie ici) explicitement rejetée.
+    check_version(&methodology, query.version)?;
+    reject_consumption_version(&methodology, query.version)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let threshold = query
         .threshold
@@ -1168,6 +1223,14 @@ pub(crate) async fn intensity_stream(
         Some(_) => Some(resolve_region(&query.region)?),
         None => None,
     };
+    // NaN rendait le filtre silencieusement inopérant (toute comparaison est
+    // fausse) : on exige un nombre fini, comme `threshold` sur `/below`
+    // (audit 2026-08).
+    if let Some(threshold) = query.below
+        && !threshold.is_finite()
+    {
+        return Err(ApiError::bad_request("`below` doit être un nombre fini"));
+    }
     let below = query.below;
 
     let rx = state.updates.subscribe();
@@ -1218,15 +1281,18 @@ async fn authenticate_owner<R: ApiKeyRepository>(
     request_body = CreateWebhookRequest,
     responses(
         (status = 201, description = "Abonnement créé (secret affiché une fois)", body = CreatedWebhookResponse),
-        (status = 400, description = "Paramètre invalide ou URL refusée (anti-SSRF)", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 400, description = "Paramètre invalide, JSON malformé ou URL refusée (anti-SSRF)", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 401, description = "Clé API requise/inconnue", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 422, description = "Corps JSON valide mais champ manquant ou mal typé", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "webhooks"
 )]
 pub(crate) async fn create_webhook<R>(
     State(state): State<AppState<R>>,
     headers: HeaderMap,
-    Json(request): Json<CreateWebhookRequest>,
+    // `ValidatedJson` (et non `axum::Json`) : les rejets du corps restent des
+    // Problem Details, statut de la réjection conservé (audit 2026-08, ADR-0021).
+    ValidatedJson(request): ValidatedJson<CreateWebhookRequest>,
 ) -> Result<(StatusCode, Json<CreatedWebhookResponse>), ApiError>
 where
     R: ApiKeyRepository + SubscriptionRepository + Clone + Send + Sync + 'static,

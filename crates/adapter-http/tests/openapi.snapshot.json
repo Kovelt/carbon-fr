@@ -319,6 +319,17 @@
             }
           },
           {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Validée : une version inconnue — ou `acv-ademe`\nversion=2, non servie ici — est rejetée (400) plutôt qu'ignorée.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
             "name": "from",
             "in": "query",
             "required": false,
@@ -575,6 +586,17 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Validée : une version inconnue — ou `acv-ademe`\nversion=2, non servie ici — est rejetée (400) plutôt qu'ignorée.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -1199,6 +1221,17 @@
             }
           },
           {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Validée : une version inconnue — ou `acv-ademe`\nversion=2, non servie ici — est rejetée (400) plutôt qu'ignorée.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
             "name": "from",
             "in": "query",
             "description": "Début de l'horizon (RFC 3339). Défaut : maintenant.",
@@ -1314,6 +1347,17 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Validée : une version inconnue — ou `acv-ademe`\nversion=2, non servie ici — est rejetée (400) plutôt qu'ignorée.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -1560,7 +1604,7 @@
             }
           },
           "400": {
-            "description": "Paramètre invalide ou URL refusée (anti-SSRF)",
+            "description": "Paramètre invalide, JSON malformé ou URL refusée (anti-SSRF)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1571,6 +1615,16 @@
           },
           "401": {
             "description": "Clé API requise/inconnue",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Corps JSON valide mais champ manquant ou mal typé",
             "content": {
               "application/problem+json": {
                 "schema": {

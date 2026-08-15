@@ -82,6 +82,31 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   calibration éolien/solaire (0 MW face à une vraie météo) ; ces mesures sont
   désormais ignorées entièrement (l'ancre, déjà protégée, ne change pas).
   Expérience non servie — aucun impact sur le contrat `/v1`.
+- **`/v1/intensity/forecast` : 400 (et non 500) pour `acv-ademe@2` hors
+  national** (audit 2026-08) — le handler était le seul chemin `@2` sans garde
+  de région : l'erreur client finissait en `ForecastError::Unavailable` → 500
+  `internal`, en contradiction avec `/now`, `/date` et `/stats` (400 explicite,
+  ADR-0010 §8). La garde 400 est posée avant l'état de câblage du modèle (la
+  faute client prime sur le 404 « non câblé »).
+- **`POST /v1/webhooks` : rejets du corps JSON en Problem Details** (audit
+  2026-08, ADR-0021) — l'extracteur `axum::Json` brut renvoyait ses rejets en
+  `text/plain` (JSON malformé, champ manquant, Content-Type absent, corps trop
+  grand) sans `type`/`title`/`code`. Nouvel extracteur `ValidatedJson`
+  (symétrique de `ValidatedQuery`, audit F15) : corps `application/problem+json`
+  au code stable `bad_request`, statut de la réjection conservé
+  (400/413/415/422) ; le 422 (champ manquant/mal typé) est désormais documenté
+  dans l'OpenAPI.
+- **`version` validée sur `greenest-window`, `/schedule`, `/schedule/slots` et
+  `/intensity/below`** (audit 2026-08) — le paramètre y était silencieusement
+  ignoré : `?methodology=acv-ademe&version=2` servait la prévision `@1` en
+  laissant croire à du `@2`. Comme `/v1/mix` (audit F12) : version inconnue →
+  400, et `acv-ademe&version=2` (servie uniquement par
+  `/v1/intensity/forecast`) → 400 explicite. Paramètre ajouté à l'OpenAPI.
+- **NaN/infini rejetés pour `energy_kwh` (`/v1/schedule`) et `below`
+  (`/v1/intensity/stream`)** (audit 2026-08) — `energy_kwh=NaN` passait la
+  validation `< 0` et infectait toute l'économie calculée ; `below=NaN`
+  désactivait silencieusement le filtre SSE (toute comparaison avec NaN est
+  fausse). Rejet 400 « nombre fini » exigé, comme `threshold` sur `/below`.
 
 ## [0.6.0] - 2026-07-03
 

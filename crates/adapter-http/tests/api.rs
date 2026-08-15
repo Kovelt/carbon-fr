@@ -2285,3 +2285,100 @@ async fn webhook_callback_url_too_long_is_400() {
     .await;
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn forecast_consumption_v2_rejects_regional() {
+    // Garde 400 symétrique de `/v1/intensity/now`/`/date` (ADR-0010 §8) — avant
+    // le correctif, l'erreur client finissait en 500 `internal` via
+    // `ForecastError::Unavailable` (audit 2026-08).
+    let response = get(
+        build_with_acv(FakeRepo::default()),
+        "/v1/intensity/forecast?region=bretagne&methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    // La faute client (400) prime sur l'état de câblage serveur (404 non câblé).
+    let unwired = get(
+        app(None),
+        "/v1/intensity/forecast?region=bretagne&methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(unwired.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn webhook_malformed_json_is_problem_details_400() {
+    // ADR-0021 : les rejets du corps JSON passent aussi par Problem Details
+    // (miroir de `query_deserialization_error_is_problem_json_400`).
+    let resp = send(
+        webhook_app(),
+        "POST",
+        "/v1/webhooks",
+        Some("wh-key"),
+        Some(r#"{"callback_url": }"#),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/problem+json")
+    );
+    assert_eq!(json_body(resp).await["code"], "bad_request");
+}
+
+#[tokio::test]
+async fn webhook_missing_field_is_problem_details_422() {
+    // JSON syntaxiquement valide mais `threshold` absent : statut de la
+    // réjection axum conservé (422), corps Problem Details.
+    let resp = send(
+        webhook_app(),
+        "POST",
+        "/v1/webhooks",
+        Some("wh-key"),
+        Some(r#"{"direction":"below","callback_url":"https://hooks.example.com/c"}"#),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        resp.headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("application/problem+json")
+    );
+    assert_eq!(json_body(resp).await["code"], "bad_request");
+}
+
+#[tokio::test]
+async fn schedule_energy_kwh_nan_is_400() {
+    // NaN passait la comparaison `< 0.0` et infectait l'économie calculée.
+    let r = get(app(None), "/v1/schedule?energy_kwh=NaN").await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn stream_below_nan_is_400() {
+    // `below=NaN` désactivait silencieusement le filtre (toute comparaison
+    // avec NaN est fausse).
+    let r = get(app(None), "/v1/intensity/stream?below=NaN").await;
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn forecast_usage_endpoints_validate_version() {
+    // `version` n'est plus silencieusement ignorée sur les endpoints de
+    // prévision/usage (audit 2026-08) : version inconnue → 400, et
+    // `acv-ademe&version=2` (servie uniquement par /v1/intensity/forecast)
+    // → 400 explicite, comme `/v1/mix`.
+    for uri in [
+        "/v1/intensity/greenest-window?methodology=acv-ademe&version=2",
+        "/v1/schedule?methodology=acv-ademe&version=2",
+        "/v1/schedule/slots?count=2&methodology=acv-ademe&version=2",
+        "/v1/intensity/below?threshold=50&methodology=acv-ademe&version=2",
+        "/v1/intensity/greenest-window?version=9",
+    ] {
+        let r = get(app(None), uri).await;
+        assert_eq!(r.status(), StatusCode::BAD_REQUEST, "uri : {uri}");
+    }
+}

@@ -9,19 +9,179 @@
 //! pur** du domaine ([`climatology_forecast`]). La formule, elle, vit dans
 //! `core` (testable sans IO).
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard};
+
 use async_trait::async_trait;
 use carbonfr_core::domain::{
     ClimatologyParams, EmissionFactors, ForecastPoint, HorizonBands, Region, TD_LOSS_FACTOR_V1,
     TimeRange, acv_ademe_forecast, climatology_forecast,
 };
 use carbonfr_core::ports::{
-    CrossBorderRepository, ForecastError, ForecastModel, IntensityRepository,
+    Clock, CrossBorderRepository, ForecastError, ForecastModel, IntensityRepository,
 };
 use time::{Duration, OffsetDateTime};
 
 /// Profondeur d'historique par défaut alimentant la climatologie.
 /// **10 semaines glissantes** — valeur calée par backtest (addendum ADR-0009).
 const DEFAULT_WEEKS: i64 = 10;
+
+/// Pas d'alignement du seau de cache de [`CachedForecaster`] : la cadence
+/// quart d'heure canonique des mesures éCO2mix. Les requêtes d'un même seau
+/// partagent la série calculée (la donnée sous-jacente ne change qu'au cycle
+/// du poller).
+const CACHE_BUCKET_SECS: i64 = 900;
+
+/// Plafond d'entrées du cache : la cardinalité réelle est minuscule
+/// (13 régions × ~2 méthodologies × quelques horizons) — borne dure contre
+/// toute dérive mémoire.
+const CACHE_MAX_ENTRIES: usize = 256;
+
+/// Horloge système : implémentation par défaut du port [`Clock`].
+struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> OffsetDateTime {
+        OffsetDateTime::now_utc()
+    }
+}
+
+/// Clé de cache d'une prévision : cible `(region, methodology)`, seau de
+/// départ (`from` aligné sur le pas quart d'heure) et horizon.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct CacheKey {
+    region: Region,
+    methodology: String,
+    from_bucket: i64,
+    horizon_secs: i64,
+}
+
+/// Série mise en cache, datée pour l'expiration TTL.
+struct CacheEntry {
+    stored_at: std::time::Instant,
+    points: Arc<Vec<ForecastPoint>>,
+}
+
+/// Décorateur **cache TTL** d'un [`ForecastModel`] (audit perf 2026-08).
+///
+/// Sans lui, chaque requête des cinq endpoints de prévision (`/forecast`,
+/// `/greenest-window`, `/schedule`, `/schedule/slots`, `/below`) relisait
+/// ~10 semaines d'historique en base et rebâtissait la climatologie, pour une
+/// donnée qui ne change qu'au cycle du poller. La série calculée est donc
+/// mémorisée par clé `(region, methodology, from aligné sur le pas, horizon)`
+/// avec un TTL = intervalle de poll (`CARBONFR_POLL_SECS`).
+///
+/// Prudence de sémantique : **seul le trafic `from ≈ maintenant`** (le seau
+/// quart d'heure courant — l'écrasante majorité, `from` vaut `now` par défaut)
+/// est mis en cache. Un `from` arbitraire (passé ou futur) contourne le cache
+/// et garde exactement le comportement d'avant — sans lui, la clé serait de
+/// cardinalité non bornée. Les erreurs ne sont jamais mises en cache.
+///
+/// ADR-0009 intact : la prévision reste « calculée à la lecture, jamais
+/// persistée » — le cache est un mémo **en mémoire**, sans millésime ni base.
+#[derive(Clone)]
+pub struct CachedForecaster<F> {
+    inner: F,
+    ttl: std::time::Duration,
+    clock: Arc<dyn Clock>,
+    cache: Arc<Mutex<HashMap<CacheKey, CacheEntry>>>,
+}
+
+impl<F> CachedForecaster<F> {
+    /// Enrobe `inner` d'un cache d'une durée de vie `ttl` (l'intervalle de
+    /// poll : au-delà, une nouvelle mesure a pu déplacer l'ancre du modèle).
+    pub fn new(inner: F, ttl: std::time::Duration) -> Self {
+        Self {
+            inner,
+            ttl,
+            clock: Arc::new(SystemClock),
+            cache: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Injecte une horloge (port [`Clock`]) — testabilité : l'instant qui
+    /// décide de la mise en cache (`from ≈ maintenant`) peut être figé.
+    pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    /// Verrou du cache, avec récupération d'un éventuel empoisonnement (le
+    /// contenu reste cohérent : au pire une entrée expirée, filtrée au TTL).
+    fn lock(&self) -> MutexGuard<'_, HashMap<CacheKey, CacheEntry>> {
+        self.cache.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Série en cache pour `key`, si présente et non expirée.
+    fn lookup(&self, key: &CacheKey) -> Option<Vec<ForecastPoint>> {
+        let cache = self.lock();
+        let entry = cache.get(key)?;
+        (entry.stored_at.elapsed() < self.ttl).then(|| entry.points.as_ref().clone())
+    }
+
+    /// Mémorise la série : purge les entrées expirées, borne la taille (évince
+    /// la plus ancienne au plafond), puis insère.
+    fn store(&self, key: CacheKey, points: &[ForecastPoint]) {
+        let mut cache = self.lock();
+        cache.retain(|_, e| e.stored_at.elapsed() < self.ttl);
+        if cache.len() >= CACHE_MAX_ENTRIES
+            && let Some(oldest) = cache
+                .iter()
+                .min_by_key(|(_, e)| e.stored_at)
+                .map(|(k, _)| k.clone())
+        {
+            cache.remove(&oldest);
+        }
+        cache.insert(
+            key,
+            CacheEntry {
+                stored_at: std::time::Instant::now(),
+                points: Arc::new(points.to_vec()),
+            },
+        );
+    }
+}
+
+/// Seau quart d'heure d'un horodatage (division euclidienne : stable aussi
+/// avant l'époque Unix).
+fn bucket(t: OffsetDateTime) -> i64 {
+    t.unix_timestamp().div_euclid(CACHE_BUCKET_SECS)
+}
+
+#[async_trait]
+impl<F: ForecastModel> ForecastModel for CachedForecaster<F> {
+    async fn forecast(
+        &self,
+        region: Region,
+        methodology_id: &str,
+        from: OffsetDateTime,
+        horizon: Duration,
+    ) -> Result<Vec<ForecastPoint>, ForecastError> {
+        // Seul le seau courant est mis en cache (cf. doc du type) : un `from`
+        // explicite hors du quart d'heure en cours passe tout droit.
+        if bucket(from) != bucket(self.clock.now()) {
+            return self
+                .inner
+                .forecast(region, methodology_id, from, horizon)
+                .await;
+        }
+        let key = CacheKey {
+            region,
+            methodology: methodology_id.to_string(),
+            from_bucket: bucket(from),
+            horizon_secs: horizon.whole_seconds(),
+        };
+        if let Some(points) = self.lookup(&key) {
+            return Ok(points);
+        }
+        let points = self
+            .inner
+            .forecast(region, methodology_id, from, horizon)
+            .await?;
+        self.store(key, &points);
+        Ok(points)
+    }
+}
 
 /// Modèle de prévision `climatology@1` (ADR-0009) branché sur un repository.
 ///
@@ -389,6 +549,142 @@ mod tests {
         assert!(
             out.iter().all(|m| m.expected.value() < 100.0),
             "la valeur hors fenêtre (9999) ne doit pas influencer la prévision"
+        );
+    }
+
+    // ---- CachedForecaster (audit perf 2026-08) ------------------------------
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use carbonfr_core::domain::ModelVersion;
+
+    /// Modèle factice : compte les calculs et renvoie un point déterministe.
+    struct CountingModel {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl ForecastModel for CountingModel {
+        async fn forecast(
+            &self,
+            region: Region,
+            methodology_id: &str,
+            from: OffsetDateTime,
+            _horizon: Duration,
+        ) -> Result<Vec<ForecastPoint>, ForecastError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let g = CarbonIntensity::new(42.0).unwrap();
+            Ok(vec![ForecastPoint::new(
+                from,
+                region,
+                g,
+                g,
+                g,
+                Methodology::new(methodology_id, 1),
+                ModelVersion::new("climatology", 1),
+            )])
+        }
+    }
+
+    /// Horloge figée : rend le seau « from ≈ maintenant » déterministe.
+    struct FixedClock(OffsetDateTime);
+
+    impl Clock for FixedClock {
+        fn now(&self) -> OffsetDateTime {
+            self.0
+        }
+    }
+
+    fn cached(
+        ttl: std::time::Duration,
+        now: OffsetDateTime,
+    ) -> (CachedForecaster<CountingModel>, Arc<AtomicUsize>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let model = CountingModel {
+            calls: calls.clone(),
+        };
+        (
+            CachedForecaster::new(model, ttl).with_clock(Arc::new(FixedClock(now))),
+            calls,
+        )
+    }
+
+    #[tokio::test]
+    async fn cache_serves_second_call_without_recompute() {
+        let now = OffsetDateTime::UNIX_EPOCH + Duration::days(60);
+        let (forecaster, calls) = cached(std::time::Duration::from_secs(900), now);
+
+        let first = forecaster
+            .forecast(Region::National, "rte-direct", now, Duration::hours(24))
+            .await
+            .unwrap();
+        let second = forecaster
+            .forecast(Region::National, "rte-direct", now, Duration::hours(24))
+            .await
+            .unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "un seul calcul attendu");
+        assert_eq!(first, second, "la série servie du cache est identique");
+    }
+
+    #[tokio::test]
+    async fn cache_expires_after_ttl() {
+        let now = OffsetDateTime::UNIX_EPOCH + Duration::days(60);
+        // TTL nul : l'entrée expire immédiatement → chaque appel recalcule.
+        let (forecaster, calls) = cached(std::time::Duration::ZERO, now);
+
+        for _ in 0..2 {
+            forecaster
+                .forecast(Region::National, "rte-direct", now, Duration::hours(24))
+                .await
+                .unwrap();
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "TTL écoulé → recalcul");
+    }
+
+    #[tokio::test]
+    async fn distant_from_bypasses_cache() {
+        let now = OffsetDateTime::UNIX_EPOCH + Duration::days(60);
+        let (forecaster, calls) = cached(std::time::Duration::from_secs(900), now);
+
+        // `from` rétrospectif (hors du seau courant) : jamais mis en cache —
+        // comportement d'avant préservé, cardinalité de clé bornée.
+        let from = now - Duration::days(2);
+        for _ in 0..2 {
+            forecaster
+                .forecast(Region::National, "rte-direct", from, Duration::hours(24))
+                .await
+                .unwrap();
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "from passé → pas de cache");
+    }
+
+    #[tokio::test]
+    async fn distinct_keys_do_not_collide() {
+        let now = OffsetDateTime::UNIX_EPOCH + Duration::days(60);
+        let (forecaster, calls) = cached(std::time::Duration::from_secs(900), now);
+
+        forecaster
+            .forecast(Region::National, "rte-direct", now, Duration::hours(24))
+            .await
+            .unwrap();
+        // Autre horizon, autre région, autre méthodologie : trois clés neuves.
+        forecaster
+            .forecast(Region::National, "rte-direct", now, Duration::hours(48))
+            .await
+            .unwrap();
+        forecaster
+            .forecast(Region::Bretagne, "rte-direct", now, Duration::hours(24))
+            .await
+            .unwrap();
+        forecaster
+            .forecast(Region::National, "acv-ademe", now, Duration::hours(24))
+            .await
+            .unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            4,
+            "chaque clé calcule une fois"
         );
     }
 

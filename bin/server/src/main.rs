@@ -23,7 +23,7 @@
 //! |------------------------------|----------------|-----------------------------------|
 //! | `DATABASE_URL`               | — (requis)     | DSN PostgreSQL                    |
 //! | `CARBONFR_BIND`              | `0.0.0.0:8080` | adresse d'écoute de l'API         |
-//! | `CARBONFR_POLL_SECS`         | `900` (15 min) | période d'ingestion ODRÉ          |
+//! | `CARBONFR_POLL_SECS`         | `900` (15 min) | période d'ingestion ODRÉ (et TTL des caches de prévision) |
 //! | `CARBONFR_BACKFILL_FROM`     | `2012-01-01T00:00:00Z` | début du backfill (RFC 3339) |
 //! | `CARBONFR_BACKFILL_TO`       | maintenant     | fin du backfill (RFC 3339)        |
 //! | `CARBONFR_BACKFILL_WINDOW_DAYS` | `90`        | largeur de tranche d'export       |
@@ -60,7 +60,7 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use carbonfr_adapter_entsoe::EntsoeClient;
-use carbonfr_adapter_forecast::{AcvAdemeForecaster, ClimatologyForecaster};
+use carbonfr_adapter_forecast::{AcvAdemeForecaster, CachedForecaster, ClimatologyForecaster};
 use carbonfr_adapter_gbdt::{
     GbdtForecaster, GbdtHyperParams, build_training_examples, train_model,
 };
@@ -180,11 +180,20 @@ async fn run_server() -> anyhow::Result<()> {
     // repository. Intervalles **calibrés** au démarrage par quantiles de résidus
     // par horizon (ADR-0011), repli sur la dispersion par créneau si l'historique
     // récent est insuffisant. Son identité versionnée est annoncée au client.
-    let forecaster = build_calibrated_forecaster(repo.clone()).await;
+    // Cache TTL des séries prévues (audit perf 2026-08) : la donnée ne change
+    // qu'au cycle du poller — sans cache, chaque requête des 5 endpoints de
+    // prévision relisait ~10 semaines d'historique et rebâtissait le modèle.
+    let forecaster = CachedForecaster::new(
+        build_calibrated_forecaster(repo.clone()).await,
+        config.poll_interval,
+    );
     let model = format!("{CLIMATOLOGY_ID}@{CLIMATOLOGY_VERSION}");
     // Prévision `acv-ademe@2` (ADR-0013) : climatologie des entrées (mix + import)
-    // + calculateur. Servie via `?methodology=acv-ademe&version=2`.
-    let acv_forecaster = build_calibrated_acv_forecaster(repo.clone()).await;
+    // + calculateur. Servie via `?methodology=acv-ademe&version=2`. Même cache.
+    let acv_forecaster = CachedForecaster::new(
+        build_calibrated_acv_forecaster(repo.clone()).await,
+        config.poll_interval,
+    );
     let acv_model = format!("{ACV_FORECAST_ID}@{ACV_FORECAST_VERSION}");
     let forecast_state = ForecastState::new(forecaster, model)
         .with_consumption(std::sync::Arc::new(acv_forecaster), acv_model)
@@ -194,7 +203,8 @@ async fn run_server() -> anyhow::Result<()> {
     // `share-clim@1` (ADR-0028) : part renouvelable prévue du pilier rfnbo,
     // seulement si les bandes ont pu être calibrées au démarrage (sinon la part
     // future reste `Indeterminate` — comportement d'avant ADR-0028, gate oblige).
-    let forecast_state = match build_share_forecast_config(repo.clone()).await {
+    let forecast_state = match build_share_forecast_config(repo.clone(), config.poll_interval).await
+    {
         Some(cfg) => forecast_state.with_share_forecast(std::sync::Arc::new(cfg)),
         None => forecast_state,
     };
@@ -1137,7 +1147,10 @@ fn share_calibrate_weeks() -> anyhow::Result<i64> {
 /// récent, quantiles de résidus par horizon (ADR-0011 §5). `None` (le pilier
 /// reste `Indeterminate` au-delà du nowcast, comportement d'avant ADR-0028) si
 /// l'historique est trop maigre, `…_WEEKS=0`, ou timeout.
-async fn build_share_forecast_config(repo: PgIntensityRepository) -> Option<ShareForecastConfig> {
+async fn build_share_forecast_config(
+    repo: PgIntensityRepository,
+    cache_ttl: std::time::Duration,
+) -> Option<ShareForecastConfig> {
     let weeks = share_calibrate_weeks().ok()?;
     if weeks <= 0 {
         return None;
@@ -1177,12 +1190,11 @@ async fn build_share_forecast_config(repo: PgIntensityRepository) -> Option<Shar
                 horizons = bands.len(),
                 "bandes share-clim@1 calibrées (part renouvelable prévue, ADR-0028)"
             );
-            Some(ShareForecastConfig {
-                bands,
-                params,
-                lookback,
-                max_horizon: horizon,
-            })
+            // `cache_ttl` = intervalle de poll : durée de vie du cache de la
+            // fenêtre climatologique de part (audit perf 2026-08).
+            Some(ShareForecastConfig::new(
+                bands, params, lookback, horizon, cache_ttl,
+            ))
         }
         Ok(None) => {
             warn!(

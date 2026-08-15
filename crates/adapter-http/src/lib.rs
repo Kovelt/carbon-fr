@@ -443,6 +443,8 @@ where
         // Limite de corps serrée : nos seuls POST (webhook, visite) sont de petits
         // JSON. 16 Kio plafonne un corps abusif bien sous le défaut axum (2 Mio).
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
+        // En-tête `Cache-Control` sur les lectures stables (audit perf 2026-08).
+        .layer(axum::middleware::from_fn(cache_control))
         // Trace HTTP (méthode, chemin, statut, latence) — observabilité prod.
         .layer(tower_http::trace::TraceLayer::new_for_http());
     // Tier hébergé (ADR-0015, opt-in) : auth + quota, appliqué SOUS la couche
@@ -459,6 +461,56 @@ where
     // (donc avant `enforce` : un préflight n'est jamais décompté du quota) et
     // ajoute `Access-Control-Allow-Origin` aux réponses d'`enforce`.
     app.layer(cors_layer())
+}
+
+/// Chemins `GET` de **lecture stable** : leurs données ne changent qu'au cycle
+/// du poller (~15 min) ou au démarrage (catalogues, constantes versionnées).
+/// Exclus volontairement : le SSE (`/v1/intensity/stream`), les endpoints à
+/// clé (`/v1/webhooks…`), le compteur de visiteurs (`/v1/stats`) et les sondes.
+const CACHEABLE_PATHS: &[&str] = &[
+    "/v1/intensity/now",
+    "/v1/intensity/date",
+    "/v1/intensity/stats",
+    "/v1/mix",
+    "/v1/exchanges",
+    "/v1/exchanges/date",
+    "/v1/weather",
+    "/v1/weather/date",
+    "/v1/renewable",
+    "/v1/methodologies",
+    "/v1/factors",
+    "/v1/eligibility/rulesets",
+    "/v1/price",
+    "/v1/price/date",
+    "/v1/cost-reference",
+    "/v1/intensity/forecast",
+    "/v1/intensity/greenest-window",
+    "/v1/schedule",
+    "/v1/schedule/slots",
+    "/v1/intensity/below",
+];
+
+/// Marque les réponses `200` des lectures stables ([`CACHEABLE_PATHS`]) d'un
+/// `Cache-Control: public, max-age=60` (audit perf 2026-08) : un cache HTTP
+/// intermédiaire (navigateur, proxy, CDN d'une instance self-hostée) peut
+/// absorber les rafales de polling sans risquer de servir plus d'une minute de
+/// retard sur une donnée rafraîchie toutes les ~15 min. Pas d'`ETag` (les
+/// corps sont petits, la revalidation n'apporterait rien) ; les erreurs ne
+/// sont jamais marquées.
+async fn cache_control(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let cacheable = request.method() == axum::http::Method::GET
+        && CACHEABLE_PATHS.contains(&request.uri().path());
+    let mut response = next.run(request).await;
+    if cacheable && response.status() == axum::http::StatusCode::OK {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("public, max-age=60"),
+        );
+    }
+    response
 }
 
 /// Fallback du routeur : tout chemin qui ne correspond à aucune route déclarée

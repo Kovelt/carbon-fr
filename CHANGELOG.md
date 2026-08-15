@@ -25,6 +25,16 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   production ; à re-mesurer quand la couverture météo de service dépassera le
   cadre du backtest.
 
+- **`Cache-Control: public, max-age=60` sur les lectures stables** (audit perf
+  2026-08) — les `GET` dont la donnée ne change qu'au cycle du poller (~15 min)
+  ou au démarrage (`/now`, `/mix`, `/forecast`, `/greenest-window`, `/price`,
+  `/cost-reference`, catalogues…) n'annonçaient aucune politique de cache : un
+  navigateur, un proxy ou le CDN d'une instance self-hostée re-frappait l'API à
+  chaque polling. En-tête posé sur les seules réponses `200` de ces chemins —
+  jamais sur le SSE (`no-cache` d'axum conservé), les endpoints à clé, le
+  compteur de visiteurs ni les erreurs. Pas d'`ETag` (corps petits, la
+  revalidation n'apporterait rien).
+
 ### Modifié
 
 - **`/v1/intensity/date` et `/v1/intensity/stats` en `acv-ademe@2` : fenêtre
@@ -156,6 +166,22 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   ne tourne plus qu'une fois par changement de minute, et au-delà de 10 000
   identifiants suivis, les identifiants inédits partagent un seau de
   débordement unique — mémoire et CPU bornés même sous rotation d'adresses.
+- **Prévision : fin de la relecture de ~10 semaines d'historique à chaque
+  requête** (audit perf 2026-08) — les 5 endpoints de prévision (`/forecast`,
+  `/greenest-window`, `/schedule`, `/schedule/slots`, `/below`) relisaient
+  ~70 j de mesures en base et rebâtissaient la climatologie **par requête**
+  (jusqu'à ~13 500 lignes avec `?eligibility=rfnbo`), pour une donnée qui ne
+  change qu'au cycle du poller. Nouveau décorateur `CachedForecaster`
+  (adapter, port `ForecastModel` inchangé) : série mémorisée par clé
+  `(region, methodology, from aligné sur le pas, horizon)`, TTL = intervalle
+  de poll (`CARBONFR_POLL_SECS`), taille bornée — seul le trafic
+  `from ≈ maintenant` est mis en cache (un `from` explicite passé/futur garde
+  exactement le comportement d'avant), appliqué à `climatology@1` **et**
+  `acv-ademe@2`. La fenêtre climatologique de part renouvelable de l'overlay
+  `rfnbo` (`share-clim@1`) est de même mise en cache (clé = ancre nowcast +
+  TTL) — la sémantique mono-forecast (ADR-0026 D16) est préservée : fenêtre
+  verte et overlay partagent toujours la même série. ADR-0009 intact : la
+  prévision reste calculée à la lecture, jamais persistée.
 
 ### Sécurité
 

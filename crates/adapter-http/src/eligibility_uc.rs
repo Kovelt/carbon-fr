@@ -16,9 +16,14 @@
 //!   calibrées au démarrage) — sinon `None` → `Indeterminate`, comme avant.
 //!   L'historique de mix est lu en aller-retour **batch** (un seul, deux si
 //!   `from` précède la fenêtre climatologique — jamais un par créneau, même
-//!   discipline que le prix, audit F05) et **seulement** pour `rfnbo`.
+//!   discipline que le prix, audit F05) et **seulement** pour `rfnbo` ; la
+//!   fenêtre climatologique est de plus **mise en cache** (ancre nowcast +
+//!   TTL au cycle du poller, audit perf 2026-08) — elle n'est relue que quand
+//!   la donnée a pu changer.
 //! - **Prix = day-ahead frais** (PIÈGE 2) : la fraîcheur est filtrée par
 //!   l'implémentation de `spot_price_at` ; au-delà du day-ahead, `None`.
+
+use std::sync::{Arc, Mutex};
 
 use carbonfr_core::domain::{
     ClimatologyParams, ForecastPoint, HorizonBands, TimeRange, WindowEstimator,
@@ -50,6 +55,98 @@ pub struct ShareForecastConfig {
     /// Horizon **calibré** au-delà duquel on ne prévoit jamais (discipline du
     /// prix day-ahead : au-delà, `Indeterminate`).
     pub max_horizon: Duration,
+    /// Cache de la fenêtre climatologique (audit perf 2026-08) : sans lui,
+    /// chaque requête `?eligibility=rfnbo` relisait ~70 j de mix national et
+    /// rebâtissait la [`ShareClimatology`], pour une donnée qui ne change qu'au
+    /// cycle du poller. Partagé entre clones (`Arc`), invalidé par déplacement
+    /// de l'ancre nowcast ou expiration du TTL.
+    cache: ShareHistoryCache,
+}
+
+impl ShareForecastConfig {
+    /// Construit la configuration (composition root). `cache_ttl` = intervalle
+    /// de poll (`CARBONFR_POLL_SECS`) : au-delà, un upsert qui ne déplace pas
+    /// l'ancre (révision de millésime, backfill) a pu changer la fenêtre.
+    pub fn new(
+        bands: HorizonBands,
+        params: ClimatologyParams,
+        lookback: Duration,
+        max_horizon: Duration,
+        cache_ttl: std::time::Duration,
+    ) -> Self {
+        Self {
+            bands,
+            params,
+            lookback,
+            max_horizon,
+            cache: ShareHistoryCache::new(cache_ttl),
+        }
+    }
+}
+
+/// Cache mono-entrée du [`ShareHistory`] de fenêtre climatologique, clé =
+/// **ancre nowcast exacte** (une nouvelle mesure du poller déplace l'ancre et
+/// invalide naturellement l'entrée), TTL en ceinture de sécurité.
+#[derive(Debug, Clone)]
+struct ShareHistoryCache {
+    ttl: std::time::Duration,
+    entry: Arc<Mutex<Option<ShareCacheEntry>>>,
+}
+
+#[derive(Debug)]
+struct ShareCacheEntry {
+    anchor: OffsetDateTime,
+    stored_at: std::time::Instant,
+    base: Arc<ShareHistory>,
+}
+
+impl ShareHistoryCache {
+    fn new(ttl: std::time::Duration) -> Self {
+        Self {
+            ttl,
+            entry: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Historique de base (fenêtre `[anchor − lookback, anchor]`) : servi du
+    /// cache si l'ancre est identique et le TTL non écoulé, sinon relu en base
+    /// et rebâti. `None` si la fenêtre est invalide.
+    async fn get_or_build(
+        &self,
+        repo: &dyn crate::EligibilityRepo,
+        anchor: OffsetDateTime,
+        lookback: Duration,
+        step: Duration,
+    ) -> Option<Arc<ShareHistory>> {
+        {
+            let guard = self.entry.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(e) = guard.as_ref()
+                && e.anchor == anchor
+                && e.stored_at.elapsed() < self.ttl
+            {
+                return Some(e.base.clone());
+            }
+        }
+        let range = TimeRange::new(anchor - lookback, anchor + Duration::minutes(1))?;
+        let mut history = repo.national_mix_range(range).await;
+        if !history.is_sorted_by_key(|m| m.at) {
+            history.sort_by_key(|m| m.at);
+        }
+        let base = Arc::new(ShareHistory {
+            climatology: ShareClimatology::build(&history, step),
+            observed: history
+                .iter()
+                .filter_map(|m| Some((m.at, renewable_share(m.mix.as_ref()?)?)))
+                .collect(),
+        });
+        let mut guard = self.entry.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = Some(ShareCacheEntry {
+            anchor,
+            stored_at: std::time::Instant::now(),
+            base: base.clone(),
+        });
+        Some(base)
+    }
 }
 
 /// Évalue l'éligibilité de chaque créneau prévu, en enrichissant `points` du mix
@@ -94,7 +191,7 @@ pub(crate) async fn evaluate_eligibility(
         _ => None,
     };
     let share_model = match (share, &share_history) {
-        (Some(cfg), Some(h)) => h.climatology.as_ref().map(|c| (c, cfg)),
+        (Some(cfg), Some(h)) => h.climatology().map(|c| (c, cfg)),
         _ => None,
     };
     let anchor = match (now_at, now_share) {
@@ -151,47 +248,73 @@ pub(crate) async fn evaluate_eligibility(
     evaluate(&slots, ruleset, FR_BIDDING_ZONE)
 }
 
-/// Historique national chargé en batch pour l'overlay `rfnbo` : climatologie
-/// de part (créneaux futurs) + série observée `(at, part)` triée par horodatage
-/// croissant (part AU créneau pour les créneaux passés d'un `from`
-/// rétrospectif — audit 2026-08).
+/// Historique national de la **fenêtre climatologique** (partie mise en
+/// cache) : climatologie de part (créneaux futurs) + série observée
+/// `(at, part)` triée par horodatage croissant.
+#[derive(Debug)]
 struct ShareHistory {
     climatology: Option<ShareClimatology>,
     observed: Vec<(OffsetDateTime, f64)>,
 }
 
-impl ShareHistory {
+/// Vue servie à l'évaluation : fenêtre de base (cache, `Arc`) + éventuelle
+/// extension rétro (`from` avant la fenêtre climatologique), **jamais mise en
+/// cache** — elle dépend des créneaux demandés — et strictement antérieure à
+/// la fenêtre de base.
+struct ShareHistoryView {
+    base: Arc<ShareHistory>,
+    extra_observed: Vec<(OffsetDateTime, f64)>,
+}
+
+impl ShareHistoryView {
+    /// Climatologie de la fenêtre de base (le `lookback` est un paramètre du
+    /// modèle, ADR-0028 : l'extension rétro ne la nourrit jamais).
+    fn climatology(&self) -> Option<&ShareClimatology> {
+        self.base.climatology.as_ref()
+    }
+
     /// Part observée AU créneau `at` : la mesure la plus récente telle que
     /// `m.at ≤ at` et `at − m.at ≤` un pas (même couverture que le nowcast).
     /// `None` sinon → `Indeterminate` (donnée manquante), jamais la part d'un
-    /// autre horodatage.
+    /// autre horodatage. L'extension étant antérieure à la fenêtre de base, la
+    /// consulter en repli équivaut à chercher dans la concaténation.
     fn observed_share_at(&self, at: OffsetDateTime) -> Option<f64> {
-        let idx = self.observed.partition_point(|&(t, _)| t <= at);
-        let &(t, share) = self.observed.get(idx.checked_sub(1)?)?;
-        (at - t <= NOWCAST_COVERAGE).then_some(share)
+        observed_at(&self.base.observed, at).or_else(|| observed_at(&self.extra_observed, at))
     }
 }
 
+/// Dernier échantillon `(t, part)` de la série triée tel que `t ≤ at`, dans la
+/// limite de couverture d'un pas (même tolérance que le nowcast).
+fn observed_at(observed: &[(OffsetDateTime, f64)], at: OffsetDateTime) -> Option<f64> {
+    let idx = observed.partition_point(|&(t, _)| t <= at);
+    let &(t, share) = observed.get(idx.checked_sub(1)?)?;
+    (at - t <= NOWCAST_COVERAGE).then_some(share)
+}
+
 /// Charge l'historique de mix national en **batch** : fenêtre climatologique
-/// `[ancre − lookback, ancre + 1 min)`, plus — quand `from` la précède — un
-/// second batch borné à l'étendue des créneaux demandés (≤ horizon, jamais une
-/// extension d'un seul tenant jusqu'à `from` : un `from` très ancien chargerait
-/// des années d'historique). `None` sans nowcast (aucune ancre de fenêtre) —
-/// la part restera `Indeterminate`.
+/// `[ancre − lookback, ancre + 1 min)` (servie du cache de `cfg`, audit perf
+/// 2026-08), plus — quand `from` la précède — un second batch borné à l'étendue
+/// des créneaux demandés (≤ horizon, jamais une extension d'un seul tenant
+/// jusqu'à `from` : un `from` très ancien chargerait des années d'historique).
+/// `None` sans nowcast (aucune ancre de fenêtre) — la part restera
+/// `Indeterminate`.
 async fn fetch_share_history(
     repo: &dyn crate::EligibilityRepo,
     cfg: &ShareForecastConfig,
     now_at: Option<OffsetDateTime>,
     points: &[ForecastPoint],
-) -> Option<ShareHistory> {
+) -> Option<ShareHistoryView> {
     let end = now_at?;
     let climatology_start = end - cfg.lookback;
-    let range = TimeRange::new(climatology_start, end + Duration::minutes(1))?;
-    let mut history = repo.national_mix_range(range).await;
+    let base = cfg
+        .cache
+        .get_or_build(repo, end, cfg.lookback, cfg.params.step)
+        .await?;
 
     // `from` rétrospectif plus ancien que la fenêtre climatologique : les
     // créneaux concernés (préfixe des `points`, triés) relisent leur part dans
     // un batch supplémentaire couvrant exactement leur étendue.
+    let mut extra_observed = Vec::new();
     if let Some(first) = points.first()
         && first.at < climatology_start
     {
@@ -205,25 +328,19 @@ async fn fetch_share_history(
             first.at - NOWCAST_COVERAGE,
             (below_end + Duration::minutes(1)).min(climatology_start),
         ) {
-            history.extend(repo.national_mix_range(extra).await);
+            let mut batch = repo.national_mix_range(extra).await;
+            if !batch.is_sorted_by_key(|m| m.at) {
+                batch.sort_by_key(|m| m.at);
+            }
+            extra_observed = batch
+                .iter()
+                .filter_map(|m| Some((m.at, renewable_share(m.mix.as_ref()?)?)))
+                .collect();
         }
     }
-    if !history.is_sorted_by_key(|m| m.at) {
-        history.sort_by_key(|m| m.at);
-    }
-
-    // Le `lookback` est un paramètre du modèle (ADR-0028) : la climatologie ne
-    // se nourrit que de sa fenêtre — l'extension passée ne sert qu'à la
-    // relecture observée.
-    let suffix = history.partition_point(|m| m.at < climatology_start);
-    let climatology = ShareClimatology::build(&history[suffix..], cfg.params.step);
-    let observed = history
-        .iter()
-        .filter_map(|m| Some((m.at, renewable_share(m.mix.as_ref()?)?)))
-        .collect();
-    Some(ShareHistory {
-        climatology,
-        observed,
+    Some(ShareHistoryView {
+        base,
+        extra_observed,
     })
 }
 
@@ -514,15 +631,20 @@ mod tests {
     }
 
     fn share_config() -> ShareForecastConfig {
-        ShareForecastConfig {
-            bands: flat_bands(),
-            params: ClimatologyParams {
+        share_config_with_ttl(std::time::Duration::from_secs(900))
+    }
+
+    fn share_config_with_ttl(ttl: std::time::Duration) -> ShareForecastConfig {
+        ShareForecastConfig::new(
+            flat_bands(),
+            ClimatologyParams {
                 step: Duration::minutes(15),
                 tau: Duration::days(14),
             },
-            lookback: Duration::days(21),
-            max_horizon: Duration::hours(72),
-        }
+            Duration::days(21),
+            Duration::hours(72),
+            ttl,
+        )
     }
 
     /// Mix 25 % renouvelable (250 MW EnR / 1000 MW total).
@@ -816,5 +938,121 @@ mod tests {
         );
         assert_eq!(freshest_price(&prices, t + Duration::hours(1)), None);
         assert_eq!(freshest_price(&prices, t - Duration::minutes(1)), None);
+    }
+
+    // ---- cache de la fenêtre climatologique (audit perf 2026-08) ------------
+
+    /// Repo espion : historique réel + compteur de batchs + ancre déplaçable.
+    struct CachingSpyRepo {
+        latest: Mutex<Option<Measurement>>,
+        history: Vec<Measurement>,
+        mix_calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::EligibilityRepo for CachingSpyRepo {
+        async fn latest_national_mix(&self) -> Option<Measurement> {
+            self.latest.lock().unwrap().clone()
+        }
+        async fn spot_price_at(&self, _at: OffsetDateTime) -> Option<f64> {
+            None
+        }
+        async fn spot_prices_range(&self, _range: TimeRange) -> Vec<(OffsetDateTime, f64)> {
+            Vec::new()
+        }
+        async fn national_mix_range(&self, range: TimeRange) -> Vec<Measurement> {
+            self.mix_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.history
+                .iter()
+                .filter(|m| range.contains(m.at))
+                .cloned()
+                .collect()
+        }
+    }
+
+    /// Audit perf 2026-08 : deux évaluations successives (même ancre nowcast)
+    /// partagent la fenêtre climatologique en cache — un seul batch de mix,
+    /// verdicts identiques.
+    #[tokio::test]
+    async fn share_history_cached_across_evaluations() {
+        let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(30);
+        let repo = CachingSpyRepo {
+            latest: Mutex::new(Some(measurement(t0, quarter_mix()))),
+            history: quarter_history(t0, 21),
+            mix_calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let cfg = share_config();
+        let points = [point(t0 + Duration::hours(6), 20.0)];
+        let r = EligibilityRuleset::rfnbo_2023_1184();
+
+        let first =
+            evaluate_eligibility(&repo, &points, &r, WindowEstimator::Central, Some(&cfg)).await;
+        let second =
+            evaluate_eligibility(&repo, &points, &r, WindowEstimator::Central, Some(&cfg)).await;
+
+        assert_eq!(
+            repo.mix_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "la fenêtre climatologique ne doit être relue qu'une fois"
+        );
+        // Parité de comportement : la part prévue servie du cache est la même.
+        assert_eq!(
+            share_signal(&first[0]).value(),
+            share_signal(&second[0]).value()
+        );
+        assert_eq!(share_signal(&second[0]).provenance(), Some("forecast"));
+    }
+
+    /// Audit perf 2026-08 : TTL écoulé → la fenêtre est relue (un upsert qui ne
+    /// déplace pas l'ancre — millésime, backfill — a pu la changer).
+    #[tokio::test]
+    async fn share_history_cache_expires_with_ttl() {
+        let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(30);
+        let repo = CachingSpyRepo {
+            latest: Mutex::new(Some(measurement(t0, quarter_mix()))),
+            history: quarter_history(t0, 21),
+            mix_calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let cfg = share_config_with_ttl(std::time::Duration::ZERO);
+        let points = [point(t0 + Duration::hours(6), 20.0)];
+        let r = EligibilityRuleset::rfnbo_2023_1184();
+
+        for _ in 0..2 {
+            let _ = evaluate_eligibility(&repo, &points, &r, WindowEstimator::Central, Some(&cfg))
+                .await;
+        }
+        assert_eq!(
+            repo.mix_calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "TTL nul → chaque évaluation relit la fenêtre"
+        );
+    }
+
+    /// Audit perf 2026-08 : une nouvelle mesure du poller déplace l'ancre
+    /// nowcast et invalide le cache — la fenêtre suit la donnée fraîche.
+    #[tokio::test]
+    async fn share_history_cache_invalidated_when_anchor_moves() {
+        let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(30);
+        let repo = CachingSpyRepo {
+            latest: Mutex::new(Some(measurement(t0, quarter_mix()))),
+            history: quarter_history(t0, 21),
+            mix_calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let cfg = share_config();
+        let points = [point(t0 + Duration::hours(6), 20.0)];
+        let r = EligibilityRuleset::rfnbo_2023_1184();
+
+        let _ =
+            evaluate_eligibility(&repo, &points, &r, WindowEstimator::Central, Some(&cfg)).await;
+        // Nouvelle mesure (ancre + 15 min) : le cache doit être invalidé.
+        *repo.latest.lock().unwrap() = Some(measurement(t0 + Duration::minutes(15), quarter_mix()));
+        let _ =
+            evaluate_eligibility(&repo, &points, &r, WindowEstimator::Central, Some(&cfg)).await;
+        assert_eq!(
+            repo.mix_calls.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "ancre déplacée → fenêtre relue"
+        );
     }
 }

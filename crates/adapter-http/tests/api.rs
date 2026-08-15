@@ -404,6 +404,58 @@ async fn intensity_now_returns_latest() {
     assert_eq!(body["timestamp"], "1970-01-01T00:00:00Z");
 }
 
+/// Audit perf 2026-08 : les lectures stables (rafraîchies au cycle du poller)
+/// portent `Cache-Control: public, max-age=60` — jamais le SSE, les endpoints
+/// à clé, le compteur de visiteurs ni les erreurs.
+#[tokio::test]
+async fn stable_reads_carry_cache_control_others_do_not() {
+    // Lecture stable en 200 → en-tête présent.
+    let response = get(app(Some(national_measurement())), "/v1/intensity/now").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("public, max-age=60")
+    );
+    let response = get(app(None), "/v1/methodologies").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .headers()
+            .contains_key(axum::http::header::CACHE_CONTROL)
+    );
+
+    // Erreur sur un chemin stable → jamais marquée.
+    let response = get(app(None), "/v1/intensity/now").await;
+    assert_ne!(response.status(), StatusCode::OK);
+    assert!(
+        !response
+            .headers()
+            .contains_key(axum::http::header::CACHE_CONTROL)
+    );
+
+    // SSE : jamais marqué « public » — axum pose lui-même `no-cache`.
+    let response = get(app(None), "/v1/intensity/stream").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("no-cache")
+    );
+    // Compteur de visiteurs → jamais marqué.
+    let response = get(app(None), "/v1/stats").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        !response
+            .headers()
+            .contains_key(axum::http::header::CACHE_CONTROL)
+    );
+}
+
 #[tokio::test]
 async fn price_decomposes_with_spot_energy() {
     let repo = FakeRepo {
@@ -1153,19 +1205,20 @@ fn build_with_eligibility(repo: FakeRepo) -> axum::Router {
 /// Monte le routeur avec l'overlay d'éligibilité ET `share-clim@1` câblés
 /// (part renouvelable prévue, ADR-0028) — bandes dégénérées sur 72 h.
 fn build_with_share_forecast(repo: FakeRepo) -> axum::Router {
-    let config = carbonfr_adapter_http::ShareForecastConfig {
-        bands: carbonfr_core::domain::HorizonBands::from_residuals(
+    let config = carbonfr_adapter_http::ShareForecastConfig::new(
+        carbonfr_core::domain::HorizonBands::from_residuals(
             Duration::minutes(15),
             &vec![Vec::new(); 289],
             0.1,
         ),
-        params: carbonfr_core::domain::ClimatologyParams {
+        carbonfr_core::domain::ClimatologyParams {
             step: Duration::minutes(15),
             tau: Duration::days(14),
         },
-        lookback: Duration::days(21),
-        max_horizon: Duration::hours(72),
-    };
+        Duration::days(21),
+        Duration::hours(72),
+        std::time::Duration::from_secs(900),
+    );
     let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1")
         .with_eligibility(Arc::new(EligibilityRepoAdapter(repo.clone())))
         .with_share_forecast(Arc::new(config));

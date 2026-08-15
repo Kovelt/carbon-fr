@@ -441,7 +441,7 @@ pub(crate) struct DateRangeQuery {
     params(HistoryQuery),
     responses(
         (status = 200, description = "Série chronologique", body = HistoryResponse),
-        (status = 400, description = "Paramètre invalide ou fenêtre > 366 jours", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 400, description = "Paramètre invalide ou fenêtre > 366 jours (92 jours pour acv-ademe@2, série dérivée à la lecture)", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "intensité"
 )]
@@ -482,6 +482,14 @@ where
         if region != Region::National {
             return Err(ApiError::bad_request(
                 "acv-ademe@2 (consommation) n'est disponible qu'au national",
+            ));
+        }
+        // Série dense dérivée par requête (mix × flux transfrontaliers joints
+        // en mémoire, sans rollup — ADR-0010 §6) : plafond resserré à 92 j,
+        // comme les autres séries denses (/exchanges, /weather, /price).
+        if to - from > MAX_DENSE_SERIES_SPAN {
+            return Err(ApiError::bad_request(
+                "fenêtre trop large (maximum 92 jours pour acv-ademe@2)",
             ));
         }
         GetConsumptionIntensity::new(state.repo.clone(), state.repo.clone())
@@ -530,7 +538,7 @@ pub(crate) struct StatsQuery {
     params(StatsQuery),
     responses(
         (status = 200, description = "Résumé (et série si interval)", body = StatsResponse),
-        (status = 400, description = "Paramètre invalide", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 400, description = "Paramètre invalide ou fenêtre > 366 jours (92 jours pour acv-ademe@2, résumé dérivé à la lecture)", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 404, description = "Aucune donnée sur l'intervalle", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "intensité"
@@ -569,6 +577,14 @@ where
     if consumption && region != Region::National {
         return Err(ApiError::bad_request(
             "acv-ademe@2 (consommation) n'est disponible qu'au national",
+        ));
+    }
+    // Même plafond dense que `/v1/intensity/date` en `@2` : le résumé et la
+    // série sont dérivés à la lecture (mix × flux, ADR-0010 §6), pas servis
+    // par les rollups.
+    if consumption && to - from > MAX_DENSE_SERIES_SPAN {
+        return Err(ApiError::bad_request(
+            "fenêtre trop large (maximum 92 jours pour acv-ademe@2)",
         ));
     }
 

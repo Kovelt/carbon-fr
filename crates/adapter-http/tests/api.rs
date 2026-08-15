@@ -1869,6 +1869,39 @@ async fn intensity_date_consumption_v2_rejects_regional() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
+// Audit perf 2026-08 : la série `@2` est dérivée à la lecture (mix × flux joints
+// en mémoire, sans rollup) → plafond dense de 92 j, comme /exchanges/date. La
+// même fenêtre reste servie par les autres méthodologies (plafond 366 j).
+#[tokio::test]
+async fn intensity_date_consumption_v2_window_over_92_days_is_400() {
+    let response = get(
+        app(None),
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-04-15T00:00:00Z&methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(response).await["code"], "bad_request");
+
+    // Fenêtre identique (104 j) en rte-direct : toujours acceptée.
+    let response = get(
+        app(None),
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-04-15T00:00:00Z",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn intensity_stats_consumption_v2_window_over_92_days_is_400() {
+    let response = get(
+        app(None),
+        "/v1/intensity/stats?from=1970-01-01T00:00:00Z&to=1970-04-15T00:00:00Z&methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(response).await["code"], "bad_request");
+}
+
 /// Monte le routeur avec le modèle de prévision acv-ademe@2 câblé (ADR-0013).
 fn build_with_acv(repo: FakeRepo) -> axum::Router {
     use carbonfr_adapter_forecast::AcvAdemeForecaster;

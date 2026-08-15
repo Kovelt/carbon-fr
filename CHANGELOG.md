@@ -25,8 +25,39 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   production ; à re-mesurer quand la couverture météo de service dépassera le
   cadre du backtest.
 
+### Modifié
+
+- **`/v1/intensity/date` et `/v1/intensity/stats` en `acv-ademe@2` : fenêtre
+  plafonnée à 92 jours** (audit perf 2026-08) — la série `@2` est dérivée à la
+  lecture (mix × flux transfrontaliers rechargés et joints en mémoire, sans
+  rollup — ADR-0010 §6) : la garde générique de 366 j autorisait ~175 k lignes
+  de flux lues + jointure + sérialisation par requête anonyme. Le plafond des
+  **séries denses** (92 j, celui de `/exchanges/date`, `/weather/date` et
+  `/price/date`) s'applique désormais à ces deux chemins : 400 explicite
+  au-delà (OpenAPI mise à jour). Les autres méthodologies conservent 366 j.
+
 ### Corrigé
 
+- **Rollups : fin des parcours séquentiels complets à chaque cycle de poll**
+  (audit perf 2026-08) — le rafraîchissement incrémental filtre par `at >= $1`
+  seul, prédicat qu'aucun index ne servait (PK `(region, at, …)`, index
+  `(region, methodology_id, at DESC)`) : chaque cycle faisait 2 seq scans de
+  toute la table `measurement` (~600 k lignes, en croissance), contredisant le
+  « coût O(7 j) » visé par la migration 0010. Nouvelle migration `0012` : index
+  **BRIN** sur `measurement (at)` (table écrite en ordre chronologique — index
+  de quelques pages, scan borné aux blocs récents).
+- **`weather_latest` : plus de lecture de tous les runs de la fenêtre** (audit
+  perf 2026-08) — le `DISTINCT ON` lisait (et heap-fetchait) chaque run de
+  chaque échéance avant de n'en garder qu'un, or la table anti-fuite (ADR-0012)
+  les conserve tous (~192 par échéance en régime établi) : ~420 k tuples lus
+  pour ~2 200 rendus sur `GET /v1/weather/date` à 92 j. Remplacé par une
+  descente d'index par échéance (`DISTINCT valid_at` index-only + `LATERAL …
+  LIMIT 1`) — un tuple rapatrié par échéance, réponse inchangée.
+- **`upsert_weather` : doublon de clé toléré dans un même lot** (audit
+  2026-08) — un couple `(valid_at, run_at)` dupliqué dans le même lot faisait
+  échouer tout l'INSERT multi-lignes (« ON CONFLICT ne peut affecter deux fois
+  la même ligne ») : dédup avant l'upsert (dernière occurrence conservée, même
+  sémantique que l'upsert), sur le patron de `upsert_flows`/`dedup_by_key`.
 - **ENTSO-E : courbes `A03` développées en série complète** (audit 2026-08) —
   le parseur IEC 62325 ignorait `curveType` et `timeInterval.end` : les
   positions omises d'une courbe A03 (valeur reconduite jusqu'au point suivant)

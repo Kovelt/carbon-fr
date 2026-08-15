@@ -519,12 +519,25 @@ impl WeatherRepository for PgIntensityRepository {
         &self,
         forecasts: &[WeatherForecast],
     ) -> Result<usize, RepositoryError> {
-        if forecasts.is_empty() {
+        // Dédup par clé `(valid_at, run_at)` (garde la dernière occurrence,
+        // comme la sémantique de l'upsert) : un doublon dans le MÊME lot ferait
+        // échouer tout l'INSERT (« ON CONFLICT ne peut affecter deux fois la
+        // même ligne ») — même patron que `upsert_flows`/`dedup_by_key`.
+        let mut rows: std::collections::BTreeMap<
+            (OffsetDateTime, OffsetDateTime),
+            &WeatherForecast,
+        > = std::collections::BTreeMap::new();
+        for f in forecasts {
+            rows.insert((f.valid_at, f.run_at), f);
+        }
+        if rows.is_empty() {
             return Ok(0);
         }
+        let entries: Vec<&WeatherForecast> = rows.into_values().collect();
+
         let mut written = 0usize;
         // 4 colonnes × 10 000 = 40 000 paramètres < 65 535.
-        for chunk in forecasts.chunks(10_000) {
+        for chunk in entries.chunks(10_000) {
             let mut builder = QueryBuilder::new(
                 "INSERT INTO weather_forecast (valid_at, run_at, wind, irradiance) ",
             );
@@ -570,15 +583,27 @@ impl WeatherRepository for PgIntensityRepository {
         &self,
         valid: TimeRange,
     ) -> Result<Vec<WeatherForecast>, RepositoryError> {
-        // F19 : déduplication déléguée à Postgres via l'index existant
-        // `weather_forecast_valid_run_idx (valid_at, run_at DESC)` (migration
-        // 0006) — une ligne par échéance (le run le plus récent), sans ramener
-        // tout l'historique des runs en mémoire. `weather_range` reste brut.
+        // F19 : déduplication déléguée à Postgres — une ligne par échéance (le
+        // run le plus récent), sans ramener tout l'historique des runs en
+        // mémoire. `weather_range` reste brut.
+        //
+        // Audit perf 2026-08 : descente d'index PAR échéance plutôt qu'un
+        // `DISTINCT ON` qui lisait (et heap-fetchait, `wind`/`irradiance` hors
+        // index) TOUTES les lignes de la fenêtre avant de n'en garder qu'une —
+        // or la table anti-fuite (ADR-0012) conserve chaque run pour toujours
+        // (~192 runs accumulés par échéance en régime établi). Le sous-select
+        // `DISTINCT valid_at` reste sur l'index `weather_forecast_valid_run_idx
+        // (valid_at, run_at DESC)` (migration 0006, index-only) et le LATERAL
+        // ne rapatrie qu'un tuple par échéance.
         let rows = sqlx::query(
-            "SELECT DISTINCT ON (valid_at) valid_at, run_at, wind, irradiance \
-             FROM weather_forecast \
-             WHERE valid_at >= $1 AND valid_at < $2 \
-             ORDER BY valid_at ASC, run_at DESC",
+            "SELECT w.valid_at, w.run_at, w.wind, w.irradiance \
+             FROM (SELECT DISTINCT valid_at FROM weather_forecast \
+                   WHERE valid_at >= $1 AND valid_at < $2) v \
+             CROSS JOIN LATERAL ( \
+                 SELECT valid_at, run_at, wind, irradiance FROM weather_forecast wf \
+                 WHERE wf.valid_at = v.valid_at \
+                 ORDER BY wf.run_at DESC LIMIT 1) w \
+             ORDER BY w.valid_at ASC",
         )
         .bind(valid.start())
         .bind(valid.end())

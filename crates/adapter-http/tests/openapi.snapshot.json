@@ -458,7 +458,7 @@
             }
           },
           "400": {
-            "description": "Paramètre invalide ou fenêtre > 366 jours",
+            "description": "Paramètre invalide ou fenêtre > 366 jours (92 jours pour acv-ademe@2, série dérivée à la lecture)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -881,7 +881,7 @@
             }
           },
           "400": {
-            "description": "Paramètre invalide",
+            "description": "Paramètre invalide ou fenêtre > 366 jours (92 jours pour acv-ademe@2, résumé dérivé à la lecture)",
             "content": {
               "application/problem+json": {
                 "schema": {

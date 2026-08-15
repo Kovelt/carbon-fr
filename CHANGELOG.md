@@ -8,6 +8,23 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté
+
+- **Expérience `share-meteo@2`** (addendum de l'[ADR-0028](docs/adr/0028-prevision-part-renouvelable-eligibilite.md)) —
+  variante **météo-pilotée** de la part renouvelable prévue : dérivation par
+  canal (éolien/solaire via le `RenewableModel` d'ADR-0018 calibré par origine,
+  anti-fuite ; autres canaux en climatologie + anomalie d'ancre), **repli exact
+  sur `share-clim@1`** hors couverture météo. Nouvelle sous-commande **dédiée**
+  `backtest-share-meteo` : **comparaison à trois** (météo vs climatologie vs
+  persistance, mêmes origines/cibles) — `backtest-share` reste le GATE de
+  production de `share-clim@1`, inchangé. GO formel du gate météo sur les deux
+  fenêtres de l'ADR-0028 (bat `share-clim@1` en RMSE global, 0 faux verdict),
+  gain concentré à h+1/h+6 (−7,7 %/−6,6 % à h+1 ; parité par construction
+  au-delà de la couverture d'archive 24 h). **Non servi** (décision du
+  2026-07-04, documentée dans l'addendum) : `share-clim@1` reste le modèle en
+  production ; à re-mesurer quand la couverture météo de service dépassera le
+  cadre du backtest.
+
 ## [0.6.1] - 2026-07-04
 
 La page carte `GET /hydrogene` devient embarquable par le site vitrine

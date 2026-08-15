@@ -28,6 +28,7 @@ mod evaluate;
 mod ruleset;
 mod share;
 mod share_forecast;
+mod share_meteo;
 mod verdict;
 
 pub use evaluate::{best_eligible, evaluate, evaluate_slot, rank_by_score};
@@ -41,6 +42,10 @@ pub use share::renewable_share;
 pub use share_forecast::{
     SHARE_FORECAST_MODEL, ShareBacktestReport, ShareClimatology, ShareEstimate, ShareHorizonError,
     ShareSource, backtest_share, calibrate_share_bands,
+};
+pub use share_meteo::{
+    SHARE_METEO_MODEL, ShareMeteoBacktestReport, ShareMeteoHorizonError, ShareMeteoModel,
+    WeatherIndex, backtest_share_meteo, calibrate_share_meteo_bands,
 };
 pub use verdict::{
     EligibilitySignal, EligibilityVerdict, FR_BIDDING_ZONE, IndeterminateReason, Pillar, SlotInput,

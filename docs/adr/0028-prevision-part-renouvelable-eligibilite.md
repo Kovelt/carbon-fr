@@ -56,3 +56,26 @@ Contraintes héritées : jamais d'extrapolation muette (l'indétermination est u
 - **Recalcul au poller / cache global** — *rejeté en v1* : la lecture par requête (motif `ClimatologyForecaster`) est la convention établie et le coût est borné ; un cache est une optimisation future si la charge le justifie.
 - **Étendre `ForecastPoint` avec le mix** — *rejeté* : contrat ADR-0011 inchangé, l'enrichissement reste une orchestration d'adapter.
 - **Confondre avec le `MixForecaster` GBDT d'ADR-0013** — *rejeté* : consommateur (`acv-ademe@2`), ancre méthodologique et gate de promotion différents ; composants partagés seulement s'ils sont extraits proprement.
+
+---
+
+## Addendum — itération météo `share-meteo@2` mesurée (2026-07-04)
+
+L'alternative « météo-piloté » (reportée ci-dessus, *gate d'abord*) a été **implémentée comme expérience pure et mesurée** — module `crates/eligibility/src/share_meteo.rs`, **non servi**.
+
+**Formule** (`share-meteo@2`) : dérivation **par canal** là où la météo *as-of* l'origine couvre la cible — éolien/solaire via le `RenewableModel` (ADR-0018) **calibré par origine sur la fenêtre d'apprentissage** (anti-fuite), corrigés à l'ancre (biais additif pour l'éolien, ratio multiplicatif pour le solaire — une correction additive ancrée en journée fabriquerait du solaire la nuit) ; hydraulique/bioénergies/nucléaire/fossile en climatologie de canal + anomalie d'ancre décroissante ; part = numérateur de `renewable_share` sur le total. **Au-delà de la couverture météo : repli exact sur la formule `share-clim@1`** — zéro régression possible aux horizons non couverts, le gain ne peut venir que de la couverture. Lecture météo *as-of* stricte (`run_at < origine`, dernier run gagne).
+
+**GATE mesuré (2026-07-04, mêmes fenêtres/origines/pas que le §7, comparaison à trois : météo vs climatologie vs persistance sur les mêmes points)** — critère : bat **`share-clim@1`** (pas seulement la persistance) en RMSE global ET zéro faux `pass` :
+
+| Fenêtre de test | RMSE `share-meteo@2` | RMSE `share-clim@1` | h+1 | h+6 | h+24 | h+72 | Verdicts fermes | GO formel |
+|---|---|---|---|---|---|---|---|---|
+| 2026-03-01 → 2026-04-27 (57 origines) | **0,0407** | 0,0410 | **0,0168**/0,0182 | **0,0273**/0,0285 | 0,0494 (=) | 0,0561 (=) | 228 `fail`, **0 faux** | ✅ |
+| 2025-10-01 → 2025-11-26 (56 origines) | **0,0594** | 0,0595 | **0,0169**/0,0181 | 0,0333/0,0334 | 0,0690 (=) | 0,0897 (=) | 222 `fail`, **0 faux** | ✅ |
+
+**Lecture honnête** : le critère formel de promotion est rempli sur les deux fenêtres, mais le gain global est **mince** (−0,7 % / −0,2 % de RMSE) car il est **structurellement borné par la convention d'archive** (`run_at = valid_at − 24 h` : seuls h+1 et h+6 des checkpoints sont couverts en backtest ; h+24 tombe exactement sur la frontière stricte et h+72 est hors couverture → parité exacte par construction du repli). Là où la météo couvre, le gain est réel et systématique : **−7,7 %/−6,6 % à h+1**, −4,2 %/−0,3 % à h+6. En **service**, la couverture réelle est ~48 h avec des runs bien plus frais (1-15 h de lead) : le backtest **sous-estime** vraisemblablement le gain de service — mais c'est ce qui est mesurable aujourd'hui sans re-jouer l'ingestion.
+
+**Décision de service (2026-07-04, Morgan) : option 2 — conservée en expérience.** Les deux options étaient :
+1. **Promouvoir** `share-meteo@2` (câblage `eligibility_uc` + composition root + lecture météo batchée par requête, `share_model: "share-meteo@2"` servi) — imposerait le **re-jeu du GATE de neutralité** (chaîne servie + comportement) et une requête SQL de plus par appel `?eligibility=rfnbo`.
+2. **Conserver en expérience** (retenue) : le module et la comparaison restent dans le dépôt (re-jouables), `share-clim@1` reste servi ; re-mesurer quand le store météo dépassera 48 h ou avec des leads de service réels — le gain mesuré, réel mais mince et borné par la convention d'archive, ne justifie pas aujourd'hui la complexité de service ni un re-jeu de GATE.
+
+La comparaison à trois est re-jouable via la sous-commande **dédiée** `carbonfr-server backtest-share-meteo` (séparée de `backtest-share`, qui reste le GATE de production de `share-clim@1` — pas de couplage d'échec entre un GATE servi et une expérience).

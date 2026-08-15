@@ -220,6 +220,17 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   en silence dans les deux cas (indiscernable d'un opt-out volontaire au
   journal) : un `warn` explicite est désormais émis, comportement de repli
   inchangé.
+- **Open-Meteo : plus de zéros fabriqués sur les créneaux sans donnée** (audit
+  2026-08) — un créneau dont tous les points de mesure répondaient `null`
+  était enregistré `{ wind: 0,0, irradiance: 0,0 }`, indistinguable d'un calme
+  plat mesuré. Le bord touché est le **début** de l'archive : les variables
+  utilisées (`wind_speed_100m`, `shortwave_radiation`) sont tout-`null` sur
+  toute 2016 (données réelles ~2017→, vérifié live), et le plancher
+  `weather_min = 2016-01-01` du backfill fabriquait ~8 784 lignes à 0,0
+  servies ensuite par `/v1/weather/date`. L'agrégation nationale **saute**
+  désormais ces créneaux (série creuse, tolérée par tous les consommateurs) et
+  le plancher du backfill est remonté à **2017-01-01** (~12 tranches d'appels
+  API voués au tout-`null` économisées ; commentaire de couverture corrigé).
 
 ### Sécurité
 
@@ -243,6 +254,12 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   dédié en **opt-in** explicite via `CARBONFR_REAL_IP_HEADER` (le proxy doit
   l'écraser — `header_up X-Real-IP {remote_host}` ajouté au Caddyfile,
   `deploy/README.md` corrigé).
+- **Swagger UI (`/docs`) : version épinglée + Subresource Integrity** (audit
+  2026-08) — les assets jsDelivr étaient chargés en version flottante `@5`
+  sans SRI : toute release future (ou compromission CDN) exécutait du script
+  arbitraire dans la page. Épinglage exact `swagger-ui-dist@5.32.13` +
+  attributs `integrity` (SHA-384, vérifiés croisés jsDelivr/unpkg) et
+  `crossorigin="anonymous"` sur la feuille de style et le bundle.
 
 ## [0.6.0] - 2026-07-03
 

@@ -455,11 +455,15 @@ async fn run_backfill() -> anyhow::Result<()> {
     // GBDT, par tranches de 30 j (limite raisonnable de l'API). `run_at =
     // valid_at − 24 h` (anti-fuite). Échec non bloquant (best-effort).
     //
-    // L'API Historical Forecast d'Open-Meteo ne couvre que **2016-01-01→** : on
-    // borne le départ pour ne pas émettre de requêtes vouées au 400 sur tout
-    // l'historique antérieur (sans ce garde-fou, 2012→2016 = ~49 tranches inutiles).
+    // L'API Historical Forecast d'Open-Meteo accepte des requêtes dès
+    // 2016-01-01, mais les variables utilisées ici (`wind_speed_100m`,
+    // `shortwave_radiation`) répondent tout-`null` sur **toute 2016** (données
+    // réelles ~2017→, vérifié live — audit 2026-08 ; l'agrégation saute
+    // désormais ces créneaux plutôt que fabriquer des 0,0). On borne donc le
+    // départ à **2017-01-01** : sans ce garde-fou, 2012→2017 = ~61 tranches
+    // inutiles (400 avant 2016, tout-`null` ensuite).
     let weather_min = OffsetDateTime::new_utc(
-        time::Date::from_calendar_date(2016, time::Month::January, 1)
+        time::Date::from_calendar_date(2017, time::Month::January, 1)
             .context("date plancher de l'archive météo")?,
         time::Time::MIDNIGHT,
     );

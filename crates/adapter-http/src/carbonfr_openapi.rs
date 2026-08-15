@@ -125,6 +125,13 @@ pub(crate) async fn openapi() -> Json<OpenApiDoc> {
 }
 
 /// `GET /docs` — page Swagger UI (assets chargés depuis le CDN jsDelivr).
+///
+/// Version **épinglée exacte** + Subresource Integrity (audit 2026-08) : la
+/// version flottante `@5` laissait le CDN servir n'importe quel contenu futur
+/// dans une page de notre origine. Hashes SHA-384 calculés sur les fichiers
+/// npm `swagger-ui-dist@5.32.13` (identiques via jsDelivr et unpkg,
+/// vérification croisée du 2026-08-15). Toute montée de version doit
+/// recalculer les deux hashes (`openssl dgst -sha384 -binary | openssl base64 -A`).
 pub(crate) async fn swagger_ui() -> Html<&'static str> {
     Html(SWAGGER_UI_HTML)
 }
@@ -135,11 +142,11 @@ const SWAGGER_UI_HTML: &str = r##"<!doctype html>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>carbon-fr — API</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.13/swagger-ui.css" integrity="sha384-tRpWwikYYdk1+1Mu0osh0Tz/Ay5xgS+s/Nf2Aa7GVAFtZLFdJlAbozfrq4g+xHBK" crossorigin="anonymous" />
   </head>
   <body>
     <div id="swagger-ui"></div>
-    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin></script>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.32.13/swagger-ui-bundle.js" integrity="sha384-PsJla434CobCNv3y1K4wRavOqkUAvwGEQEfbUmI98CCqqGCJsmuDsgIjM6ZQQODP" crossorigin="anonymous"></script>
     <script>
       window.ui = SwaggerUIBundle({ url: "/v1/openapi.json", dom_id: "#swagger-ui" });
     </script>

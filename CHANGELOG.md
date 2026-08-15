@@ -25,6 +25,21 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   production ; à re-mesurer quand la couverture météo de service dépassera le
   cadre du backtest.
 
+### Corrigé
+
+- **ENTSO-E : courbes `A03` développées en série complète** (audit 2026-08) —
+  le parseur IEC 62325 ignorait `curveType` et `timeInterval.end` : les
+  positions omises d'une courbe A03 (valeur reconduite jusqu'au point suivant)
+  étaient traitées comme absentes. Un flux A11 stable (une seule position
+  émise) se réduisait à son premier pas — net transfrontalier faussé jusqu'à
+  l'inversion de signe dans `acv-ademe@2` et `/v1/exchanges` — et un prix A44
+  constant laissait des trous dans `spot_price` (pilier prix rfnbo indéterminé
+  à tort). Chaque point est désormais reconduit jusqu'à la position du point
+  suivant ou la fin de période (comblement inconditionnel, sans effet sur une
+  courbe A01 complète), dans les trois développements (flux, génération, prix),
+  avec garde contre les périodes démesurées (esprit F14) ; complétude testée
+  sur la fixture officielle A11 (24 pas) + prix PT15M à positions omises.
+
 ## [0.6.0] - 2026-07-03
 
 La couche **B-light** d'ADR-0025 : `GET /hydrogene`, carte auto-contenue

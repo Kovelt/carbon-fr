@@ -41,6 +41,13 @@ use time::{Duration, OffsetDateTime};
 /// optionnel alors que la borne doit toujours s'appliquer (audit 2026-08).
 const NOWCAST_COVERAGE: Duration = Duration::minutes(15);
 
+/// Borne de fraîcheur du prix spot : **pas de prix au-delà du day-ahead**
+/// (ADR-0026 PIÈGE 2). STRICTE : un prix horaire couvre `[t, t + 1 h)` — à
+/// `t + 1 h` exactement, c'est l'heure de livraison suivante (audit 2026-08).
+/// Partagée entre `spot_price_at` (`EligibilityRepoAdapter`, lib.rs) et
+/// [`freshest_price`] : une seule définition de « frais » pour le pilier prix.
+pub(crate) const MAX_PRICE_AGE: Duration = Duration::hours(1);
+
 /// Configuration du modèle `share-clim@1` (ADR-0028), câblée par la composition
 /// root quand les bandes ont pu être calibrées au démarrage. Absente → la part
 /// renouvelable future reste `None` (comportement d'avant ADR-0028).
@@ -345,8 +352,8 @@ async fn fetch_share_history(
 }
 
 /// Un **seul** aller-retour prix couvrant tous les créneaux. La borne basse
-/// `premier − 1 h` capture un prix légèrement antérieur au premier créneau, dans
-/// la limite de fraîcheur appliquée par [`freshest_price`].
+/// `premier − MAX_PRICE_AGE` capture un prix légèrement antérieur au premier
+/// créneau, dans la limite de fraîcheur appliquée par [`freshest_price`].
 async fn fetch_prices_once(
     repo: &dyn crate::EligibilityRepo,
     points: &[ForecastPoint],
@@ -354,19 +361,15 @@ async fn fetch_prices_once(
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return Vec::new();
     };
-    match TimeRange::new(
-        first.at - Duration::hours(1),
-        last.at + Duration::minutes(1),
-    ) {
+    match TimeRange::new(first.at - MAX_PRICE_AGE, last.at + Duration::minutes(1)) {
         Some(range) => repo.spot_prices_range(range).await,
         None => Vec::new(),
     }
 }
 
 /// Prix day-ahead **frais** au créneau `at` : le plus récent tel que
-/// `price.at ≤ at` et `at − price.at < 1 h` — borne STRICTE : un prix horaire
-/// couvre `[t, t + 1 h)`, à `t + 1 h` exactement c'est l'heure de livraison
-/// suivante, jamais le prix précédent reconduit (audit 2026-08 ; pas
+/// `price.at ≤ at` et `at − price.at < MAX_PRICE_AGE` (borne STRICTE portée
+/// par [`MAX_PRICE_AGE`] : jamais le prix précédent reconduit — pas
 /// d'extrapolation au-delà du day-ahead, PIÈGE 2). Même sémantique que
 /// `spot_price_at`, appliquée en mémoire sur la série déjà chargée. `prices`
 /// triés par horodatage croissant.
@@ -376,7 +379,7 @@ fn freshest_price(prices: &[(OffsetDateTime, f64)], at: OffsetDateTime) -> Optio
         .rev()
         .find(|(t, _)| {
             let age = at - *t;
-            age >= Duration::ZERO && age < Duration::hours(1)
+            age >= Duration::ZERO && age < MAX_PRICE_AGE
         })
         .map(|(_, eur)| *eur)
 }

@@ -2234,6 +2234,35 @@ async fn auth_repeated_invalid_key_resolves_once() {
 }
 
 #[tokio::test]
+async fn auth_repeated_valid_key_resolves_once() {
+    // Audit 2026-08 : cache positif — la même clé valide rejouée ne coûte
+    // qu'un seul aller-retour au registre de clés.
+    let keys = std::sync::Arc::new(FakeKeys {
+        valid_hash: key_fingerprint("good-key"),
+        calls: Default::default(),
+    });
+    let app = guarded_app_with_keys(keys.clone());
+    let first = get_auth(app.clone(), "/v1/protected", Some("good-key")).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let second = get_auth(app.clone(), "/v1/protected", Some("good-key")).await;
+    assert_eq!(second.status(), StatusCode::OK);
+    assert_eq!(keys.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // Le quota par clé continue de se décompter sur hit de cache (2 requêtes
+    // consommées sur la limite `free_per_min` = 100).
+    let headers = second.headers();
+    assert_eq!(
+        headers.get("ratelimit-limit").and_then(|v| v.to_str().ok()),
+        Some("100")
+    );
+    assert_eq!(
+        headers
+            .get("ratelimit-remaining")
+            .and_then(|v| v.to_str().ok()),
+        Some("98")
+    );
+}
+
+#[tokio::test]
 async fn operational_routes_bypass_quota_and_auth() {
     // F07 : `/health`, `/health/ready`, `/metrics` (hors `/v1`) ne sont jamais
     // soumis au quota anonyme (2/min ici) ni à l'auth, même sous `enforce`.

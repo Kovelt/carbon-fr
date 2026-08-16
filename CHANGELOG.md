@@ -6,6 +6,32 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### Modifié
+
+- **Cache positif de résolution des clés API** (audit 2026-08) — symétrique du
+  cache négatif existant : une clé valide rejouée ne coûte plus un SELECT
+  Postgres par requête (TTL 60 s, borné à 10 000 empreintes). Effet observable
+  assumé : la latence de propagation d'une future révocation ou d'un changement
+  de tier est bornée à ≤ 60 s — sans risque aujourd'hui, aucun chemin de
+  révocation n'existe (`mint-key` ne fait qu'upserter). Quota par clé,
+  en-têtes `RateLimit-*` et chemin anonyme inchangés.
+- **Borne de fraîcheur du prix spot factorisée** (`MAX_PRICE_AGE`, audit
+  2026-08) — le littéral `Duration::hours(1)` dupliqué entre `spot_price_at`
+  et `freshest_price` devient une constante nommée unique (« pas de prix
+  au-delà du day-ahead », ADR-0026 PIÈGE 2). Refactor interne, aucun
+  changement de comportement.
+
+### Corrigé
+
+- **`dedup_by_key` : à égalité de millésime, la dernière occurrence du lot
+  l'emporte** (audit 2026-08) — la dédup pré-INSERT gardait la *première*
+  occurrence alors que l'upsert SQL (`vintage_rank >=`) et les dédups sœurs
+  (`upsert_flows`/`upsert_weather`) font gagner la *dernière* : un lot portant
+  deux valeurs de même clé et même millésime pouvait écrire l'ancienne. Garde
+  passée de `>=` à `>` strict ; ordre des survivants inchangé.
+
 ## [0.7.0] - 2026-08-15
 
 Release d'audit : revue multi-agents complète du workspace — 19 défauts

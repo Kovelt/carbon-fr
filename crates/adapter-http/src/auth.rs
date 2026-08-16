@@ -16,7 +16,7 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
-use carbonfr_core::ports::{ApiKeyRepository, ApiTier};
+use carbonfr_core::ports::{ApiKeyRecord, ApiKeyRepository, ApiTier};
 use sha2::{Digest, Sha256};
 
 use crate::error::problem_response;
@@ -61,12 +61,13 @@ enum Principal {
 }
 
 /// État du middleware : registre de clés + compteur de quota en mémoire
-/// + cache négatif de résolution.
+/// + caches de résolution (négatif et positif).
 #[derive(Clone)]
 pub struct AuthState {
     keys: Arc<dyn ApiKeyRepository>,
     limiter: Arc<Mutex<RateLimiter>>,
     negative: Arc<Mutex<NegativeKeyCache>>,
+    positive: Arc<Mutex<PositiveKeyCache>>,
     config: AuthConfig,
 }
 
@@ -76,6 +77,7 @@ impl AuthState {
             keys,
             limiter: Arc::new(Mutex::new(RateLimiter::default())),
             negative: Arc::new(Mutex::new(NegativeKeyCache::default())),
+            positive: Arc::new(Mutex::new(PositiveKeyCache::default())),
             config,
         }
     }
@@ -198,6 +200,49 @@ impl NegativeKeyCache {
             }
         }
         self.entries.insert(hash, now + NEGATIVE_CACHE_TTL_SECS);
+    }
+}
+
+/// TTL du cache positif de résolution de clé (secondes). Borne la **latence de
+/// propagation** d'une révocation ou d'un changement de tier à ≤ 60 s — sans
+/// risque aujourd'hui : aucun chemin de révocation n'existe (`mint-key` ne fait
+/// qu'upserter).
+const POSITIVE_CACHE_TTL_SECS: i64 = 60;
+
+/// Taille maximale du cache positif (empreintes distinctes mémorisées).
+const POSITIVE_CACHE_MAX: usize = 10_000;
+
+/// Cache **positif** de résolution de clé : empreinte valide → (enregistrement
+/// résolu, instant d'expiration). Strictement symétrique du cache négatif
+/// (audit 2026-08) : évite un aller-retour Postgres par requête quand une même
+/// clé valide est rejouée. **Borné** et à TTL court ; invalidation par TTL seul.
+#[derive(Default)]
+struct PositiveKeyCache {
+    entries: HashMap<String, (ApiKeyRecord, i64)>,
+}
+
+impl PositiveKeyCache {
+    /// Enregistrement mémorisé pour l'empreinte (entrée non expirée), le cas
+    /// échéant.
+    fn get(&self, hash: &str, now: i64) -> Option<ApiKeyRecord> {
+        match self.entries.get(hash) {
+            Some((record, expiry)) if *expiry > now => Some(record.clone()),
+            _ => None,
+        }
+    }
+
+    /// Mémorise une empreinte résolue. Cache plein → purge des entrées
+    /// expirées ; s'il le reste, on n'insère pas (même politique que le cache
+    /// négatif — perdre le cache est sans danger, juste moins économe).
+    fn insert(&mut self, hash: String, record: ApiKeyRecord, now: i64) {
+        if self.entries.len() >= POSITIVE_CACHE_MAX {
+            self.entries.retain(|_, (_, expiry)| *expiry > now);
+            if self.entries.len() >= POSITIVE_CACHE_MAX {
+                return;
+            }
+        }
+        self.entries
+            .insert(hash, (record, now + POSITIVE_CACHE_TTL_SECS));
     }
 }
 
@@ -331,7 +376,8 @@ pub async fn enforce(State(state): State<AuthState>, request: Request, next: Nex
     //    sans cela, le chemin non authentifié le plus coûteux (SHA-256 + SELECT
     //    Postgres) était le seul jamais throttlé — bypass de quota par Bearer
     //    aléatoire. Un cache négatif court évite en plus l'aller-retour base
-    //    quand la même empreinte invalide est rejouée.
+    //    quand la même empreinte invalide est rejouée (et son symétrique
+    //    positif, quand c'est une clé valide qui l'est).
     let principal = match bearer_token(headers) {
         Some(token) => {
             let hash = hash_key(&token);
@@ -358,31 +404,57 @@ pub async fn enforce(State(state): State<AuthState>, request: Request, next: Nex
             if anon_exhausted {
                 return rate_limited_response(state.config.anonymous_per_min);
             }
-            match state.keys.resolve(&hash).await {
-                Ok(Some(record)) => Principal::Keyed {
+            // Cache positif : une clé valide rejouée ne coûte pas un SELECT par
+            // requête. Hit → principal sans toucher la base (le quota par clé
+            // `key:{hash}` s'applique pareil en aval) ; miss → résolution comme
+            // avant, mémorisée à TTL court.
+            let cached = state
+                .positive
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .get(&hash, now);
+            if let Some(record) = cached {
+                Principal::Keyed {
                     id: hash,
                     tier: record.tier,
-                },
-                Ok(None) => {
-                    state
-                        .negative
-                        .lock()
-                        .unwrap_or_else(|poison| poison.into_inner())
-                        .insert(hash, now);
-                    return auth_failure_response(&state, &anon_id, minute, unauthorized_response);
                 }
-                // Erreur transitoire (base) : pas de cache négatif — la clé est
-                // peut-être valide ; mais l'échec est décompté (ne pas offrir un
-                // chemin illimité vers une base déjà en difficulté).
-                Err(_) => {
-                    return auth_failure_response(&state, &anon_id, minute, || {
-                        error_response(
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            "unavailable",
-                            "Service indisponible",
-                            "vérification de la clé impossible",
-                        )
-                    });
+            } else {
+                match state.keys.resolve(&hash).await {
+                    Ok(Some(record)) => {
+                        let tier = record.tier;
+                        state
+                            .positive
+                            .lock()
+                            .unwrap_or_else(|poison| poison.into_inner())
+                            .insert(hash.clone(), record, now);
+                        Principal::Keyed { id: hash, tier }
+                    }
+                    Ok(None) => {
+                        state
+                            .negative
+                            .lock()
+                            .unwrap_or_else(|poison| poison.into_inner())
+                            .insert(hash, now);
+                        return auth_failure_response(
+                            &state,
+                            &anon_id,
+                            minute,
+                            unauthorized_response,
+                        );
+                    }
+                    // Erreur transitoire (base) : pas de cache négatif — la clé est
+                    // peut-être valide ; mais l'échec est décompté (ne pas offrir un
+                    // chemin illimité vers une base déjà en difficulté).
+                    Err(_) => {
+                        return auth_failure_response(&state, &anon_id, minute, || {
+                            error_response(
+                                StatusCode::SERVICE_UNAVAILABLE,
+                                "unavailable",
+                                "Service indisponible",
+                                "vérification de la clé impossible",
+                            )
+                        });
+                    }
                 }
             }
         }
@@ -582,6 +654,52 @@ mod tests {
         cache.insert("frais".to_string(), 1_000 + NEGATIVE_CACHE_TTL_SECS);
         assert_eq!(cache.entries.len(), 1);
         assert!(cache.contains("frais", 1_000 + NEGATIVE_CACHE_TTL_SECS));
+    }
+
+    #[test]
+    fn positive_cache_remembers_then_expires() {
+        let record = ApiKeyRecord {
+            tier: ApiTier::Free,
+            label: "test".to_string(),
+        };
+        let mut cache = PositiveKeyCache::default();
+        cache.insert("hash".to_string(), record.clone(), 1_000);
+        assert_eq!(cache.get("hash", 1_000), Some(record.clone()));
+        assert_eq!(
+            cache.get("hash", 1_000 + POSITIVE_CACHE_TTL_SECS - 1),
+            Some(record)
+        );
+        // TTL écoulé : l'empreinte doit être re-résolue en base (latence de
+        // propagation d'une révocation/changement de tier ≤ TTL).
+        assert_eq!(cache.get("hash", 1_000 + POSITIVE_CACHE_TTL_SECS), None);
+        assert_eq!(cache.get("autre", 1_000), None);
+    }
+
+    #[test]
+    fn positive_cache_is_bounded() {
+        let record = ApiKeyRecord {
+            tier: ApiTier::Free,
+            label: "test".to_string(),
+        };
+        let mut cache = PositiveKeyCache::default();
+        for i in 0..POSITIVE_CACHE_MAX {
+            cache.insert(format!("h{i}"), record.clone(), 1_000);
+        }
+        // Plein, rien d'expiré → l'insertion est refusée (pas de croissance).
+        cache.insert("trop".to_string(), record.clone(), 1_000);
+        assert_eq!(cache.entries.len(), POSITIVE_CACHE_MAX);
+        assert_eq!(cache.get("trop", 1_000), None);
+        // Après expiration générale, l'insertion repasse (purge au passage).
+        cache.insert(
+            "frais".to_string(),
+            record.clone(),
+            1_000 + POSITIVE_CACHE_TTL_SECS,
+        );
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(
+            cache.get("frais", 1_000 + POSITIVE_CACHE_TTL_SECS),
+            Some(record)
+        );
     }
 
     #[test]

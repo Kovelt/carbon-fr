@@ -192,14 +192,16 @@ where
     }
 
     async fn spot_price_at(&self, at: time::OffsetDateTime) -> Option<f64> {
-        // `price_at` renvoie le prix au plus proche ≤ at. On REFUSE un prix périmé
-        // d'1 h ou plus (borne STRICTE : un prix horaire couvre `[t, t + 1 h)` —
-        // à `t + 1 h` exactement, c'est l'heure de livraison suivante, audit
-        // 2026-08) pour ne pas propager le dernier day-ahead sur le futur
-        // (PIÈGE 2 : au-delà du day-ahead, le signal prix reste indéterminé).
-        // NB : comparer les `Duration` directement, PAS `whole_hours()` (division
-        // entière → tolérerait jusqu'à ~2 h). Garde `>= ZERO` au cas où une autre
-        // impl de `price_at` renverrait un prix postérieur à `at`.
+        // `price_at` renvoie le prix au plus proche ≤ at. On REFUSE un prix
+        // périmé de `MAX_PRICE_AGE` (1 h) ou plus — borne STRICTE **partagée**
+        // avec `freshest_price` (eligibility_uc.rs) : un prix horaire couvre
+        // `[t, t + 1 h)`, à `t + 1 h` exactement c'est l'heure de livraison
+        // suivante (audit 2026-08). But : ne pas propager le dernier day-ahead
+        // sur le futur (PIÈGE 2 : au-delà du day-ahead, le signal prix reste
+        // indéterminé). NB : comparer les `Duration` directement, PAS
+        // `whole_hours()` (division entière → tolérerait jusqu'à ~2 h). Garde
+        // `>= ZERO` au cas où une autre impl de `price_at` renverrait un prix
+        // postérieur à `at`.
         self.0
             .price_at(at)
             .await
@@ -207,7 +209,7 @@ where
             .flatten()
             .filter(|p| {
                 let age = at - p.at;
-                age >= time::Duration::ZERO && age < time::Duration::hours(1)
+                age >= time::Duration::ZERO && age < crate::eligibility_uc::MAX_PRICE_AGE
             })
             .map(|p| p.eur_per_mwh)
     }

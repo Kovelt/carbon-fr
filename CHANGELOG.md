@@ -6,7 +6,11 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.7.1] - 2026-08-16
+
+Solde des mineures de l'audit 2026-08 (vérifiées adversarialement) : cohérence
+du dédup d'ingestion, cache positif des clés API, borne de fraîcheur prix
+factorisée. Aucun changement de contrat `/v1`.
 
 ### Modifié
 

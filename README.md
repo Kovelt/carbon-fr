@@ -133,6 +133,7 @@ carbon-fr/
 ├── Cargo.toml                  # workspace Cargo
 ├── crates/
 │   ├── core/                   # ✅ domaine + cas d'usage + ports (lib PURE, zéro IO)
+│   ├── eligibility/            # ✅ éligibilité électrolyseur rfnbo/low-carbon (lib PURE, ADR-0026)
 │   ├── adapter-odre/           # ✅ impl Eco2mixSource/Eco2mixArchive (ODRÉ)
 │   ├── adapter-postgres/       # ✅ impl repositories (sqlx/Postgres)
 │   ├── adapter-http/           # ✅ API axum + OpenAPI + auth + SSE (adapter entrant)
@@ -180,7 +181,7 @@ docker run -e DATABASE_URL=postgres://… -e CARBONFR_VISIT_SALT=… -p 8080:808
 
 Configuration via variables d'environnement — voir [`.env.example`](.env.example). Sondes : `GET /health` (liveness) et `GET /health/ready` (vérifie la base). Métriques **Prometheus** sous `GET /metrics` (fraîcheur du poller, volume ingéré, appels amont — à restreindre au scrapeur côté proxy en prod). Les migrations sont appliquées au démarrage.
 
-Outre le serveur, le binaire expose des **sous-commandes** *one-shot* : `backfill` (rapatrie l'historique par export de masse — prérequis de `/intensity/date`, `/intensity/stats` et de la prévision), `mint-key` (délivre une clé API), les `backtest*` / `train` (évaluation et entraînement des modèles de prévision) et `--version`.
+Outre le serveur, le binaire expose des **sous-commandes** *one-shot* : `backfill` (rapatrie l'historique par export de masse — prérequis de `/intensity/date`, `/intensity/stats` et de la prévision), `mint-key` (délivre une clé API), les `backtest*` (`backtest`, `-acv`, `-sweep`, `-bands`, `-renewable`, `-share`, `-share-meteo`) / `train` / `analyze-renewable-signal` (évaluation, entraînement et *gates* des modèles de prévision) et `--version`.
 
 ## Méthodologie & données
 
@@ -201,7 +202,8 @@ Outre le serveur, le binaire expose des **sous-commandes** *one-shot* : `backfil
 - [x] **Phase 4 — Enrichissement & usage** : `acv-ademe@2` consumption-based (ENTSO-E) · prévision `acv-ademe` · scheduling carbon-aware + SSE · clés API + quota · webhooks signés. *(ML GBDT exploré, gardé par backtest ; raffinements ouverts.)*
 - [x] **Phase 5 — Enrichissement, déploiement & SDK** : échanges transfrontaliers (`/v1/exchanges`), météo (`/v1/weather`), dérivation renouvelable (`/v1/renewable`) ; **prix de l'électricité** (`/v1/price`, décomposition TRV, ADR-0023) + **couche comparative LCOE** (`/v1/cost-reference`, ADR-0024) ; **déployé** sur VPS FR/EU (Traefik + PostgreSQL) ; **SDK TypeScript** (`@carbon-fr/sdk`).
 - [x] **Extension hydrogène carbon-aware** (v0.4.0) : couche A « électrolyseur » — éligibilité **RFNBO / bas-carbone** par créneau au-dessus de `/greenest-window` (`?eligibility=`) + catalogue `/v1/eligibility/rulesets` ([ADR-0025](docs/adr/0025-extension-hydrogene-carbon-aware.md), [ADR-0026](docs/adr/0026-methodologie-overlays-eligibilite.md)).
-- [ ] **À venir** : SDK Rust ; site statique (o2switch) ; `UsageMeter` persistant ; suite hydrogène ([roadmap dédiée](docs/roadmap-hydrogene.md) : ruleset `rfnbo:2026-revision` quand le droit sera adopté, `MixForecast`, couche B-light « carte électrolyseurs × carbone live »).
+- [x] **Suite hydrogène** (v0.5.0–v0.6.0) : part renouvelable **prévue** `share-clim@1` dans l'overlay `rfnbo` ([ADR-0028](docs/adr/0028-prevision-part-renouvelable-eligibilite.md) ; variante météo `share-meteo@2` mesurée, non servie) · carte « électrolyseurs × carbone live » `GET /hydrogene` ([ADR-0029](docs/adr/0029-carte-electrolyseurs-carbone-live.md)).
+- [ ] **À venir** : SDK Rust ; site statique (o2switch) ; `UsageMeter` persistant ; suite hydrogène ([roadmap dédiée](docs/roadmap-hydrogene.md) : ruleset `rfnbo:2026-revision` quand le droit sera adopté ; branche EUA et bascule horaire 2030 en réserve).
 
 ## Contribuer
 

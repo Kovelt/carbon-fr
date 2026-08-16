@@ -33,9 +33,9 @@ Conséquence sur le découpage de la valeur :
 | Endpoint | Nature | Difficulté |
 | --- | --- | --- |
 | `/intensity/now`, `/mix`, `/intensity/date`, `/intensity/stats` | Repackaging propre de données existantes | Faible |
-| `/exchanges`, `/weather`, `/factors`, `/methodologies` | Donnée externe ou catalogue, exposés tels quels | Faible |
-| `/renewable`, `/price`, `/cost-reference` | Donnée dérivée/composée (modèle physique, décomposition TRV, fourchettes LCOE) | Moyenne |
-| `/intensity/forecast`, `/greenest-window`, `/schedule*`, `/intensity/below`, `/intensity/stream` | **Valeur créée** : il faut modéliser (prévision) puis l'outiller (carbon-aware, live) | Élevée |
+| `/exchanges`, `/weather`, `/factors`, `/methodologies`, `/eligibility/rulesets` | Donnée externe ou catalogue, exposés tels quels | Faible |
+| `/renewable`, `/price`, `/cost-reference`, carte `/hydrogene` (hors `/v1`) | Donnée dérivée/composée (modèle physique, décomposition TRV, fourchettes LCOE, carte électrolyseurs × carbone live) | Moyenne |
+| `/intensity/forecast`, `/greenest-window` (+ overlay `?eligibility=`), `/schedule*`, `/intensity/below`, `/intensity/stream` | **Valeur créée** : il faut modéliser (prévision) puis l'outiller (carbon-aware, live, éligibilité électrolyseur) | Élevée |
 
 La prévision est donc une **responsabilité du service**, pas un simple proxy. Le modèle est branché derrière un port (`ForecastModel`) : on a démarré avec un modèle statistique (`climatology@1`) et un modèle ML (`gbdt@1`) a été exploré derrière le même port sans toucher au reste — il n'est pas servi car il ne bat pas la climatologie au backtest. À titre de référence, le modèle britannique repose sur du machine learning et de la modélisation réseau, avec une prévision à 96 h et plus.
 
@@ -44,12 +44,12 @@ La prévision est donc une **responsabilité du service**, pas un simple proxy. 
 Le quota (50 000 appels/utilisateur/mois) est un faux problème **à une condition** : un seul composant tape la source.
 
 - Le national temps réel se rafraîchit toutes les 15 min → ~96 récupérations/jour.
-- Le régional temps réel se rafraîchit toutes les heures, et **un seul appel renvoie les 12 régions** → ~24 récupérations/jour (pas ×12).
+- Le régional est ingéré **au même cycle que le national** (`CARBONFR_POLL_SECS`, défaut 15 min), à raison d'**un appel ODRÉ par région** (12 appels/cycle) — le compteur `upstream_requests_total{source="odre"}` (ADR-0022) sert de proxy de suivi du quota.
 - Un **poller unique** (singleton) alimente la base ; l'API sert ensuite **tous** les clients depuis la base. En haute disponibilité, l'écriture reste assurée par un seul poller (élection de leader) pour éviter les appels en double.
 
-Budget indicatif : ~96/jour (national) + ~24/jour (régional) ≈ **~120 appels/jour, soit ~3 700/mois — moins de 8 % du quota**. Le plafond ne concerne que les intégrateurs qui taperaient RTE en direct, précisément ce que `carbon-fr` leur évite. C'est aussi ce qui justifie l'existence du service par rapport à « tape l'open data toi-même ».
+Budget indicatif : ~14 appels ODRÉ par cycle (1 national + 12 régions + 1 charge) × 96 cycles/jour ≈ **~1 350 appels/jour, soit ~40 000/mois — sous le quota de 50 000**, suivi via la métrique `upstream_requests_total` (ADR-0022) ; `CARBONFR_POLL_SECS` permet de desserrer la cadence si besoin. Le plafond ne concerne que les intégrateurs qui taperaient RTE en direct, précisément ce que `carbon-fr` leur évite. C'est aussi ce qui justifie l'existence du service par rapport à « tape l'open data toi-même ».
 
-> La base joue le rôle de **read-model** (le « cache ») : pas de couche de cache séparée au départ. Une couche mémoire chaude pour `/intensity/now` pourra être ajoutée plus tard si le besoin se présente.
+> La base joue le rôle de **read-model** (le « cache »). Des couches de cache mémoire s'y ajoutent depuis l'audit perf 2026-08 : cache TTL des séries prévues (`CachedForecaster`, TTL = intervalle de poll), en-tête `Cache-Control: public, max-age=60` sur les lectures stables, et caches positif/négatif de résolution des clés API.
 
 **Backfill historique** : le rapatriement de l'historique (2012→) ne passe **pas** par l'API paginée — cela brûlerait le quota — mais par l'**export en masse** du jeu de données ODRÉ (un téléchargement), réalisé une fois puis maintenu à jour par le poller.
 
@@ -118,8 +118,9 @@ RTE **révise** ses données : le temps réel du mois M est remplacé par des do
 
 **Stockage : PostgreSQL natif, sans extension** (voir ADR-0004).
 
-- Table `measurement` simple, index sur `(region, horodatage)` et sur `(region, methodology, at)`. Le partitionnement **déclaratif par plage temporelle** (mensuel) et l'index `BRIN` sur l'horodatage restent **reportés** (à reconsidérer maintenant que l'historique complet est ingéré) : les insertions arrivent ordonnées dans le temps ; les révisions sont des `UPDATE` ciblés (upsert), pas une remise en cause de l'ordre physique.
+- Table `measurement` simple, index sur `(region, horodatage)` et sur `(region, methodology, at)`. Le partitionnement **déclaratif par plage temporelle** (mensuel) reste **reporté** (à reconsidérer maintenant que l'historique complet est ingéré) : les insertions arrivent ordonnées dans le temps ; les révisions sont des `UPDATE` ciblés (upsert), pas une remise en cause de l'ordre physique. L'index `BRIN` sur l'horodatage est en place depuis la migration `0012` (audit perf 2026-08 : il borne le scan du rafraîchissement des rollups aux blocs des 7 derniers jours).
 - **Rollups** (horaire/journalier) pour les statistiques et le modèle : initialement des **vues matérialisées** (migration `0002`), désormais de **vraies tables incrémentales** upsertées par seau (migration `0010`, lecture inchangée) et rafraîchies par le poller. Le rafraîchissement doit être déclenché après toute révision touchant la période agrégée.
+- Autour de `measurement` gravitent les **tables satellites** : `consumption` (charge), `weather_forecast` (météo, clé `(run_at, valid_at)` anti-fuite), `cross_border_flow` (ENTSO-E), `spot_price` (prix spot A44), `api_key`, `webhook_subscription` et `visit` — cf. `crates/adapter-postgres/migrations/`.
 - Choix **réversible** : le port `IntensityRepository` permet d'ajouter un adapter TimescaleDB plus tard si le volume ou l'ingestion l'exigent.
 
 ## 6. Méthodologie carbone
@@ -145,6 +146,7 @@ Les crates publiables sont préfixées `carbonfr-*` même si les dossiers resten
 | Crate | Rôle | Dépendances notables |
 | --- | --- | --- |
 | `core` | domaine + cas d'usage + ports | aucune IO (`sha2` toléré = calcul pur HMAC) |
+| `eligibility` | domaine pur : éligibilité électrolyseur réseau (rulesets `rfnbo`/`low-carbon`, ADR-0025/0026) + part renouvelable prévue `share-clim@1` (ADR-0028) et expérience `share-meteo@2` (non servie) | aucune IO (carbonfr-core, time) |
 | `adapter-odre` | `Eco2mixSource` + `Eco2mixArchive` (eCO2mix RTE) via HTTP | reqwest, serde |
 | `adapter-postgres` | repositories via SQL (Intensity, Consumption, Weather, CrossBorder, ApiKey, Subscription, SpotPrice, Visit) + migrations | sqlx |
 | `adapter-http` | API HTTP `/v1` (DTO, OpenAPI/utoipa, SSE, middleware auth/quota) | axum, serde, utoipa |
@@ -157,13 +159,14 @@ Les crates publiables sont préfixées `carbonfr-*` même si les dossiers resten
 
 ## 8. Roadmap
 
-Les cinq phases sont **livrées**. État réel (version de workspace `0.3.2`, contrat d'API `/v1`) :
+Les cinq phases sont **livrées**. État réel (version de workspace : cf. `[workspace.package] version` dans le `Cargo.toml` racine ; contrat d'API `/v1`) :
 
 1. **Socle** ✅ — `core` + poller unique (`IngestLatest`) + `/intensity/now` + `/mix` + `/health`, national.
 2. **Historique + régional** ✅ — backfill par export de masse (2012→), `/intensity/date`, `/intensity/stats`, 12 régions (servies en `acv-ademe`), rollups (passés de vues matérialisées à tables incrémentales).
 3. **Prévision** ✅ — `ClimatologyForecaster` (`climatology@1`) derrière `ForecastModel` → `/intensity/forecast` + `/greenest-window`, intervalles `lower`/`expected`/`upper` (contrat `ForecastPoint`, ADR-0011), calage par backtest (N=10 sem., τ=14 j). Modèle ML `GbdtForecaster` (`gbdt@1`) exploré derrière le même port mais **non servi** (ne bat pas la climatologie au backtest).
 4. **Enrichissement & usage** ✅ — `acv-ademe@2` consumption-based + `adapter-entsoe` + `/v1/methodologies` & `/v1/factors` (ADR-0010) ; store météo (`adapter-meteo`) ; primitives carbon-aware (`/schedule`, `/schedule/slots`, `/intensity/below`) + flux live **SSE** (`/intensity/stream`, ADR-0014) ; clés API en middleware de bord **opt-in**, anonyme par défaut (ADR-0015) ; webhooks signés (`POST`/`GET`/`DELETE /v1/webhooks`, ADR-0016).
 5. **Enrichissement, déploiement & SDK** ✅ — échanges transfrontaliers (`/exchanges`, ADR-0017), météo (`/weather`) & dérivation renouvelable (`/renewable`, ADR-0018), prix de l'électricité (`/price`, ADR-0023), couche comparative LCOE (`/cost-reference`, ADR-0024) ; **SDK TypeScript** `@carbon-fr/sdk` ; observabilité `/metrics` (ADR-0022) ; déploiement live (voir §9).
+6. **Couche électrolyseur / hydrogène** ✅ (ADR-0025/0026/0028/0029) — overlay `?eligibility=rfnbo|low-carbon` sur `/greenest-window` (part renouvelable **prévue** `share-clim@1` servie ; expérience `share-meteo@2` gardée par backtest, **non servie**), catalogue `GET /v1/eligibility/rulesets`, carte « électrolyseurs × carbone live » `GET /hydrogene` (hors `/v1`, comme `/docs`).
 
 **Méthodologie enrichie** (transverse aux phases) : `acv-ademe` (cycle de vie Base Carbone ADEME + imports interconnexions) coexiste avec `rte-direct`, livrée en production `@1` (national + 12 régions) et consommation `@2` (national, ADR-0008/0010).
 
@@ -178,7 +181,7 @@ L'API est **live** sur un VPS géré par Kovelt (détails et alternatives : **AD
 - **DNS** : sous-domaine Kovelt (`carbon-fr-api.kovelt.fr`).
 - **Contrat d'URL** : l'API est versionnée dans le chemin (`/v1/…`) dès le départ, pour migrer de domaine ou faire évoluer l'API sans casser les intégrations.
 
-> Configuration par variables d'environnement (`DATABASE_URL` requis ; `CARBONFR_BIND`, `CARBONFR_POLL_SECS`, `CARBONFR_TRUST_PROXY`, `CARBONFR_VISIT_SALT`, `CARBONFR_RATELIMIT_ENABLED`, `CARBONFR_ENTSOE_TOKEN` (active `acv-ademe@2` + `/price`), `CARBONFR_*_CALIBRATE_WEEKS`, …) — voir `.env.example`. Sous-commandes : `backfill`, `backtest`/`-sweep`/`-bands`/`-acv`/`-renewable`, `analyze-renewable-signal`, `train`, `mint-key`.
+> Configuration par variables d'environnement (`DATABASE_URL` requis ; `CARBONFR_BIND`, `CARBONFR_POLL_SECS`, `CARBONFR_TRUST_PROXY`, `CARBONFR_VISIT_SALT`, `CARBONFR_RATELIMIT_ENABLED`, `CARBONFR_ENTSOE_TOKEN` (active `acv-ademe@2` + `/price`), `CARBONFR_*_CALIBRATE_WEEKS`, …) — voir `.env.example`. Sous-commandes : `backfill`, `backtest`/`-sweep`/`-bands`/`-acv`/`-renewable`/`-share`/`-share-meteo`, `analyze-renewable-signal`, `train`, `mint-key`.
 
 ## 10. Sources de données & références
 
@@ -199,6 +202,12 @@ Tout est **re-traité et cité, jamais approprié** (cf. ADR-0003). Chaque sourc
 - **ADEME — Base Carbone / Base Empreinte** — facteurs d'émission cycle de vie par filière (méthodologie `acv-ademe`, ADR-0008). <https://base-empreinte.ademe.fr/>
 - **CRE** (délibérations TURPE 7, TRV, accise) & **BOFiP** (accise, TVA) — décomposition du prix `/price` (ADR-0023). <https://www.cre.fr/> · <https://bofip.impots.gouv.fr/>
 - **Couche comparative LCOE** `/cost-reference` (ADR-0024) : **Cour des comptes** & **CRE** (nucléaire existant), **IRENA** (LCOE renouvelables mondiaux), **RTE** *Futurs énergétiques 2050* (nucléaire nouveau), **ADEME** (renouvelables France).
+
+**Données embarquées de la carte `/hydrogene`** (ADR-0029, servies avec la page, attribution incluse) :
+
+- **European Hydrogen Observatory** © Clean Hydrogen JU — sites d'électrolyseurs UE (instantané semestriel, filtre *Water electrolysis*). <https://observatory.clean-hydrogen.europa.eu/>
+- **IGN — Admin Express** (Licence Ouverte 2.0) — contours régionaux, simplifiés.
+- **Natural Earth** (domaine public) — contexte pays voisins.
 
 **Modèle de référence & écosystème** :
 

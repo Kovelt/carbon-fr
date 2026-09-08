@@ -22,7 +22,7 @@ jobs:
     name: fmt + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Toolchain Rust stable (fmt, clippy)
         uses: dtolnay/rust-toolchain@stable
@@ -41,7 +41,7 @@ jobs:
     name: cargo-deny (licences + advisories)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # L'action installe cargo-deny et lance les quatre contrôles
       # (advisories, bans, licenses, sources) selon ./deny.toml.
@@ -73,7 +73,7 @@ jobs:
       # Les migrations sont appliquées par le test lui-même.
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/carbonfr_test
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -87,7 +87,7 @@ jobs:
     name: build release (artefact déployable)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Garantit que le binaire de prod compile (profil release optimisé) et que
@@ -102,7 +102,7 @@ jobs:
       run:
         working-directory: sdk/typescript
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           node-version: 20

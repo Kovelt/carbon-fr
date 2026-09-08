@@ -1,7 +1,7 @@
 # Roadmap hydrogène — extension carbon-aware (ADR-0025/0026)
 
 - **Statut** : document vivant (mis à jour à chaque jalon ou signal réglementaire)
-- **Dernière mise à jour** : 2026-07-03 (vérification sources primaires, cf. addendum ADR-0026)
+- **Dernière mise à jour** : 2026-07-04 (O1 documenté — addendum « méthodes horaires » de l'ADR-0026 ; veille automatisée O2 en place)
 - **ADR liés** : [ADR-0025](adr/0025-extension-hydrogene-carbon-aware.md) (vision, couches A/B), [ADR-0026](adr/0026-methodologie-overlays-eligibilite.md) (méthodologie des overlays)
 
 ## Position
@@ -48,8 +48,8 @@ L'hydrogène est servi comme **extension de la couche carbon-aware** (pas de pro
 
 ## Opportunités ouvertes (non engagées, à arbitrer)
 
-- **O1 — Positionnement « méthode horaire » du 2025/2359** : les méthodes (b) et (d) de l'annexe reposent sur l'intensité **horaire de la bidding zone** (prévue day-ahead par le GRT, ou marginale) — exactement la famille de données que carbon-fr sert (`/v1/intensity/forecast`, technologie marginale estimée de `/v1/price`). Piste : documenter (site/docs/OpenAPI) comment la donnée carbon-fr s'aligne sur ces méthodes (conversion gCO₂eq/kWh ↔ gCO₂eq/MJ = ÷3,6), sans jamais prétendre à une valeur réglementaire (les méthodes exigent la donnée **du GRT** ou une approbation d'autorité compétente). À creuser après H2.
-- **O2 — Veille automatisée** : les trois signaux ci-dessous sont vérifiables par une session périodique (mensuelle) ; à défaut, re-jouer la vérification H1 à chaque évènement UE marquant.
+- **O1 — Positionnement « méthode horaire » du 2025/2359** : ✅ **documenté le 2026-07-04** — [addendum O1 de l'ADR-0026](adr/0026-methodologie-overlays-eligibilite.md) (tableau méthode-par-méthode (a)-(d), conversion ÷3,6 didactique, mise en garde Table 5 France vs proxy ~64), répercuté en README, descriptions OpenAPI (`forecast`, `greenest-window`, technologie marginale de `/v1/price`) et `legal_basis` du ruleset `low-carbon:2025-2359` (texte servi → passe de neutralité re-jouée sur le wording, revue §7). La règle demeure : carbon-fr n'implémente **aucune** des quatre méthodes (elles exigent la donnée **du GRT** ou une approbation d'autorité compétente) — même famille de signaux, jamais une valeur réglementaire.
+- **O2 — Veille automatisée** : ✅ **en place le 2026-07-04** — routine cloud mensuelle (« Veille hydrogène UE — carbon-fr », le 1er du mois à 8h Paris) vérifiant les 4 signaux ci-dessous sur sources primaires et livrant une issue GitHub + un brouillon Gmail ; H3 ne se rouvre que sur texte adopté. À défaut (routine indisponible), re-jouer la vérification H1 à chaque évènement UE marquant.
 
 ## Signaux de veille (chacun rouvre H3)
 

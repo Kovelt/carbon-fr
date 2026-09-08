@@ -1148,6 +1148,11 @@ struct MixShareBody {
     output_mw: f64,
 }
 
+/// Technologie marginale **estimée** (ordre de mérite domestique, ADR-0023).
+/// Même famille conceptuelle que la méthode (d) de l'annexe du Règl. (UE)
+/// 2025/2359 (marginale horaire), mais n'en satisfait pas la condition « si
+/// publiée par le GRT » : heuristique carbon-fr, jamais une donnée d'appel
+/// par centrale (cf. ADR-0026, addendum O1).
 #[derive(Serialize, ToSchema)]
 struct MarginalTechnologyBody {
     filiere: &'static str,

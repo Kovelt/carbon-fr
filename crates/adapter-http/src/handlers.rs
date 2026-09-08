@@ -31,7 +31,7 @@ use crate::dto::{
     SlotsResponse, StatsResponse, StreamEventBody, VisitStatsResponse, WeatherHistoryResponse,
     WeatherResponse, WebhookListResponse,
 };
-use crate::error::{ApiError, ProblemDetails, ValidatedQuery};
+use crate::error::{ApiError, ProblemDetails, ValidatedJson, ValidatedQuery};
 use crate::{AppState, ForecastState};
 use std::convert::Infallible;
 
@@ -108,6 +108,21 @@ fn wants_consumption(methodology: &str, version: Option<u32>) -> bool {
     methodology == "acv-ademe" && version == Some(2)
 }
 
+/// Rejette `acv-ademe&version=2` sur les endpoints de prévision servis par le
+/// seul modèle scalaire : la prévision consommation (`@2`, ADR-0013) n'existe
+/// que sur `/v1/intensity/forecast`. Sans ce rejet, la version serait
+/// silencieusement ignorée et l'appelant croirait obtenir `@2` (audit 2026-08,
+/// symétrique de `/v1/mix`).
+fn reject_consumption_version(methodology: &str, version: Option<u32>) -> Result<(), ApiError> {
+    if wants_consumption(methodology, version) {
+        return Err(ApiError::bad_request(
+            "acv-ademe version=2 (consommation) n'est disponible que sur \
+             /v1/intensity/forecast",
+        ));
+    }
+    Ok(())
+}
+
 /// Rejette une `version` **inconnue** pour la méthode demandée (sinon elle serait
 /// silencieusement ignorée et l'appelant croirait obtenir une autre version) :
 /// `rte-direct` → `{1}`, `acv-ademe` → `{1, 2}`.
@@ -157,7 +172,8 @@ where
     check_version(&methodology, query.version)?;
 
     // Chemin `acv-ademe@2` consumption-based : calculé à la lecture depuis le mix
-    // FR + le contexte d'import (ADR-0010). National uniquement (§8).
+    // FR + le contexte d'import (ADR-0010). National uniquement (§8). 404 si le
+    // contexte d'import est absent ou périmé (> 1 h — panne ENTSO-E).
     if methodology == "acv-ademe" && query.version == Some(2) {
         if region != Region::National {
             return Err(ApiError::bad_request(
@@ -221,7 +237,9 @@ where
 /// `GET /v1/exchanges` — échanges transfrontaliers : flux net signé par
 /// frontière (`> 0` = import vers la France) + intensité carbone du voisin
 /// (ADR-0017). Donnée ENTSO-E déjà ingérée pour `acv-ademe@2`, servie au pas
-/// quart d'heure, alignée sur la dernière mesure nationale.
+/// quart d'heure, alignée sur la dernière mesure nationale. `404` si aucun
+/// snapshot **frais** (≤ 1 h de la dernière mesure) n'est disponible — un
+/// contexte périmé (panne d'ingestion) n'est pas servi comme courant.
 #[utoipa::path(
     get,
     path = "/v1/exchanges",
@@ -423,7 +441,7 @@ pub(crate) struct DateRangeQuery {
     params(HistoryQuery),
     responses(
         (status = 200, description = "Série chronologique", body = HistoryResponse),
-        (status = 400, description = "Paramètre invalide ou fenêtre > 366 jours", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 400, description = "Paramètre invalide ou fenêtre > 366 jours (92 jours pour acv-ademe@2, série dérivée à la lecture)", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "intensité"
 )]
@@ -464,6 +482,14 @@ where
         if region != Region::National {
             return Err(ApiError::bad_request(
                 "acv-ademe@2 (consommation) n'est disponible qu'au national",
+            ));
+        }
+        // Série dense dérivée par requête (mix × flux transfrontaliers joints
+        // en mémoire, sans rollup — ADR-0010 §6) : plafond resserré à 92 j,
+        // comme les autres séries denses (/exchanges, /weather, /price).
+        if to - from > MAX_DENSE_SERIES_SPAN {
+            return Err(ApiError::bad_request(
+                "fenêtre trop large (maximum 92 jours pour acv-ademe@2)",
             ));
         }
         GetConsumptionIntensity::new(state.repo.clone(), state.repo.clone())
@@ -512,7 +538,7 @@ pub(crate) struct StatsQuery {
     params(StatsQuery),
     responses(
         (status = 200, description = "Résumé (et série si interval)", body = StatsResponse),
-        (status = 400, description = "Paramètre invalide", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 400, description = "Paramètre invalide ou fenêtre > 366 jours (92 jours pour acv-ademe@2, résumé dérivé à la lecture)", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 404, description = "Aucune donnée sur l'intervalle", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "intensité"
@@ -551,6 +577,14 @@ where
     if consumption && region != Region::National {
         return Err(ApiError::bad_request(
             "acv-ademe@2 (consommation) n'est disponible qu'au national",
+        ));
+    }
+    // Même plafond dense que `/v1/intensity/date` en `@2` : le résumé et la
+    // série sont dérivés à la lecture (mix × flux, ADR-0010 §6), pas servis
+    // par les rollups.
+    if consumption && to - from > MAX_DENSE_SERIES_SPAN {
+        return Err(ApiError::bad_request(
+            "fenêtre trop large (maximum 92 jours pour acv-ademe@2)",
         ));
     }
 
@@ -672,6 +706,14 @@ where
     // calculateur, ADR-0013), via le modèle dédié si câblé. Sinon, le modèle
     // scalaire prévoit la série stockée de la méthode demandée.
     let (points, model) = if wants_consumption(&methodology, query.version) {
+        // Même garde 400 que `/v1/intensity/now`/`/date`/`/stats` (ADR-0010 §8),
+        // AVANT l'état de câblage : sinon l'erreur client finissait en 500
+        // `internal` via `ForecastError::Unavailable` (audit 2026-08).
+        if region != Region::National {
+            return Err(ApiError::bad_request(
+                "acv-ademe@2 (consommation) n'est disponible qu'au national",
+            ));
+        }
         let model = state.consumption.as_ref().ok_or_else(|| {
             ApiError::not_found("prévision acv-ademe@2 non disponible (source d'import non câblée)")
         })?;
@@ -707,6 +749,9 @@ pub(crate) struct GreenestWindowQuery {
     region: Option<String>,
     /// Méthodologie à prévoir. Défaut `rte-direct`.
     methodology: Option<String>,
+    /// Version de la méthode. Validée : une version inconnue — ou `acv-ademe`
+    /// version=2, non servie ici — est rejetée (400) plutôt qu'ignorée.
+    version: Option<u32>,
     /// Début de l'horizon (RFC 3339). Défaut : maintenant.
     from: Option<String>,
     /// Profondeur de l'horizon en heures (1..=72). Défaut 24.
@@ -801,6 +846,10 @@ where
 {
     let region = resolve_region(&query.region)?;
     let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
+    // `version` était silencieusement ignorée ici (audit 2026-08) : validée
+    // comme sur `/v1/mix`, et `@2` (non servie ici) explicitement rejetée.
+    check_version(&methodology, query.version)?;
+    reject_consumption_version(&methodology, query.version)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let window_minutes = query.window_minutes.unwrap_or(DEFAULT_WINDOW_MINUTES);
     if window_minutes == 0 || window_minutes as u64 > horizon_hours as u64 * 60 {
@@ -910,6 +959,9 @@ fn estimator_label(estimator: WindowEstimator) -> &'static str {
 pub(crate) struct ScheduleQuery {
     region: Option<String>,
     methodology: Option<String>,
+    /// Version de la méthode. Validée : une version inconnue — ou `acv-ademe`
+    /// version=2, non servie ici — est rejetée (400) plutôt qu'ignorée.
+    version: Option<u32>,
     /// Début de l'horizon (RFC 3339). Défaut : maintenant.
     from: Option<String>,
     /// Profondeur de l'horizon en heures (1..=72). Défaut 24.
@@ -947,6 +999,10 @@ where
 {
     let region = resolve_region(&query.region)?;
     let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
+    // `version` était silencieusement ignorée ici (audit 2026-08) : validée
+    // comme sur `/v1/mix`, et `@2` (non servie ici) explicitement rejetée.
+    check_version(&methodology, query.version)?;
+    reject_consumption_version(&methodology, query.version)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let duration_minutes = query.duration_minutes.unwrap_or(DEFAULT_WINDOW_MINUTES);
     if duration_minutes == 0 || duration_minutes as u64 > horizon_hours as u64 * 60 {
@@ -958,10 +1014,14 @@ where
         Some(raw) => Some(parse_timestamp("deadline", raw)?),
         None => None,
     };
+    // NaN passait la comparaison `< 0.0` et infectait toute l'économie calculée
+    // (audit 2026-08) : on exige un nombre fini, comme `threshold` sur `/below`.
     if let Some(kwh) = query.energy_kwh
-        && kwh < 0.0
+        && (!kwh.is_finite() || kwh < 0.0)
     {
-        return Err(ApiError::bad_request("`energy_kwh` doit être positif"));
+        return Err(ApiError::bad_request(
+            "`energy_kwh` doit être un nombre fini et positif",
+        ));
     }
     let estimator = resolve_estimator(&query.estimator)?;
 
@@ -994,6 +1054,9 @@ where
 pub(crate) struct SlotsQuery {
     region: Option<String>,
     methodology: Option<String>,
+    /// Version de la méthode. Validée : une version inconnue — ou `acv-ademe`
+    /// version=2, non servie ici — est rejetée (400) plutôt qu'ignorée.
+    version: Option<u32>,
     from: Option<String>,
     horizon_hours: Option<u32>,
     /// Nombre de créneaux les moins intenses à retourner. Requis, doit être > 0.
@@ -1026,6 +1089,10 @@ where
 {
     let region = resolve_region(&query.region)?;
     let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
+    // `version` était silencieusement ignorée ici (audit 2026-08) : validée
+    // comme sur `/v1/mix`, et `@2` (non servie ici) explicitement rejetée.
+    check_version(&methodology, query.version)?;
+    reject_consumption_version(&methodology, query.version)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let count = query
         .count
@@ -1060,6 +1127,9 @@ where
 pub(crate) struct BelowQuery {
     region: Option<String>,
     methodology: Option<String>,
+    /// Version de la méthode. Validée : une version inconnue — ou `acv-ademe`
+    /// version=2, non servie ici — est rejetée (400) plutôt qu'ignorée.
+    version: Option<u32>,
     from: Option<String>,
     horizon_hours: Option<u32>,
     /// Seuil d'intensité (gCO₂eq/kWh). Requis. Renvoie les créneaux sous ce seuil.
@@ -1088,6 +1158,10 @@ where
 {
     let region = resolve_region(&query.region)?;
     let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
+    // `version` était silencieusement ignorée ici (audit 2026-08) : validée
+    // comme sur `/v1/mix`, et `@2` (non servie ici) explicitement rejetée.
+    check_version(&methodology, query.version)?;
+    reject_consumption_version(&methodology, query.version)?;
     let (from, horizon_hours) = resolve_forecast_window(&query.from, query.horizon_hours)?;
     let threshold = query
         .threshold
@@ -1165,6 +1239,14 @@ pub(crate) async fn intensity_stream(
         Some(_) => Some(resolve_region(&query.region)?),
         None => None,
     };
+    // NaN rendait le filtre silencieusement inopérant (toute comparaison est
+    // fausse) : on exige un nombre fini, comme `threshold` sur `/below`
+    // (audit 2026-08).
+    if let Some(threshold) = query.below
+        && !threshold.is_finite()
+    {
+        return Err(ApiError::bad_request("`below` doit être un nombre fini"));
+    }
     let below = query.below;
 
     let rx = state.updates.subscribe();
@@ -1185,6 +1267,14 @@ pub(crate) async fn intensity_stream(
         let json = serde_json::to_string(&body).ok()?;
         Some(Ok(Event::default().event("intensity").data(json)))
     });
+    // Clôture à l'arrêt (audit 2026-08) : le flux est infini par construction
+    // (le `Sender` broadcast vit dans l'app) — sans `take_until` sur le jeton
+    // d'arrêt, une seule connexion SSE ouverte empêchait `with_graceful_shutdown`
+    // de se terminer (SIGKILL systématique du superviseur au déploiement).
+    // Appel qualifié : `futures_util::StreamExt` et `tokio_stream::StreamExt`
+    // partagent plusieurs noms de combinateurs.
+    let stream =
+        futures_util::StreamExt::take_until(stream, state.shutdown.clone().cancelled_owned());
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
@@ -1215,15 +1305,18 @@ async fn authenticate_owner<R: ApiKeyRepository>(
     request_body = CreateWebhookRequest,
     responses(
         (status = 201, description = "Abonnement créé (secret affiché une fois)", body = CreatedWebhookResponse),
-        (status = 400, description = "Paramètre invalide ou URL refusée (anti-SSRF)", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 400, description = "Paramètre invalide, JSON malformé ou URL refusée (anti-SSRF)", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 401, description = "Clé API requise/inconnue", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 422, description = "Corps JSON valide mais champ manquant ou mal typé", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "webhooks"
 )]
 pub(crate) async fn create_webhook<R>(
     State(state): State<AppState<R>>,
     headers: HeaderMap,
-    Json(request): Json<CreateWebhookRequest>,
+    // `ValidatedJson` (et non `axum::Json`) : les rejets du corps restent des
+    // Problem Details, statut de la réjection conservé (audit 2026-08, ADR-0021).
+    ValidatedJson(request): ValidatedJson<CreateWebhookRequest>,
 ) -> Result<(StatusCode, Json<CreatedWebhookResponse>), ApiError>
 where
     R: ApiKeyRepository + SubscriptionRepository + Clone + Send + Sync + 'static,
@@ -1334,22 +1427,24 @@ where
     }
 }
 
-/// Adresse IP du client, lue des en-têtes posés par le reverse proxy
-/// (`X-Real-Ip`, sinon **dernier** segment de `X-Forwarded-For` ; ADR-0007).
-/// `unknown` à défaut (accès direct sans proxy) — toutes ces visites tombent alors
-/// dans un même seau.
+/// Adresse IP du client, lue des en-têtes posés par le reverse proxy (ADR-0007) :
+/// **dernier** segment de `X-Forwarded-For` (appendé par le proxy), ou l'en-tête
+/// dédié `real_ip_header` si configuré (`CARBONFR_REAL_IP_HEADER`, opt-in —
+/// audit 2026-08 : `X-Real-Ip` n'est plus lu par défaut, spoofable si le proxy
+/// ne l'écrase pas). Toujours validée comme adresse IP ; `unknown` à défaut —
+/// toutes ces visites tombent alors dans un même seau.
 /// `unknown` si `trust_proxy` est faux : sans proxy de confiance, `X-Forwarded-For`
 /// est **fourni par le client** donc spoofable — on ne s'y fie pas (sinon
 /// contournement du quota anonyme et pollution du compteur). Derrière le reverse
 /// proxy de prod (ADR-0007), activer `trust_proxy` pour lire l'IP réelle.
-fn client_ip(headers: &HeaderMap, trust_proxy: bool) -> String {
+fn client_ip(headers: &HeaderMap, trust_proxy: bool, real_ip_header: Option<&str>) -> String {
     if !trust_proxy {
         return "unknown".to_string();
     }
-    // X-Real-Ip (posé par le proxy) en priorité, sinon DERNIER segment de XFF —
-    // les segments de gauche sont fournis par le client (spoofables). Logique
-    // partagée avec le middleware d'auth pour cohérence.
-    crate::auth::forwarded_client_ip(headers).unwrap_or_else(|| "unknown".to_string())
+    // Logique partagée avec le middleware d'auth pour cohérence (même IP → même
+    // seau de quota et même empreinte visiteur).
+    crate::auth::forwarded_client_ip(headers, real_ip_header)
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// Clé visiteur anonyme : `SHA-256(sel | ip)`. L'IP n'est jamais stockée.
@@ -1393,7 +1488,7 @@ pub(crate) async fn record_visit<R>(
 where
     R: VisitCounter + Clone + Send + Sync + 'static,
 {
-    let ip = client_ip(&headers, state.trust_proxy);
+    let ip = client_ip(&headers, state.trust_proxy, state.real_ip_header.as_deref());
     let visitor = hash_visitor(&state.visit_salt, &ip);
     let day = OffsetDateTime::now_utc().date();
     let stats = state.repo.record_visit(&visitor, day).await?;
@@ -1569,7 +1664,9 @@ pub(crate) struct PriceHistoryQuery {
 
 /// `GET /v1/price/date?from=&to=` — série de décompositions de prix sur un
 /// intervalle RFC 3339 (fenêtre ≤ 92 jours), pour la primitive « cheapest +
-/// greenest window » (ADR-0023). National uniquement.
+/// greenest window » (ADR-0023). National uniquement. Les créneaux sans prix
+/// spot **frais** (≤ 6 h) sont omis — jamais de report d'un prix périmé
+/// (trou d'ingestion ENTSO-E).
 #[utoipa::path(
     get,
     path = "/v1/price/date",

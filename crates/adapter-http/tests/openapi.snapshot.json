@@ -163,7 +163,7 @@
         "tags": [
           "échanges"
         ],
-        "summary": "`GET /v1/exchanges` — échanges transfrontaliers : flux net signé par\nfrontière (`> 0` = import vers la France) + intensité carbone du voisin\n(ADR-0017). Donnée ENTSO-E déjà ingérée pour `acv-ademe@2`, servie au pas\nquart d'heure, alignée sur la dernière mesure nationale.",
+        "summary": "`GET /v1/exchanges` — échanges transfrontaliers : flux net signé par\nfrontière (`> 0` = import vers la France) + intensité carbone du voisin\n(ADR-0017). Donnée ENTSO-E déjà ingérée pour `acv-ademe@2`, servie au pas\nquart d'heure, alignée sur la dernière mesure nationale. `404` si aucun\nsnapshot **frais** (≤ 1 h de la dernière mesure) n'est disponible — un\ncontexte périmé (panne d'ingestion) n'est pas servi comme courant.",
         "operationId": "exchanges",
         "responses": {
           "200": {
@@ -319,6 +319,17 @@
             }
           },
           {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Validée : une version inconnue — ou `acv-ademe`\nversion=2, non servie ici — est rejetée (400) plutôt qu'ignorée.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
             "name": "from",
             "in": "query",
             "required": false,
@@ -447,7 +458,7 @@
             }
           },
           "400": {
-            "description": "Paramètre invalide ou fenêtre > 366 jours",
+            "description": "Paramètre invalide ou fenêtre > 366 jours (92 jours pour acv-ademe@2, série dérivée à la lecture)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -575,6 +586,17 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Validée : une version inconnue — ou `acv-ademe`\nversion=2, non servie ici — est rejetée (400) plutôt qu'ignorée.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -859,7 +881,7 @@
             }
           },
           "400": {
-            "description": "Paramètre invalide",
+            "description": "Paramètre invalide ou fenêtre > 366 jours (92 jours pour acv-ademe@2, résumé dérivé à la lecture)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1078,7 +1100,7 @@
         "tags": [
           "prix"
         ],
-        "summary": "`GET /v1/price/date?from=&to=` — série de décompositions de prix sur un\nintervalle RFC 3339 (fenêtre ≤ 92 jours), pour la primitive « cheapest +\ngreenest window » (ADR-0023). National uniquement.",
+        "summary": "`GET /v1/price/date?from=&to=` — série de décompositions de prix sur un\nintervalle RFC 3339 (fenêtre ≤ 92 jours), pour la primitive « cheapest +\ngreenest window » (ADR-0023). National uniquement. Les créneaux sans prix\nspot **frais** (≤ 6 h) sont omis — jamais de report d'un prix périmé\n(trou d'ingestion ENTSO-E).",
         "operationId": "price_date",
         "parameters": [
           {
@@ -1199,6 +1221,17 @@
             }
           },
           {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Validée : une version inconnue — ou `acv-ademe`\nversion=2, non servie ici — est rejetée (400) plutôt qu'ignorée.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
             "name": "from",
             "in": "query",
             "description": "Début de l'horizon (RFC 3339). Défaut : maintenant.",
@@ -1314,6 +1347,17 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Validée : une version inconnue — ou `acv-ademe`\nversion=2, non servie ici — est rejetée (400) plutôt qu'ignorée.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -1560,7 +1604,7 @@
             }
           },
           "400": {
-            "description": "Paramètre invalide ou URL refusée (anti-SSRF)",
+            "description": "Paramètre invalide, JSON malformé ou URL refusée (anti-SSRF)",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1571,6 +1615,16 @@
           },
           "401": {
             "description": "Clé API requise/inconnue",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Corps JSON valide mais champ manquant ou mal typé",
             "content": {
               "application/problem+json": {
                 "schema": {

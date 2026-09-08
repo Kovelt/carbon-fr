@@ -11,9 +11,18 @@
 //! validité — exactement comme [`EmissionFactors`](super::EmissionFactors)
 //! (vérifiabilité, ADR-0023 §2, ADR-0024 §0).
 
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 
 use crate::domain::{GenerationMix, Measurement, Region};
+
+/// Fraîcheur maximale d'un prix spot joint à une mesure. Le day-ahead est au pas
+/// quart d'heure (MTU 15 min, validé live 2026-06-20) et publié chaque jour ;
+/// au-delà de cette tolérance, le prix le plus récent disponible est considéré
+/// **périmé** (trou d'ingestion ENTSO-E) : le chemin « courant » renvoie
+/// `NotFound` plutôt qu'un prix ancien présenté comme actuel, et la série
+/// [`price_series`] **omet** le créneau plutôt que d'y reporter le dernier prix
+/// d'avant la panne.
+pub const MAX_SPOT_STALENESS: Duration = Duration::hours(6);
 
 /// Prix spot day-ahead du marché de gros (zone de marché FR), en **€/MWh**, à un
 /// horodatage donné (ADR-0023 §3). Source canonique : ENTSO-E.
@@ -392,8 +401,10 @@ pub fn price_breakdown(
 /// Dérive la série de décompositions de prix en joignant chaque mesure (portant
 /// un mix) au **prix spot le plus proche** (≤ son horodatage). `measurements` et
 /// `spots` doivent être triés par horodatage croissant (jointure par fusion en
-/// O(n+m)). Les mesures sans mix, ou sans prix spot antérieur disponible, sont
-/// **omises** : la décomposition n'est définie que là où l'énergie spot existe.
+/// O(n+m)). Les mesures sans mix, sans prix spot antérieur disponible, ou dont
+/// le prix le plus proche est **plus vieux que [`MAX_SPOT_STALENESS`]**, sont
+/// **omises** : la décomposition n'est définie que là où l'énergie spot existe —
+/// jamais reportée depuis un prix périmé.
 pub fn price_series(
     measurements: &[Measurement],
     spots: &[SpotPrice],
@@ -413,6 +424,11 @@ pub fn price_series(
         let Some(spot) = current else {
             continue;
         };
+        // Borne de fraîcheur : un prix trop ancien (trou d'ingestion ENTSO-E)
+        // n'est pas reconduit — le créneau est omis.
+        if m.at - spot.at > MAX_SPOT_STALENESS {
+            continue;
+        }
         out.push(price_breakdown(m.at, m.region, spot, mix, reference));
     }
     out
@@ -528,7 +544,6 @@ mod tests {
     #[test]
     fn series_joins_nearest_prior_spot_and_omits_uncovered() {
         use crate::domain::{CarbonIntensity, Methodology, Vintage};
-        use time::Duration;
 
         let t0 = OffsetDateTime::UNIX_EPOCH;
         let step = Duration::minutes(15);
@@ -548,6 +563,43 @@ mod tests {
         let series = price_series(&measurements, &spots, &TrvReference::trv_2026());
         assert_eq!(series.len(), 2, "t0 omis (sans prix spot antérieur)");
         assert_eq!(series[0].at, t0 + step);
+        let energie = series[0]
+            .components
+            .iter()
+            .find(|c| c.kind == PriceComponentKind::Energie)
+            .unwrap();
+        assert_eq!(energie.amount_eur_mwh, 55.0);
+    }
+
+    #[test]
+    fn series_omits_slots_with_stale_spot() {
+        use crate::domain::{CarbonIntensity, Methodology, Vintage};
+
+        let t0 = OffsetDateTime::UNIX_EPOCH + Duration::days(30);
+        let measure = |offset: Duration| Measurement {
+            at: t0 + offset,
+            region: Region::National,
+            intensity: CarbonIntensity::new(40.0).unwrap(),
+            methodology: Methodology::rte_direct(),
+            vintage: Vintage::Consolidated,
+            mix: Some(national_mix()),
+        };
+        // Trou d'ingestion : dernier prix vieux de 7 jours au moment des deux
+        // premières mesures, puis reprise à t0+2 h. Les créneaux couverts par le
+        // seul prix périmé sont omis, pas servis avec un prix d'avant la panne.
+        let measurements = [
+            measure(Duration::ZERO),
+            measure(Duration::hours(1)),
+            measure(Duration::hours(2)),
+        ];
+        let spots = [
+            SpotPrice::new(t0 - Duration::days(7), 90.0).unwrap(),
+            SpotPrice::new(t0 + Duration::hours(2), 55.0).unwrap(),
+        ];
+
+        let series = price_series(&measurements, &spots, &TrvReference::trv_2026());
+        assert_eq!(series.len(), 1, "créneaux à prix périmé omis");
+        assert_eq!(series[0].at, t0 + Duration::hours(2));
         let energie = series[0]
             .components
             .iter()

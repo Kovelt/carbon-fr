@@ -234,7 +234,10 @@ pub trait CrossBorderRepository: Send + Sync {
         snapshots: &[CrossBorderSnapshot],
     ) -> Result<usize, RepositoryError>;
 
-    /// Snapshot d'import au plus proche de `at` (≤ `at`), s'il existe.
+    /// Snapshot d'import au plus proche de `at` (≤ `at`), s'il existe **et**
+    /// n'est pas périmé (pas plus vieux que
+    /// [`MAX_FLOW_CONTEXT_AGE`](crate::domain::MAX_FLOW_CONTEXT_AGE)) : un
+    /// contexte plus ancien traduit une panne d'ingestion, pas un alignement.
     async fn flows_at(
         &self,
         at: OffsetDateTime,

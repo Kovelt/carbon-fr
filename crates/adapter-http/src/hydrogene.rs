@@ -29,8 +29,21 @@ const SITES: &str = include_str!("../assets/hydrogene/sites.json");
 const REGIONS: &str = include_str!("../assets/hydrogene/regions.geojson");
 const PAYS: &str = include_str!("../assets/hydrogene/pays.geojson");
 
-pub(crate) async fn page() -> Html<&'static str> {
-    Html(PAGE)
+/// Ancêtres d'iframe autorisés pour la page carte : elle-même (`'self'`) et le
+/// site vitrine, qui l'embarque en vignette. Posé par l'application (et non par
+/// le reverse proxy) car le middleware `secure-headers` de la stack pose un
+/// `X-Frame-Options: SAMEORIGIN` global : quand `frame-ancestors` est présent,
+/// les navigateurs ignorent `X-Frame-Options` (CSP 2 §8.1) — la dérogation ne
+/// vaut donc que pour cette route, `/docs` et le reste gardent SAMEORIGIN.
+/// La page est anonyme et sans action utilisateur : élargir ses ancêtres ne
+/// crée pas de surface de clickjacking.
+const FRAME_ANCESTORS: &str = "frame-ancestors 'self' https://carbon-fr.kovelt.fr";
+
+pub(crate) async fn page() -> impl IntoResponse {
+    (
+        [(header::CONTENT_SECURITY_POLICY, FRAME_ANCESTORS)],
+        Html(PAGE),
+    )
 }
 
 pub(crate) async fn sites() -> impl IntoResponse {

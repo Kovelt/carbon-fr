@@ -9,13 +9,24 @@
 //!   puis s'arrête.
 //! - `backtest` : évalue `climatology@1` (walk-forward) — MAE/RMSE modèle vs
 //!   persistance (ADR-0009).
+//! - `backtest-acv` : évalue la prévision `acv-ademe@2` sur vérité dérivée
+//!   (ADR-0013).
 //! - `backtest-sweep` : balaie une grille N × τ, classe par RMSE.
 //! - `backtest-bands` : calibre et imprime les bandes d'incertitude par horizon
 //!   (ADR-0011).
+//! - `backtest-renewable` : backtest de la dérivation météo → production
+//!   renouvelable (ADR-0018).
+//! - `analyze-renewable-signal` : gate ADR-0018 (étape A) — l'anomalie de
+//!   renouvelable améliore-t-elle la climatologie d'intensité ?
+//! - `backtest-share` : gate de `share-clim@1` — part renouvelable prévue du
+//!   pilier rfnbo (ADR-0028).
+//! - `backtest-share-meteo` : gate de `share-meteo@2` — part renouvelable
+//!   météo-pilotée (addendum ADR-0028 ; mesurée, non servie).
 //! - `train` : entraîne le modèle ML GBDT (ADR-0012) → artefact, et compare
 //!   `gbdt@1` à `climatology@1` au backtest (garde de promotion).
 //! - `mint-key` : délivre une clé API tier gratuit (ADR-0015) — stocke son
 //!   empreinte, affiche la clé une seule fois.
+//! - `--version` / `-V` : imprime la version du build et sort (ADR-0019).
 //!
 //! ## Configuration (variables d'environnement)
 //!
@@ -23,7 +34,10 @@
 //! |------------------------------|----------------|-----------------------------------|
 //! | `DATABASE_URL`               | — (requis)     | DSN PostgreSQL                    |
 //! | `CARBONFR_BIND`              | `0.0.0.0:8080` | adresse d'écoute de l'API         |
-//! | `CARBONFR_POLL_SECS`         | `900` (15 min) | période d'ingestion ODRÉ          |
+//! | `CARBONFR_POLL_SECS`         | `900` (15 min) | période d'ingestion ODRÉ (et TTL des caches de prévision), > 0 |
+//! | `CARBONFR_ENTSOE_TOKEN`      | (non défini)   | active l'ingestion ENTSO-E (imports `acv-ademe@2` + prix spot `/v1/price`) |
+//! | `CARBONFR_ENTSOE_BASE_URL`   | `https://web-api.tp.entsoe.eu/api` | endpoint de l'API ENTSO-E |
+//! | `CARBONFR_ENTSOE_WINDOW_HOURS` | `6`          | fenêtre récente interrogée par cycle de poll |
 //! | `CARBONFR_BACKFILL_FROM`     | `2012-01-01T00:00:00Z` | début du backfill (RFC 3339) |
 //! | `CARBONFR_BACKFILL_TO`       | maintenant     | fin du backfill (RFC 3339)        |
 //! | `CARBONFR_BACKFILL_WINDOW_DAYS` | `90`        | largeur de tranche d'export       |
@@ -32,11 +46,13 @@
 //! | `CARBONFR_BACKTEST_METHODOLOGY` | `rte-direct` | méthodologie évaluée             |
 //! | `CARBONFR_BACKTEST_ORIGIN_STEP_HOURS` | `24`  | espacement des origines           |
 //! | `CARBONFR_BACKTEST_STEP_MINUTES` | `15`       | pas natif (30 pour le jeu consolidé) |
-//! | `CARBONFR_BACKTEST_WEEKS`/`_TAU_HOURS` | grilles | `backtest-sweep` : N et τ balayés |
+//! | `CARBONFR_BACKTEST_WEEKS`/`_TAU_HOURS` | `4,6,8,10,12` × `3,6,12,24` (sweep) | `backtest-sweep` : grilles N × τ balayées ; `backtest` : le 1er élément de chaque liste surcharge le couple calé (N=10, τ=336 h) |
 //! | `CARBONFR_BACKTEST_HORIZON_HOURS` | `24`      | `backtest-bands` : horizon calibré |
 //! | `CARBONFR_BACKTEST_BAND_QUANTILE` | `0.1`     | `backtest-bands` : quantile de bord |
 //! | `CARBONFR_FORECAST_CALIBRATE_WEEKS` | `8`     | auto-calibration au démarrage (0 = off) |
 //! | `CARBONFR_RENEWABLE_CALIBRATE_WEEKS` | `52`   | calibration `/v1/renewable` au démarrage (0 = off) |
+//! | `CARBONFR_SHARE_CALIBRATE_WEEKS` | `8`        | bandes `share-clim@1` au démarrage (0 = off, ADR-0028) |
+//! | `CARBONFR_SHARE_CALIBRATE_TO` | maintenant    | fin de calibration `share-clim@1` (RFC 3339, repro/dev) |
 //! | `CARBONFR_TRAIN_FROM`/`_TO`  | 120 j av. test | `train` : période d'entraînement   |
 //! | `CARBONFR_TRAIN_ORIGIN_STEP_HOURS` | `6`      | `train` : espacement des origines  |
 //! | `CARBONFR_GBDT_MODEL`        | `gbdt.model`   | `train` : chemin de l'artefact GBDT |
@@ -45,7 +61,9 @@
 //! | `CARBONFR_RATELIMIT_FREE_PER_MIN` | `600`     | quota clé gratuite (req/min)        |
 //! | `CARBONFR_KEY_LABEL`         | `` (vide)      | `mint-key` : libellé de la clé      |
 //! | `CARBONFR_TRUST_PROXY`       | `0` (off)      | faire confiance à `X-Forwarded-For` (derrière un reverse proxy) |
+//! | `CARBONFR_REAL_IP_HEADER`    | (non défini)   | en-tête d'IP réelle dédié (ex. `x-real-ip`) — **uniquement** si le proxy l'écrase systématiquement ; défaut = dernier segment de `X-Forwarded-For` (audit 2026-08) |
 //! | `CARBONFR_DB_MAX_CONNECTIONS` | `20`         | taille du pool PostgreSQL           |
+//! | `CARBONFR_DB_STATEMENT_TIMEOUT_MS` | `30000` | borne serveur `statement_timeout` + `idle_in_transaction_session_timeout` |
 //! | `CARBONFR_VISIT_SALT`        | `carbon-fr` (⚠ requis si TRUST_PROXY) | sel du hachage des IP visiteurs |
 //! | `CARBONFR_LOG_FORMAT`        | (texte)        | `json` pour des logs structurés (prod) |
 //! | `RUST_LOG`                   | `info`         | filtre de logs (`tracing`)        |
@@ -56,13 +74,13 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use carbonfr_adapter_entsoe::EntsoeClient;
-use carbonfr_adapter_forecast::{AcvAdemeForecaster, ClimatologyForecaster};
+use carbonfr_adapter_forecast::{AcvAdemeForecaster, CachedForecaster, ClimatologyForecaster};
 use carbonfr_adapter_gbdt::{
     GbdtForecaster, GbdtHyperParams, build_training_examples, train_model,
 };
 use carbonfr_adapter_http::{
-    AppState, AuthConfig, AuthState, EligibilityRepoAdapter, ForecastState, StreamState, enforce,
-    key_fingerprint, router,
+    AppState, AuthConfig, AuthState, EligibilityRepoAdapter, ForecastState, ShareForecastConfig,
+    StreamState, key_fingerprint, router,
 };
 use carbonfr_adapter_meteo::OpenMeteoClient;
 use carbonfr_adapter_odre::OdreClient;
@@ -74,8 +92,8 @@ use carbonfr_core::application::{
 };
 use carbonfr_core::domain::{
     ACV_FORECAST_ID, ACV_FORECAST_VERSION, CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams,
-    ErrorMetrics, IntensityUpdate, Region, TimeRange, hmac_sha256_hex, render_webhook_payload,
-    should_fire,
+    ErrorMetrics, IntensityUpdate, Region, TimeRange, WeatherForecast, hmac_sha256_hex,
+    render_webhook_payload, should_fire,
 };
 use carbonfr_core::ports::{
     ApiKeyRepository, ApiTier, ConsumptionRepository, ConsumptionSource, CrossBorderRepository,
@@ -116,11 +134,13 @@ async fn main() -> anyhow::Result<()> {
         Some("backtest-renewable") => run_backtest_renewable().await,
         Some("analyze-renewable-signal") => run_analyze_renewable_signal().await,
         Some("backtest-bands") => run_backtest_bands().await,
+        Some("backtest-share") => run_backtest_share().await,
+        Some("backtest-share-meteo") => run_backtest_share_meteo().await,
         Some("train") => run_train().await,
         Some("mint-key") => run_mint_key().await,
         Some(other) => {
             anyhow::bail!(
-                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `backtest-renewable`, `analyze-renewable-signal`, `train`, `mint-key`, ou aucune pour servir l'API)"
+                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `backtest-renewable`, `analyze-renewable-signal`, `backtest-share`, `backtest-share-meteo`, `train`, `mint-key`, ou aucune pour servir l'API)"
             )
         }
     }
@@ -174,40 +194,80 @@ async fn run_server() -> anyhow::Result<()> {
     // repository. Intervalles **calibrés** au démarrage par quantiles de résidus
     // par horizon (ADR-0011), repli sur la dispersion par créneau si l'historique
     // récent est insuffisant. Son identité versionnée est annoncée au client.
-    let forecaster = build_calibrated_forecaster(repo.clone()).await;
+    // Les **quatre calibrations de démarrage** (intervalles climatology@1 et
+    // acv-ademe@2, bandes share-clim@1, modèle renouvelable) sont indépendantes
+    // — elles ne partagent que le pool sqlx — et s'exécutent **en parallèle**
+    // (audit 2026-08) : empilées en séquence, leurs timeouts individuels de
+    // 120 s se cumulaient (jusqu'à ~8 min sans écoute HTTP, `/health` compris,
+    // sur base dégradée), trahissant l'intention de `CALIBRATION_TIMEOUT` de
+    // borner le temps de boot.
+    let (climatology, acv, share_config, renewable_model) = tokio::join!(
+        build_calibrated_forecaster(repo.clone()),
+        build_calibrated_acv_forecaster(repo.clone()),
+        build_share_forecast_config(repo.clone(), config.poll_interval),
+        build_calibrated_renewable_model(repo.clone()),
+    );
+    // Cache TTL des séries prévues (audit perf 2026-08) : la donnée ne change
+    // qu'au cycle du poller — sans cache, chaque requête des 5 endpoints de
+    // prévision relisait ~10 semaines d'historique et rebâtissait le modèle.
+    let forecaster = CachedForecaster::new(climatology, config.poll_interval);
     let model = format!("{CLIMATOLOGY_ID}@{CLIMATOLOGY_VERSION}");
     // Prévision `acv-ademe@2` (ADR-0013) : climatologie des entrées (mix + import)
-    // + calculateur. Servie via `?methodology=acv-ademe&version=2`.
-    let acv_forecaster = build_calibrated_acv_forecaster(repo.clone()).await;
+    // + calculateur. Servie via `?methodology=acv-ademe&version=2`. Même cache.
+    let acv_forecaster = CachedForecaster::new(acv, config.poll_interval);
     let acv_model = format!("{ACV_FORECAST_ID}@{ACV_FORECAST_VERSION}");
     let forecast_state = ForecastState::new(forecaster, model)
         .with_consumption(std::sync::Arc::new(acv_forecaster), acv_model)
         // Overlay d'éligibilité électrolyseur (ADR-0025/0026) : le repo PostgreSQL
         // fournit le mix nowcast (rte-direct) + le prix spot day-ahead.
         .with_eligibility(std::sync::Arc::new(EligibilityRepoAdapter(repo.clone())));
+    // `share-clim@1` (ADR-0028) : part renouvelable prévue du pilier rfnbo,
+    // seulement si les bandes ont pu être calibrées au démarrage (sinon la part
+    // future reste `Indeterminate` — comportement d'avant ADR-0028, gate oblige).
+    let forecast_state = match share_config {
+        Some(cfg) => forecast_state.with_share_forecast(std::sync::Arc::new(cfg)),
+        None => forecast_state,
+    };
 
-    let renewable_model = build_calibrated_renewable_model(repo.clone()).await;
     let mut state = AppState::new(repo.clone())
         .with_trust_proxy(config.trust_proxy)
+        .with_real_ip_header(config.real_ip_header.clone())
         .with_renewable_model(renewable_model);
     if let Some(salt) = config.visit_salt {
         state = state.with_visit_salt(salt);
     }
-    let stream_state = StreamState::new(updates_tx);
+    // Arrêt gracieux **borné** (audit 2026-08) : un jeton partagé, annulé au
+    // signal, (1) déclenche `with_graceful_shutdown`, (2) **clôt les flux SSE**
+    // via `StreamState` — sans quoi `serve` attendait indéfiniment ces
+    // connexions infinies (le `Sender` broadcast vit dans l'app) et le
+    // superviseur finissait par SIGKILL à chaque déploiement dès qu'un client
+    // `/v1/intensity/stream` (ou un onglet `/hydrogene`) restait ouvert — et
+    // (3) arme le délai de grâce qui force la sortie si le drain traîne.
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    {
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            shutdown.cancel();
+        });
+    }
+    let stream_state = StreamState::new(updates_tx).with_shutdown(shutdown.clone());
     // `/metrics` (hors contrat `/v1`, comme `/health`) : exposition Prometheus en
     // texte, pas du JSON versionné → fusionnée ici plutôt que dans le routeur de
     // l'adapter. En prod, restreindre l'accès au scrapeur côté reverse proxy.
     let metrics_router = axum::Router::new()
         .route("/metrics", axum::routing::get(serve_metrics))
         .with_state(metrics);
-    let mut app = router(state, forecast_state, stream_state).merge(metrics_router);
-
     // Tier hébergé (ADR-0015) : middleware clés API + quota, **opt-in**. Désactivé
     // par défaut → l'API reste anonyme et sans limite (parité self-hosting).
-    if let Some(auth_state) = build_auth_state(repo.clone()) {
+    // Appliqué PAR le routeur, sous sa couche CORS (audit 2026-08 : posé ici en
+    // `.layer()`, il devenait la couche la plus externe → préflights décomptés
+    // du quota et 401/429 sans en-têtes CORS, illisibles en navigateur).
+    let auth_state = build_auth_state(repo.clone());
+    if auth_state.is_some() {
         info!("tier hébergé activé : auth par clé + quota par minute");
-        app = app.layer(axum::middleware::from_fn_with_state(auth_state, enforce));
     }
+    let app = router(state, forecast_state, stream_state, auth_state).merge(metrics_router);
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("écoute sur {}", config.bind))?;
@@ -219,10 +279,13 @@ async fn run_server() -> anyhow::Result<()> {
     // webhooks muets). Le superviseur (systemd `Restart=on-failure`) relance.
     let mut poller = poller;
     let mut webhook_watcher = webhook_watcher;
-    let serve = async {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
-            .await
+    let serve = {
+        let shutdown = shutdown.clone();
+        async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown.cancelled_owned())
+                .await
+        }
     };
     tokio::pin!(serve);
 
@@ -234,6 +297,19 @@ async fn run_server() -> anyhow::Result<()> {
         joined = &mut webhook_watcher => Err(anyhow::anyhow!(
             "le watcher de webhooks s'est arrêté ({joined:?})"
         )),
+        // Filet de sécurité (audit 2026-08) : si une connexion refuse de se
+        // drainer malgré la clôture des flux SSE, on force la sortie après le
+        // délai de grâce plutôt que d'attendre le SIGKILL du superviseur.
+        _ = async {
+            shutdown.cancelled().await;
+            tokio::time::sleep(SHUTDOWN_GRACE).await;
+        } => {
+            warn!(
+                grace_secs = SHUTDOWN_GRACE.as_secs(),
+                "arrêt gracieux non terminé dans le délai de grâce — sortie forcée"
+            );
+            Ok(())
+        }
     };
 
     poller.abort();
@@ -283,9 +359,23 @@ fn build_auth_state(repo: PgIntensityRepository) -> Option<AuthState> {
             std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
             Ok("1") | Ok("true")
         ),
+        real_ip_header: real_ip_header_from_env(),
     };
     let keys: std::sync::Arc<dyn ApiKeyRepository> = std::sync::Arc::new(repo);
     Some(AuthState::new(keys, config))
+}
+
+/// `CARBONFR_REAL_IP_HEADER` : en-tête d'IP réelle dédié, **opt-in** (audit
+/// 2026-08). ⚠️ À ne configurer que si le reverse proxy **écrase**
+/// systématiquement cet en-tête (ex. Caddy avec `header_up X-Real-IP
+/// {remote_host}`) : sinon il est fourni par le client → quota contournable et
+/// compteur de visiteurs pollué. Non défini (défaut) : dernier segment de
+/// `X-Forwarded-For`, sûr avec tout proxy qui appende l'IP réelle à droite.
+fn real_ip_header_from_env() -> Option<String> {
+    std::env::var("CARBONFR_REAL_IP_HEADER")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .filter(|v| !v.is_empty())
 }
 
 /// Mode `mint-key` : génère une clé API gratuite, en stocke l'empreinte, et
@@ -296,7 +386,7 @@ async fn run_mint_key() -> anyhow::Result<()> {
     let repo = connect_repo(&database_url).await?;
     let label = std::env::var("CARBONFR_KEY_LABEL").unwrap_or_default();
 
-    let key = generate_api_key().context("génération de la clé")?;
+    let key = generate_api_key();
     let hash = key_fingerprint(&key);
     repo.insert_key(&hash, ApiTier::Free, &label)
         .await
@@ -309,16 +399,14 @@ async fn run_mint_key() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Génère une clé aléatoire `cfr_<64 hex>` (32 octets de `/dev/urandom`).
-fn generate_api_key() -> anyhow::Result<String> {
-    use std::io::Read;
+/// Génère une clé aléatoire `cfr_<64 hex>` (32 octets, CSPRNG userspace `rand` —
+/// pas d'I/O fichier synchrone, cohérent avec `random_hex`, audit F29).
+fn generate_api_key() -> String {
+    use rand::Rng;
     let mut buf = [0u8; 32];
-    std::fs::File::open("/dev/urandom")
-        .context("ouverture de /dev/urandom")?
-        .read_exact(&mut buf)
-        .context("lecture d'entropie")?;
+    rand::rng().fill(&mut buf);
     let hex: String = buf.iter().map(|b| format!("{b:02x}")).collect();
-    Ok(format!("cfr_{hex}"))
+    format!("cfr_{hex}")
 }
 
 /// Mode backfill : rapatriement de l'historique national, puis arrêt.
@@ -381,11 +469,15 @@ async fn run_backfill() -> anyhow::Result<()> {
     // GBDT, par tranches de 30 j (limite raisonnable de l'API). `run_at =
     // valid_at − 24 h` (anti-fuite). Échec non bloquant (best-effort).
     //
-    // L'API Historical Forecast d'Open-Meteo ne couvre que **2016-01-01→** : on
-    // borne le départ pour ne pas émettre de requêtes vouées au 400 sur tout
-    // l'historique antérieur (sans ce garde-fou, 2012→2016 = ~49 tranches inutiles).
+    // L'API Historical Forecast d'Open-Meteo accepte des requêtes dès
+    // 2016-01-01, mais les variables utilisées ici (`wind_speed_100m`,
+    // `shortwave_radiation`) répondent tout-`null` sur **toute 2016** (données
+    // réelles ~2017→, vérifié live — audit 2026-08 ; l'agrégation saute
+    // désormais ces créneaux plutôt que fabriquer des 0,0). On borne donc le
+    // départ à **2017-01-01** : sans ce garde-fou, 2012→2017 = ~61 tranches
+    // inutiles (400 avant 2016, tout-`null` ensuite).
     let weather_min = OffsetDateTime::new_utc(
-        time::Date::from_calendar_date(2016, time::Month::January, 1)
+        time::Date::from_calendar_date(2017, time::Month::January, 1)
             .context("date plancher de l'archive météo")?,
         time::Time::MIDNIGHT,
     );
@@ -581,6 +673,264 @@ async fn run_analyze_renewable_signal() -> anyhow::Result<()> {
         ameliore = report.improves(),
         gain_rmse = ((report.baseline.rmse - report.adjusted.rmse) * 100.0).round() / 100.0,
         "verdict : le renouvelable aide-t-il (hors échantillon) ?"
+    );
+    Ok(())
+}
+
+/// Backtest + **GATE** de `share-clim@1` (part renouvelable prévue, ADR-0028) :
+/// walk-forward pur, vérité **dérivée** du mix observé (jamais stockée), modèle
+/// vs persistance (MAE/RMSE, global + par horizon), et — avec les bandes
+/// calibrées sur une fenêtre disjointe antérieure — comptage des verdicts fermes
+/// au seuil Article 4 (0,90). **GO** = bat la persistance en RMSE global ET zéro
+/// faux `pass` ferme. Même politique de promotion que `gbdt@1` : pas de GO, pas
+/// de mise en service.
+async fn run_backtest_share() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let params = BacktestParams::from_env()?;
+    anyhow::ensure!(
+        params.region == Region::National,
+        "share-clim@1 est national-only (zone de dépôt FR, ADR-0026)"
+    );
+
+    let lookback = Duration::days(SHARE_LOOKBACK_DAYS);
+    let horizon = Duration::hours(SHARE_MAX_HORIZON_HOURS);
+    let calib_weeks = share_calibrate_weeks()?;
+    anyhow::ensure!(
+        calib_weeks > 0,
+        "CARBONFR_SHARE_CALIBRATE_WEEKS doit être > 0 en backtest"
+    );
+    let calib_start = params.test.start() - Duration::days(calib_weeks * 7);
+
+    info!(
+        model = carbonfr_eligibility::SHARE_FORECAST_MODEL,
+        from = %params.test.start(), to = %params.test.end(),
+        calib_weeks, "backtest share-clim@1 démarré (vérité dérivée du mix)"
+    );
+
+    // Un SEUL chargement d'historique couvrant calibration + test + horizon.
+    let full = TimeRange::new(
+        calib_start - lookback,
+        params.test.end() + horizon + params.step,
+    )
+    .context("fenêtre d'historique invalide")?;
+    let history = repo
+        .range(Region::National, &params.methodology, full)
+        .await
+        .context("lecture de l'historique de mix")?;
+    anyhow::ensure!(
+        !history.is_empty(),
+        "aucun historique de mix sur la fenêtre demandée"
+    );
+
+    let clim_params = ClimatologyParams {
+        step: params.step,
+        tau: Duration::days(14),
+    };
+    // Bandes calibrées sur une fenêtre STRICTEMENT antérieure au test (anti-fuite).
+    let calib = TimeRange::new(calib_start, params.test.start())
+        .context("fenêtre de calibration invalide")?;
+    let bands = carbonfr_eligibility::calibrate_share_bands(
+        &history,
+        calib,
+        lookback,
+        params.origin_step,
+        clim_params,
+        horizon,
+        0.1,
+    );
+    if bands.is_none() {
+        warn!("bandes non calibrées (fenêtre de calibration vide ?) — verdicts fermes non mesurés");
+    }
+
+    let checkpoints = [
+        Duration::hours(1),
+        Duration::hours(6),
+        Duration::hours(24),
+        Duration::hours(72),
+    ];
+    let report = carbonfr_eligibility::backtest_share(
+        &history,
+        params.test,
+        lookback,
+        params.origin_step,
+        clim_params,
+        &checkpoints,
+        bands.as_ref(),
+        0.90,
+    )
+    .context("backtest share-clim@1 : série inexploitable")?;
+
+    let pts = |v: f64| (v * 10_000.0).round() / 10_000.0;
+    info!(origins = report.origins, "origines évaluées (walk-forward)");
+    if let (Some(m), Some(p)) = (&report.model, &report.persistence) {
+        info!(
+            model_mae = pts(m.mae),
+            model_rmse = pts(m.rmse),
+            persistence_mae = pts(p.mae),
+            persistence_rmse = pts(p.rmse),
+            n = m.n,
+            "erreur GLOBALE de part renouvelable (fraction 0-1)"
+        );
+    }
+    for h in &report.by_horizon {
+        if let (Some(m), Some(p)) = (&h.model, &h.persistence) {
+            info!(
+                horizon_h = h.horizon.whole_hours(),
+                model_rmse = pts(m.rmse),
+                persistence_rmse = pts(p.rmse),
+                n = m.n,
+                "erreur par horizon"
+            );
+        }
+    }
+    info!(
+        firm_pass = report.firm_pass,
+        false_pass = report.false_pass,
+        firm_fail = report.firm_fail,
+        false_fail = report.false_fail,
+        straddle = report.straddle,
+        "verdicts fermes au seuil 0,90 (bandes calibrées, fenêtre disjointe)"
+    );
+    info!(
+        go = report.passes_gate(),
+        "GATE share-clim@1 : bat la persistance (RMSE global) ET zéro faux pass ?"
+    );
+    Ok(())
+}
+
+/// Backtest comparatif de l'**expérience** `share-meteo@2` (addendum ADR-0028) :
+/// météo vs `share-clim@1` vs persistance sur les **mêmes** origines/cibles.
+/// Modèle **non servi** — même politique de promotion que `gbdt@1` : le GATE
+/// (battre `share-clim@1` en RMSE global, zéro faux `pass`) se mesure ici,
+/// séparément du GATE de production de `backtest-share`.
+async fn run_backtest_share_meteo() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let params = BacktestParams::from_env()?;
+    anyhow::ensure!(
+        params.region == Region::National,
+        "share-meteo@2 est national-only (zone de dépôt FR, ADR-0026)"
+    );
+
+    let lookback = Duration::days(SHARE_LOOKBACK_DAYS);
+    let horizon = Duration::hours(SHARE_MAX_HORIZON_HOURS);
+    let calib_weeks = share_calibrate_weeks()?;
+    anyhow::ensure!(
+        calib_weeks > 0,
+        "CARBONFR_SHARE_CALIBRATE_WEEKS doit être > 0 en backtest"
+    );
+    let calib_start = params.test.start() - Duration::days(calib_weeks * 7);
+
+    info!(
+        model = carbonfr_eligibility::SHARE_METEO_MODEL,
+        from = %params.test.start(), to = %params.test.end(),
+        calib_weeks, "backtest share-meteo@2 démarré (comparaison à trois, vérité dérivée du mix)"
+    );
+
+    let full = TimeRange::new(
+        calib_start - lookback,
+        params.test.end() + horizon + params.step,
+    )
+    .context("fenêtre d'historique invalide")?;
+    let history = repo
+        .range(Region::National, &params.methodology, full)
+        .await
+        .context("lecture de l'historique de mix")?;
+    anyhow::ensure!(
+        !history.is_empty(),
+        "aucun historique de mix sur la fenêtre demandée"
+    );
+    let weather_rows = repo
+        .weather_range(full)
+        .await
+        .context("lecture de l'historique météo")?;
+    anyhow::ensure!(
+        !weather_rows.is_empty(),
+        "aucun historique météo sur la fenêtre demandée (table weather_forecast)"
+    );
+
+    let clim_params = ClimatologyParams {
+        step: params.step,
+        tau: Duration::days(14),
+    };
+    let calib = TimeRange::new(calib_start, params.test.start())
+        .context("fenêtre de calibration invalide")?;
+    let index = carbonfr_eligibility::WeatherIndex::build(&weather_rows);
+    let meteo_bands = carbonfr_eligibility::calibrate_share_meteo_bands(
+        &history,
+        &index,
+        calib,
+        lookback,
+        params.origin_step,
+        clim_params,
+        horizon,
+        0.1,
+    );
+    if meteo_bands.is_none() {
+        warn!(
+            "bandes share-meteo non calibrées (fenêtre de calibration vide ?) — verdicts fermes non mesurés"
+        );
+    }
+    let checkpoints = [
+        Duration::hours(1),
+        Duration::hours(6),
+        Duration::hours(24),
+        Duration::hours(72),
+    ];
+    let report = carbonfr_eligibility::backtest_share_meteo(
+        &history,
+        &index,
+        params.test,
+        lookback,
+        params.origin_step,
+        clim_params,
+        &checkpoints,
+        meteo_bands.as_ref(),
+        0.90,
+    )
+    .context("backtest share-meteo@2 : série inexploitable")?;
+
+    let pts = |v: f64| (v * 10_000.0).round() / 10_000.0;
+    info!(
+        origins = report.origins,
+        weather_driven = report.weather_driven,
+        fallback = report.fallback,
+        "origines évaluées (walk-forward ; repli = share-clim@1 hors couverture météo)"
+    );
+    if let (Some(m), Some(c), Some(p)) = (&report.meteo, &report.clim, &report.persistence) {
+        info!(
+            meteo_rmse = pts(m.rmse),
+            clim_rmse = pts(c.rmse),
+            persistence_rmse = pts(p.rmse),
+            n = m.n,
+            "erreur GLOBALE de part renouvelable (fraction 0-1)"
+        );
+    }
+    for h in &report.by_horizon {
+        if let (Some(m), Some(c)) = (&h.meteo, &h.clim) {
+            info!(
+                horizon_h = h.horizon.whole_hours(),
+                meteo_rmse = pts(m.rmse),
+                clim_rmse = pts(c.rmse),
+                n = m.n,
+                "erreur par horizon (météo vs climatologie)"
+            );
+        }
+    }
+    info!(
+        firm_pass = report.firm_pass,
+        false_pass = report.false_pass,
+        firm_fail = report.firm_fail,
+        false_fail = report.false_fail,
+        straddle = report.straddle,
+        "verdicts fermes share-meteo@2 au seuil 0,90"
+    );
+    info!(
+        go = report.passes_gate(),
+        "GATE share-meteo@2 : bat share-clim@1 (RMSE global) ET zéro faux pass ?"
     );
     Ok(())
 }
@@ -828,6 +1178,122 @@ fn print_metrics_row(label: &str, metrics: Option<ErrorMetrics>) {
 /// on démarre quand même en mode non-calibré plutôt que de pendre indéfiniment.
 const CALIBRATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// Délai de grâce de l'arrêt (audit 2026-08) : après le signal, temps laissé au
+/// drain des connexions en vol (les flux SSE, eux, sont clos immédiatement via
+/// le jeton d'arrêt) avant de **forcer** la sortie. Sous les bornes des
+/// superviseurs (Docker `stop-timeout` 10 s, systemd `TimeoutStopSec=30` du
+/// `deploy/carbonfr.service`) pour sortir proprement plutôt que par SIGKILL.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Profondeur de la climatologie de part renouvelable `share-clim@1`
+/// (ADR-0028) : 10 semaines, alignée sur `climatology@1` (N calé, ADR-0009).
+const SHARE_LOOKBACK_DAYS: i64 = 70;
+/// Horizon **calibré** de `share-clim@1` : 72 h (le maximum de
+/// `greenest-window?horizon_hours=`). Au-delà : `Indeterminate`.
+const SHARE_MAX_HORIZON_HOURS: i64 = 72;
+
+/// Fenêtre de calibration des bandes `share-clim@1` (`CARBONFR_SHARE_CALIBRATE_WEEKS`,
+/// défaut 8 sem., `0` = opt-out → part future `Indeterminate` comme avant ADR-0028).
+fn share_calibrate_weeks() -> anyhow::Result<i64> {
+    std::env::var("CARBONFR_SHARE_CALIBRATE_WEEKS")
+        .ok()
+        .map(|raw| raw.parse::<i64>())
+        .transpose()
+        .context("CARBONFR_SHARE_CALIBRATE_WEEKS : entier invalide")
+        .map(|v| v.unwrap_or(8))
+}
+
+/// Calibre les bandes de `share-clim@1` (part renouvelable **prévue** du pilier
+/// `renewable-share`, ADR-0028) au démarrage — walk-forward pur sur l'historique
+/// récent, quantiles de résidus par horizon (ADR-0011 §5). `None` (le pilier
+/// reste `Indeterminate` au-delà du nowcast, comportement d'avant ADR-0028) si
+/// l'historique est trop maigre, `…_WEEKS=0`, ou timeout.
+async fn build_share_forecast_config(
+    repo: PgIntensityRepository,
+    cache_ttl: std::time::Duration,
+) -> Option<ShareForecastConfig> {
+    // Env invalide **tracée** (audit 2026-08) : avalée, la feature était coupée
+    // (ou la date de calibration remplacée) en silence — indiscernable d'un
+    // opt-out volontaire au journal.
+    let weeks = match share_calibrate_weeks() {
+        Ok(weeks) => weeks,
+        Err(err) => {
+            warn!(
+                error = %err,
+                "share-clim@1 : CARBONFR_SHARE_CALIBRATE_WEEKS invalide — calibration désactivée \
+                 (part renouvelable future Indeterminate)"
+            );
+            return None;
+        }
+    };
+    if weeks <= 0 {
+        return None;
+    }
+    // Fin de la fenêtre de calibration : maintenant par défaut ;
+    // `CARBONFR_SHARE_CALIBRATE_TO` (RFC 3339) pour une calibration reproductible
+    // (dev, self-hosting sur historique figé, re-jeu du GATE de neutralité).
+    let now = match parse_rfc3339_env("CARBONFR_SHARE_CALIBRATE_TO") {
+        Ok(Some(to)) => to,
+        Ok(None) => OffsetDateTime::now_utc(),
+        Err(err) => {
+            warn!(
+                error = %err,
+                "share-clim@1 : CARBONFR_SHARE_CALIBRATE_TO invalide — fin de calibration = maintenant"
+            );
+            OffsetDateTime::now_utc()
+        }
+    };
+    let lookback = Duration::days(SHARE_LOOKBACK_DAYS);
+    let horizon = Duration::hours(SHARE_MAX_HORIZON_HOURS);
+    let params = ClimatologyParams::default();
+    let calib = TimeRange::new(now - Duration::weeks(weeks), now)?;
+    let full = TimeRange::new(calib.start() - lookback, now)?;
+
+    let calibration = async {
+        let history = repo
+            .range(Region::National, "rte-direct", full)
+            .await
+            .ok()?;
+        carbonfr_eligibility::calibrate_share_bands(
+            &history,
+            calib,
+            lookback,
+            Duration::days(1),
+            params,
+            horizon,
+            0.1,
+        )
+    };
+    match tokio::time::timeout(CALIBRATION_TIMEOUT, calibration).await {
+        Ok(Some(bands)) => {
+            info!(
+                weeks,
+                horizons = bands.len(),
+                "bandes share-clim@1 calibrées (part renouvelable prévue, ADR-0028)"
+            );
+            // `cache_ttl` = intervalle de poll : durée de vie du cache de la
+            // fenêtre climatologique de part (audit perf 2026-08).
+            Some(ShareForecastConfig::new(
+                bands, params, lookback, horizon, cache_ttl,
+            ))
+        }
+        Ok(None) => {
+            warn!(
+                "calibration share-clim@1 impossible (historique insuffisant) — part renouvelable \
+                 future Indeterminate"
+            );
+            None
+        }
+        Err(_) => {
+            warn!(
+                "calibration share-clim@1 : timeout au démarrage — part renouvelable future \
+                 Indeterminate"
+            );
+            None
+        }
+    }
+}
+
 /// Calibre le modèle de dérivation renouvelable (ADR-0018) sur l'historique
 /// récent au démarrage, pour servir `/v1/renewable`. Fenêtre large par défaut
 /// (52 sem.) car le `rte-direct` récent est creux (le `def` accuse du retard ;
@@ -1008,6 +1474,33 @@ async fn run_backtest_bands() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Sélectionne, pour une `origin` d'entraînement, la météo **connue au plus tard
+/// à cette origine** : par `valid_at`, le `run_at` le plus récent tel que
+/// `run_at ≤ origin`. Reproduit le filtre anti-fuite de `GbdtForecaster::forecast`
+/// (adapter-gbdt) côté entraînement, par origine — au lieu d'un maximum global sur
+/// toute la fenêtre qui fuiterait un run publié après l'origine (audit F11).
+fn weather_as_of(
+    rows: &[WeatherForecast],
+    origin: OffsetDateTime,
+) -> std::collections::HashMap<OffsetDateTime, (f64, f64)> {
+    use std::collections::HashMap;
+    let mut best: HashMap<OffsetDateTime, (OffsetDateTime, f64, f64)> = HashMap::new();
+    for w in rows {
+        if w.run_at > origin {
+            continue;
+        }
+        match best.get(&w.valid_at) {
+            Some((run, _, _)) if *run >= w.run_at => {}
+            _ => {
+                best.insert(w.valid_at, (w.run_at, w.wind, w.irradiance));
+            }
+        }
+    }
+    best.into_iter()
+        .map(|(v, (_, wind, irr))| (v, (wind, irr)))
+        .collect()
+}
+
 /// Mode `train` : entraîne le modèle **ML GBDT** (ADR-0012) sur l'historique,
 /// sauvegarde l'artefact, puis **compare** `gbdt@1` à `climatology@1` au backtest
 /// (garde de promotion : on ne sert le GBDT que s'il bat la climatologie).
@@ -1046,25 +1539,14 @@ async fn run_train() -> anyhow::Result<()> {
         .iter()
         .map(|m| (m.at, m.intensity.value()))
         .collect();
-    // Météo prévue (archive backfillée) sur la période, indexée par échéance —
-    // le `run_at = valid_at − 24 h` garantit l'anti-fuite (horizons ≤ 24 h).
+    // Météo prévue (archive + poller) sur la période. On garde l'historique brut
+    // multi-run et on sélectionne le run **par origine** (cf. `weather_as_of`) :
+    // un maximum global sur toute la fenêtre fuiterait un run publié après
+    // l'origine (F11), contrairement à l'inférence réelle.
     let weather_rows = repo
         .weather_range(read)
         .await
         .context("lecture de la météo")?;
-    let mut weather: HashMap<OffsetDateTime, (OffsetDateTime, f64, f64)> = HashMap::new();
-    for w in weather_rows {
-        match weather.get(&w.valid_at) {
-            Some((run, _, _)) if *run >= w.run_at => {}
-            _ => {
-                weather.insert(w.valid_at, (w.run_at, w.wind, w.irradiance));
-            }
-        }
-    }
-    let weather: HashMap<OffsetDateTime, (f64, f64)> = weather
-        .into_iter()
-        .map(|(v, (_, wind, irr))| (v, (wind, irr)))
-        .collect();
 
     // Origines d'entraînement : du début +1 sem. à la fin −24 h.
     let mut origins = Vec::new();
@@ -1073,14 +1555,20 @@ async fn run_train() -> anyhow::Result<()> {
         origins.push(o);
         o += Duration::hours(origin_step_hours);
     }
-    let examples = build_training_examples(
-        &intensity,
-        &weather,
-        10, // fenêtre glissante (semaines), identique à l'inférence
-        &origins,
-        params.step,
-        Duration::hours(24),
-    );
+    let mut examples = Vec::new();
+    for &origin in &origins {
+        // Anti-fuite : météo connue *au plus tard à l'origine* (même filtre que
+        // `GbdtForecaster::forecast`), appliquée par origine.
+        let weather = weather_as_of(&weather_rows, origin);
+        examples.extend(build_training_examples(
+            &intensity,
+            &weather,
+            10, // fenêtre glissante (semaines), identique à l'inférence
+            std::slice::from_ref(&origin),
+            params.step,
+            Duration::hours(24),
+        ));
+    }
     anyhow::ensure!(
         !examples.is_empty(),
         "aucun exemple d'entraînement (historique insuffisant ?)"
@@ -1182,6 +1670,9 @@ struct ServerConfig {
     poll_interval: std::time::Duration,
     visit_salt: Option<String>,
     trust_proxy: bool,
+    /// En-tête d'IP réelle dédié (`CARBONFR_REAL_IP_HEADER`, opt-in — cf.
+    /// [`real_ip_header_from_env`]).
+    real_ip_header: Option<String>,
 }
 
 impl ServerConfig {
@@ -1194,12 +1685,7 @@ impl ServerConfig {
             .parse()
             .context("CARBONFR_BIND : adresse d'écoute invalide")?;
 
-        let poll_secs = std::env::var("CARBONFR_POLL_SECS")
-            .ok()
-            .map(|raw| raw.parse::<u64>())
-            .transpose()
-            .context("CARBONFR_POLL_SECS : durée invalide")?
-            .unwrap_or(900);
+        let poll_secs = parse_poll_secs(std::env::var("CARBONFR_POLL_SECS").ok().as_deref())?;
 
         let trust_proxy = matches!(
             std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
@@ -1230,8 +1716,23 @@ impl ServerConfig {
             poll_interval: std::time::Duration::from_secs(poll_secs),
             visit_salt,
             trust_proxy,
+            real_ip_header: real_ip_header_from_env(),
         })
     }
+}
+
+/// Période du poller (`CARBONFR_POLL_SECS`, défaut 900 s). **Refusée si nulle**
+/// (audit 2026-08) : `tokio::time::interval` panique sur une période de zéro —
+/// on échoue à la configuration, avec un message clair, plutôt qu'à l'exécution
+/// du poller.
+fn parse_poll_secs(raw: Option<&str>) -> anyhow::Result<u64> {
+    let secs = raw
+        .map(|raw| raw.parse::<u64>())
+        .transpose()
+        .context("CARBONFR_POLL_SECS : durée invalide")?
+        .unwrap_or(900);
+    anyhow::ensure!(secs > 0, "CARBONFR_POLL_SECS doit être > 0 (secondes)");
+    Ok(secs)
 }
 
 /// Résout l'intervalle et la largeur de tranche du backfill depuis l'environnement.
@@ -1297,6 +1798,11 @@ where
     let ingest = IngestLatest::new(source.clone(), repo.clone());
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
+        // Ticks manqués (cycle plus long que l'intervalle, machine suspendue…) :
+        // le défaut tokio (`Burst`) les rattrape en rafale — autant d'appels
+        // ODRÉ/ENTSO-E consécutifs pour ré-ingérer la même donnée. `Delay`
+        // repart du tick courant et respecte l'espacement (audit 2026-08).
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticker.tick().await;
 
@@ -1323,10 +1829,19 @@ where
 
             // Diffusion live (ADR-0014 §2) : on pousse la dernière mesure
             // nationale `rte-direct` aux abonnés SSE. `send` échoue sans abonné —
-            // sans conséquence (canal sans rétention forte).
-            if let Ok(Some(m)) = repo.latest(Region::National, "rte-direct").await {
-                metrics.set_last_measurement(m.at.unix_timestamp());
-                let _ = updates.send(IntensityUpdate::from_measurement(&m));
+            // sans conséquence (canal sans rétention forte). Une erreur de
+            // lecture est **tracée** (audit 2026-08) : avalée, le SSE et la
+            // jauge de fraîcheur gelaient sans aucun indice au journal.
+            match repo.latest(Region::National, "rte-direct").await {
+                Ok(Some(m)) => {
+                    metrics.set_last_measurement(m.at.unix_timestamp());
+                    let _ = updates.send(IntensityUpdate::from_measurement(&m));
+                }
+                Ok(None) => {}
+                Err(err) => warn!(
+                    error = %err,
+                    "lecture de la dernière mesure impossible — SSE et jauge de fraîcheur non rafraîchis"
+                ),
             }
 
             // Charge nationale : consommation récente + prévisions RTE — entrée
@@ -1363,7 +1878,10 @@ where
                 match entsoe.recent_flows().await {
                     Ok(snapshots) if !snapshots.is_empty() => {
                         match repo.upsert_flows(&snapshots).await {
-                            Ok(n) => info!(flows = n, "ingestion contexte d'import (ENTSO-E)"),
+                            Ok(n) => {
+                                metrics.set_last_flows(OffsetDateTime::now_utc().unix_timestamp());
+                                info!(flows = n, "ingestion contexte d'import (ENTSO-E)");
+                            }
                             Err(err) => {
                                 warn!(error = %err, "échec d'écriture du contexte d'import")
                             }
@@ -1531,5 +2049,31 @@ fn init_tracing() {
         builder.json().init();
     } else {
         builder.init();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_poll_secs;
+
+    /// Audit 2026-08 : `CARBONFR_POLL_SECS=0` était accepté à la config puis
+    /// faisait paniquer le poller (`tokio::time::interval` refuse une période
+    /// nulle). La validation échoue désormais **au parse**, avec un message clair.
+    #[test]
+    fn poll_secs_zero_is_rejected_at_parse() {
+        let err = parse_poll_secs(Some("0")).unwrap_err();
+        assert!(err.to_string().contains("CARBONFR_POLL_SECS"));
+    }
+
+    #[test]
+    fn poll_secs_invalid_is_rejected() {
+        assert!(parse_poll_secs(Some("quinze")).is_err());
+        assert!(parse_poll_secs(Some("-60")).is_err());
+    }
+
+    #[test]
+    fn poll_secs_default_and_explicit() {
+        assert_eq!(parse_poll_secs(None).unwrap(), 900);
+        assert_eq!(parse_poll_secs(Some("60")).unwrap(), 60);
     }
 }

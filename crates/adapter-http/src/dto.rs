@@ -168,7 +168,10 @@ impl RenewableResponse {
         let wind_mw = model.estimate_wind_mw(w.wind);
         let solar_mw = model.estimate_solar_mw(w.irradiance);
         let solar_cf = if model.solar_capacity_mw > 0.0 {
-            solar_mw / model.solar_capacity_mw
+            // Clampé à [0,1] : une irradiance > STC (1000 W/m², réflexion de bord
+            // de nuage) donnerait sinon un facteur de charge > 1, contredisant
+            // l'invariant documenté du champ (audit F28).
+            (solar_mw / model.solar_capacity_mw).clamp(0.0, 1.0)
         } else {
             0.0
         };
@@ -416,15 +419,26 @@ impl GreenestWindowResponse {
     }
 }
 
-/// Note de neutralité servie avec chaque réponse d'éligibilité (ADR-0025).
+/// Note de neutralité servie avec chaque réponse d'éligibilité (ADR-0025/0028).
+///
+/// Parité de divulgation entre piliers (revue de neutralité, F1/F6) : la
+/// provenance de CHAQUE pilier est explicitée — l'intensité est TOUJOURS une
+/// prévision sur cet endpoint (comme la fenêtre verte), le prix est une donnée
+/// publiée, la part renouvelable varie (observée/prévue). La garantie d'horizon
+/// calibré est propre à share-clim@1 et n'est pas sur-promise à l'intensité.
 const ELIGIBILITY_DISCLAIMER: &str = "Support à la décision sur signaux de réseau, PAS une \
     certification (gCO₂eq/kgH₂ et additionnalité PPA hors périmètre, donnée niveau site absente). \
     Corrélation géographique évaluée à la zone de dépôt NATIONALE (FR = 1 zone), jamais aux \
-    sous-régions. rfnbo : la branche surplus EUA (<0,36×prix EUA) n'est pas évaluée ; l'Article 4 \
-    légal est une moyenne ANNUELLE (le signal renewable-share est instantané, proxy). low-carbon : \
-    seuil d'intensité INDICATIF (proxy non réglementaire, condition nécessaire) ; reconnaissance du \
-    nucléaire en cours côté UE. carbon-fr expose l'éligibilité au regard de chaque cadre sans \
-    trancher ; une réponse ne porte qu'un cadre (cf. /v1/eligibility/rulesets).";
+    sous-régions. Provenance des signaux : l'INTENSITÉ de chaque créneau est une PRÉVISION du \
+    modèle annoncé par la réponse (intervalle intensity_lower/upper — bandes calibrées, repli \
+    dispersion par créneau à froid) ; le PRIX est le day-ahead publié (observé, fraîcheur ≤ 1 h, \
+    jamais extrapolé) ; la PART RENOUVELABLE est observée au nowcast et prévue au-delà par \
+    share-clim@1 (champ provenance, intervalle calibré, jamais au-delà de son horizon calibré — \
+    champ reason). rfnbo : la branche surplus EUA (<0,36×prix EUA) n'est pas évaluée ; l'Article 4 \
+    légal est une moyenne ANNUELLE (signal instantané, proxy). low-carbon : seuil d'intensité \
+    INDICATIF (proxy non réglementaire, condition nécessaire) ; reconnaissance du nucléaire en \
+    cours côté UE. carbon-fr expose l'éligibilité au regard de chaque cadre sans trancher ; une \
+    réponse ne porte qu'un cadre (cf. /v1/eligibility/rulesets).";
 
 /// Overlay d'éligibilité d'une fenêtre (ADR-0025/0026).
 #[derive(Serialize, ToSchema)]
@@ -437,6 +451,12 @@ pub(crate) struct EligibilityBody {
     overridden: bool,
     /// Zone de dépôt : toujours `FR` (jamais une sous-région).
     bidding_zone: &'static str,
+    /// Identité versionnée du modèle de part renouvelable **prévue**
+    /// (`share-clim@1`, ADR-0028) — présent seulement si au moins un créneau
+    /// porte une part de provenance `forecast` ; absent si tout est observé ou
+    /// indéterminé (modèle non câblé / hors horizon calibré).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    share_model: Option<&'static str>,
     disclaimer: &'static str,
     /// `true` si **tous** les créneaux de la fenêtre verte retenue sont éligibles.
     window_eligible: bool,
@@ -455,6 +475,10 @@ pub(crate) struct EligibleSlotBody {
     intensity: f64,
     intensity_lower: f64,
     intensity_upper: f64,
+    /// Score de classement **interne au cadre** — jamais comparable entre
+    /// `framework`s : `low-carbon` = intensité brute (gCO₂eq/kWh) ; `rfnbo` =
+    /// heuristique composite (pénalise la donnée manquante, échelle ~10×).
+    /// Pour comparer des créneaux entre cadres, utiliser `intensity`.
     score: f64,
 }
 
@@ -466,6 +490,10 @@ pub(crate) struct EligibilitySlotBody {
     /// Bornes de l'intervalle de confiance (ADR-0011).
     intensity_lower: f64,
     intensity_upper: f64,
+    /// Score de classement **interne au cadre** — jamais comparable entre
+    /// `framework`s : `low-carbon` = intensité brute (gCO₂eq/kWh) ; `rfnbo` =
+    /// heuristique composite (pénalise la donnée manquante, échelle ~10×).
+    /// Pour comparer des créneaux entre cadres, utiliser `intensity`.
     score: f64,
     signals: Vec<EligibilitySignalBody>,
 }
@@ -478,9 +506,32 @@ pub(crate) struct EligibilitySignalBody {
     verdict: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<f64>,
+    /// Bornes de l'intervalle de `value` quand le signal est une **prévision**
+    /// (part renouvelable `share-clim@1`, ADR-0028) — absentes pour l'observé
+    /// (intervalle dégénéré) et les autres piliers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value_lower: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value_upper: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     threshold: Option<f64>,
-    /// `regulatory` ou `indicative-non-regulatory` (seuil bas-carbone = proxy).
+    /// Provenance de `value` (parité de divulgation entre piliers, revue F1) :
+    /// `observed` (donnée mesurée/publiée — part au nowcast, prix day-ahead) ou
+    /// `forecast` (prévision — part `share-clim@1` au-delà du nowcast, intensité
+    /// TOUJOURS, puisqu'elle vient du modèle de prévision annoncé par la
+    /// réponse). Absent sur un signal indéterminé (pas de valeur).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provenance: Option<&'static str>,
+    /// Pourquoi le pilier n'a pas tranché (`verdict: indeterminate`) :
+    /// `missing-data`, `beyond-calibrated-horizon` (part au-delà de l'horizon
+    /// calibré de `share-clim@1`), `threshold-within-interval` (seuil dans
+    /// l'intervalle de confiance, D17), `surplus-not-established` (prix connu
+    /// au-dessus du seuil, branche EUA non évaluée — jamais un échec ferme).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
+    /// `regulatory`, `indicative-non-regulatory` (seuil bas-carbone = proxy) ou
+    /// `user-override` (le seuil de **ce** pilier a été surchargé par l'appelant —
+    /// le signal ne dérive plus du texte canonique).
     basis: &'static str,
 }
 
@@ -493,7 +544,7 @@ impl EligibilityBody {
     ) -> Result<Self, time::error::Format> {
         let slots = verdicts
             .iter()
-            .map(slot_body)
+            .map(|v| slot_body(v, ruleset))
             .collect::<Result<Vec<_>, time::error::Format>>()?;
 
         let best_eligible = carbonfr_eligibility::best_eligible(verdicts)
@@ -517,12 +568,21 @@ impl EligibilityBody {
             .collect();
         let window_eligible = !in_window.is_empty() && in_window.iter().all(|v| v.eligible);
 
+        // `share-clim@1` annoncé seulement si une part PRÉVUE est effectivement
+        // servie quelque part dans la fenêtre (provenance `forecast`).
+        let share_model = verdicts
+            .iter()
+            .flat_map(|v| v.signals.iter())
+            .any(|s| s.provenance() == Some("forecast"))
+            .then_some(carbonfr_eligibility::SHARE_FORECAST_MODEL);
+
         Ok(Self {
             framework: framework.slug(),
             ruleset_version: ruleset.version,
             ruleset_status: ruleset.status.slug(),
             overridden: ruleset.overridden,
             bidding_zone: carbonfr_eligibility::FR_BIDDING_ZONE,
+            share_model,
             disclaimer: ELIGIBILITY_DISCLAIMER,
             window_eligible,
             best_eligible,
@@ -535,20 +595,42 @@ impl EligibilityBody {
 
 fn slot_body(
     v: &carbonfr_eligibility::EligibilityVerdict,
+    ruleset: &carbonfr_eligibility::EligibilityRuleset,
 ) -> Result<EligibilitySlotBody, time::error::Format> {
     let signals = v
         .signals
         .iter()
-        .map(|s| EligibilitySignalBody {
-            pillar: s.pillar().slug(),
-            verdict: match s.passed() {
-                Some(true) => "pass",
-                Some(false) => "fail",
-                None => "indeterminate",
-            },
-            value: s.value(),
-            threshold: s.threshold(),
-            basis: carbonfr_eligibility::basis_of(s.pillar()),
+        .map(|s| {
+            let bounds = s.value_bounds();
+            // Parité de divulgation (revue F1) : la provenance des piliers à
+            // provenance CONSTANTE est connue de l'adapter — l'intensité vient
+            // toujours du modèle de prévision de la réponse, le prix day-ahead
+            // est une donnée publiée. Le domaine ne porte que celle qui varie
+            // (part renouvelable, observed/forecast par créneau).
+            let provenance = s.provenance().or(match s {
+                carbonfr_eligibility::EligibilitySignal::LowCarbonIntensity { .. } => {
+                    Some("forecast")
+                }
+                carbonfr_eligibility::EligibilitySignal::SurplusPrice { .. } => Some("observed"),
+                _ => None,
+            });
+            EligibilitySignalBody {
+                pillar: s.pillar().slug(),
+                verdict: match s.passed() {
+                    Some(true) => "pass",
+                    Some(false) => "fail",
+                    None => "indeterminate",
+                },
+                value: s.value(),
+                value_lower: bounds.map(|(low, _)| low),
+                value_upper: bounds.map(|(_, high)| high),
+                threshold: s.threshold(),
+                provenance,
+                reason: s.indeterminate_reason().map(|r| r.slug()),
+                // Base servie : canonique, ou `user-override` si le seuil de ce
+                // pilier a été surchargé (revue de neutralité ADR-0026, C14).
+                basis: ruleset.basis_for(s.pillar()),
+            }
         })
         .collect();
     Ok(EligibilitySlotBody {
@@ -1534,6 +1616,7 @@ mod eligibility_tests {
         let signals = if indeterminate {
             vec![EligibilitySignal::Indeterminate {
                 pillar: Pillar::LowCarbonIntensity,
+                reason: carbonfr_eligibility::IndeterminateReason::ThresholdWithinInterval,
             }]
         } else {
             vec![EligibilitySignal::LowCarbonIntensity {

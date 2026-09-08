@@ -81,7 +81,8 @@ console.log(now.intensity.value, now.intensity.unit); // 20 gCO2eq/kWh
 | `GET /v1/intensity/date?from=&to=` | Historique sur un intervalle (révisé/consolidé/définitif) | ✅ |
 | `GET /v1/intensity/stats?from=&to=[&interval=hour\|day]` | Résumé (moyenne/min/max) + série agrégée | ✅ |
 | `GET /v1/intensity/forecast` | Prévision d'intensité (`climatology@1` ; `acv-ademe@2` via `?methodology=acv-ademe&version=2`) | ✅ |
-| `GET /v1/intensity/greenest-window` | Créneau le plus bas-carbone | ✅ |
+| `GET /v1/intensity/greenest-window` | Créneau le plus bas-carbone (+ overlay électrolyseur `?eligibility=rfnbo\|low-carbon`, ADR-0025/0026) | ✅ |
+| `GET /v1/eligibility/rulesets` | Catalogue des cadres d'éligibilité électrolyseur (rulesets versionnés, servis + planifiés) | ✅ |
 | `GET /v1/schedule` · `/schedule/slots` · `/intensity/below` | Scheduling carbon-aware (échéance, *lowest-k*, seuil + économie) | ✅ |
 | `GET /v1/intensity/stream` | Flux **live** (Server-Sent Events) | ✅ |
 | `GET /v1/methodologies` · `/factors` | Catalogue des méthodes + table des facteurs (vérifiabilité) | ✅ |
@@ -91,7 +92,11 @@ console.log(now.intensity.value, now.intensity.unit); // 20 gCO2eq/kWh
 
 Les endpoints d'**intensité** (`/intensity/now`, `/intensity/date`, `/intensity/stats`, `/mix`) acceptent `?region=<slug>` (national par défaut) et `?methodology=<id>` : **`rte-direct`** (estimation RTE, combustion directe — défaut, **national uniquement**) ou **`acv-ademe`** (cycle de vie ADEME, national + 12 régions, ADR-0008). Les endpoints de prix, coût, échanges, météo, renouvelable et catalogue (`/price`, `/cost-reference`, `/exchanges`, `/weather`, `/renewable`, `/methodologies`, `/factors`) sont **nationaux** (`/price` renvoie `400` hors national).
 
+`/intensity/greenest-window` accepte en plus **`?eligibility=rfnbo|low-carbon`** (overlay « électrolyseur », ADR-0025/0026) : chaque créneau de la fenêtre est annoté de son éligibilité au regard du cadre choisi — `rfnbo` (part renouvelable ≥ 90 % **ou** prix day-ahead ≤ 20 €/MWh, Règl. UE 2023/1184) ou `low-carbon` (intensité ≤ seuil **indicatif** dérivé de l'acte délégué 2025/2359) — en réponse **additive** (rien ne change sans le paramètre), avec verdicts `pass`/`fail`/`indeterminate` et disclaimer de neutralité. Le catalogue des rulesets versionnés est servi par `/v1/eligibility/rulesets`.
+
 La spécification **OpenAPI 3.1** (dérivée du code via `utoipa`) est servie sous **`GET /v1/openapi.json`**, et une **Swagger UI** sous **`GET /docs`**. Une collection **[Bruno](https://www.usebruno.com/)** versionnée (dossier [`bruno/`](bruno/)) couvre tous les endpoints (cas nominaux + erreurs).
+
+Une **carte « électrolyseurs × carbone live »** est servie sous **`GET /hydrogene`** (hors contrat `/v1`, comme `/docs`) : les 233 électrolyseurs européens géolocalisés (European Hydrogen Observatory, instantané semestriel) croisés avec l'intensité carbone régionale live et les fenêtres d'éligibilité `rfnbo`/`low-carbon` ([ADR-0029](docs/adr/0029-carte-electrolyseurs-carbone-live.md)). Page auto-contenue — aucun CDN, aucune tuile externe.
 
 Les **erreurs** suivent **[RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)** (`application/problem+json`) : `type`/`title`/`status`/`detail` + un champ `code` court et **stable** (`no_data`, `bad_request`…) sur lequel s'aligner. Côté disponibilité, l'API peut répondre `503` (`unavailable`) quand une donnée dérivée n'est pas encore prête — p. ex. `/v1/renewable` si le modèle n'est pas calibré, ou `/health/ready` si la base est injoignable — et `/v1/price` renvoie `404` si aucune source de prix spot n'est configurée (token ENTSO-E absent).
 
@@ -128,6 +133,7 @@ carbon-fr/
 ├── Cargo.toml                  # workspace Cargo
 ├── crates/
 │   ├── core/                   # ✅ domaine + cas d'usage + ports (lib PURE, zéro IO)
+│   ├── eligibility/            # ✅ éligibilité électrolyseur rfnbo/low-carbon (lib PURE, ADR-0026)
 │   ├── adapter-odre/           # ✅ impl Eco2mixSource/Eco2mixArchive (ODRÉ)
 │   ├── adapter-postgres/       # ✅ impl repositories (sqlx/Postgres)
 │   ├── adapter-http/           # ✅ API axum + OpenAPI + auth + SSE (adapter entrant)
@@ -175,7 +181,7 @@ docker run -e DATABASE_URL=postgres://… -e CARBONFR_VISIT_SALT=… -p 8080:808
 
 Configuration via variables d'environnement — voir [`.env.example`](.env.example). Sondes : `GET /health` (liveness) et `GET /health/ready` (vérifie la base). Métriques **Prometheus** sous `GET /metrics` (fraîcheur du poller, volume ingéré, appels amont — à restreindre au scrapeur côté proxy en prod). Les migrations sont appliquées au démarrage.
 
-Outre le serveur, le binaire expose des **sous-commandes** *one-shot* : `backfill` (rapatrie l'historique par export de masse — prérequis de `/intensity/date`, `/intensity/stats` et de la prévision), `mint-key` (délivre une clé API), les `backtest*` / `train` (évaluation et entraînement des modèles de prévision) et `--version`.
+Outre le serveur, le binaire expose des **sous-commandes** *one-shot* : `backfill` (rapatrie l'historique par export de masse — prérequis de `/intensity/date`, `/intensity/stats` et de la prévision), `mint-key` (délivre une clé API), les `backtest*` (`backtest`, `-acv`, `-sweep`, `-bands`, `-renewable`, `-share`, `-share-meteo`) / `train` / `analyze-renewable-signal` (évaluation, entraînement et *gates* des modèles de prévision) et `--version`.
 
 ## Méthodologie & données
 
@@ -195,7 +201,9 @@ Outre le serveur, le binaire expose des **sous-commandes** *one-shot* : `backfil
 - [x] **Phase 3 — Prévision** : `climatology@1` (backtest, calibration des intervalles) → `/forecast` + `/greenest-window`.
 - [x] **Phase 4 — Enrichissement & usage** : `acv-ademe@2` consumption-based (ENTSO-E) · prévision `acv-ademe` · scheduling carbon-aware + SSE · clés API + quota · webhooks signés. *(ML GBDT exploré, gardé par backtest ; raffinements ouverts.)*
 - [x] **Phase 5 — Enrichissement, déploiement & SDK** : échanges transfrontaliers (`/v1/exchanges`), météo (`/v1/weather`), dérivation renouvelable (`/v1/renewable`) ; **prix de l'électricité** (`/v1/price`, décomposition TRV, ADR-0023) + **couche comparative LCOE** (`/v1/cost-reference`, ADR-0024) ; **déployé** sur VPS FR/EU (Traefik + PostgreSQL) ; **SDK TypeScript** (`@carbon-fr/sdk`).
-- [ ] **À venir** : SDK Rust ; site statique (o2switch) ; `UsageMeter` persistant ; **extension hydrogène carbon-aware** (overlay « électrolyseur » RFNBO / bas-carbone au-dessus de `/greenest-window`, [ADR-0025](docs/adr/0025-extension-hydrogene-carbon-aware.md)).
+- [x] **Extension hydrogène carbon-aware** (v0.4.0) : couche A « électrolyseur » — éligibilité **RFNBO / bas-carbone** par créneau au-dessus de `/greenest-window` (`?eligibility=`) + catalogue `/v1/eligibility/rulesets` ([ADR-0025](docs/adr/0025-extension-hydrogene-carbon-aware.md), [ADR-0026](docs/adr/0026-methodologie-overlays-eligibilite.md)).
+- [x] **Suite hydrogène** (v0.5.0–v0.6.0) : part renouvelable **prévue** `share-clim@1` dans l'overlay `rfnbo` ([ADR-0028](docs/adr/0028-prevision-part-renouvelable-eligibilite.md) ; variante météo `share-meteo@2` mesurée, non servie) · carte « électrolyseurs × carbone live » `GET /hydrogene` ([ADR-0029](docs/adr/0029-carte-electrolyseurs-carbone-live.md)).
+- [ ] **À venir** : SDK Rust ; site statique (o2switch) ; `UsageMeter` persistant ; suite hydrogène ([roadmap dédiée](docs/roadmap-hydrogene.md) : ruleset `rfnbo:2026-revision` quand le droit sera adopté ; branche EUA et bascule horaire 2030 en réserve).
 
 ## Contribuer
 

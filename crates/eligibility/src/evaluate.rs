@@ -14,7 +14,9 @@
 //! manquante donne un signal `Indeterminate` — jamais une extrapolation.
 
 use crate::ruleset::{EligibilityFramework, EligibilityRuleset};
-use crate::verdict::{EligibilitySignal, EligibilityVerdict, Pillar, SlotInput};
+use crate::verdict::{
+    EligibilitySignal, EligibilityVerdict, IndeterminateReason, Pillar, SlotInput,
+};
 
 /// Évalue une série de créneaux contre un ruleset, pour une zone de dépôt.
 pub fn evaluate(
@@ -58,18 +60,44 @@ pub fn evaluate_slot(
 fn rfnbo_signals(slot: &SlotInput, ruleset: &EligibilityRuleset) -> Vec<EligibilitySignal> {
     let mut signals = Vec::with_capacity(2);
 
-    // Part renouvelable instantanée (proxy ; cf. doc du ruleset).
+    // Part renouvelable (proxy ; cf. doc du ruleset) — observée (intervalle
+    // dégénéré → comportement historique inchangé) ou prévue (`share-clim@1`,
+    // ADR-0028). Règle d'intervalle, symétrique du pilier bas-carbone (D17) :
+    // on ne tranche que hors recouvrement du seuil, sinon `Indeterminate`.
     match slot.renewable_share {
-        Some(share) => {
+        Some(est) => {
             let threshold = ruleset.article4_renewable_threshold;
-            signals.push(EligibilitySignal::RenewableShare {
-                share,
-                threshold,
-                passed: share >= threshold,
-            });
+            let signal = if est.lower >= threshold {
+                EligibilitySignal::RenewableShare {
+                    share: est.expected,
+                    lower: est.lower,
+                    upper: est.upper,
+                    threshold,
+                    passed: true,
+                    observed: est.is_observed(),
+                }
+            } else if est.upper < threshold {
+                EligibilitySignal::RenewableShare {
+                    share: est.expected,
+                    lower: est.lower,
+                    upper: est.upper,
+                    threshold,
+                    passed: false,
+                    observed: est.is_observed(),
+                }
+            } else {
+                EligibilitySignal::Indeterminate {
+                    pillar: Pillar::RenewableShare,
+                    reason: IndeterminateReason::ThresholdWithinInterval,
+                }
+            };
+            signals.push(signal);
         }
         None => signals.push(EligibilitySignal::Indeterminate {
             pillar: Pillar::RenewableShare,
+            // La cause est fournie par l'orchestration (hors horizon calibré
+            // vs donnée manquante) — F12, jamais indiscernable.
+            reason: slot.renewable_share_gap,
         }),
     }
 
@@ -87,8 +115,15 @@ fn rfnbo_signals(slot: &SlotInput, ruleset: &EligibilityRuleset) -> Vec<Eligibil
                 passed: true,
             })
         }
-        (Some(_), _) => signals.push(EligibilitySignal::Indeterminate {
+        // Prix connu mais au-dessus du seuil : l'exception n'est pas établie
+        // sans être réfutée (branche EUA non évaluée) — raison dédiée (F12).
+        (Some(_), Some(_)) => signals.push(EligibilitySignal::Indeterminate {
             pillar: Pillar::SurplusPrice,
+            reason: IndeterminateReason::SurplusNotEstablished,
+        }),
+        (Some(_), None) => signals.push(EligibilitySignal::Indeterminate {
+            pillar: Pillar::SurplusPrice,
+            reason: IndeterminateReason::MissingData,
         }),
         (None, _) => {}
     }
@@ -100,6 +135,7 @@ fn low_carbon_signals(slot: &SlotInput, ruleset: &EligibilityRuleset) -> Vec<Eli
     let Some(threshold) = ruleset.low_carbon_intensity_threshold_g_per_kwh else {
         return vec![EligibilitySignal::Indeterminate {
             pillar: Pillar::LowCarbonIntensity,
+            reason: IndeterminateReason::MissingData,
         }];
     };
 
@@ -126,6 +162,7 @@ fn low_carbon_signals(slot: &SlotInput, ruleset: &EligibilityRuleset) -> Vec<Eli
     } else {
         EligibilitySignal::Indeterminate {
             pillar: Pillar::LowCarbonIntensity,
+            reason: IndeterminateReason::ThresholdWithinInterval,
         }
     };
     vec![signal]
@@ -145,7 +182,7 @@ fn score(slot: &SlotInput, ruleset: &EligibilityRuleset) -> f64 {
         EligibilityFramework::Rfnbo => {
             let renew_gap = slot
                 .renewable_share
-                .map(|r| (1.0 - r).max(0.0))
+                .map(|r| (1.0 - r.expected).max(0.0))
                 .unwrap_or(1.5);
             let price_term = slot.spot_price_eur_mwh.map(|p| p.max(0.0)).unwrap_or(200.0);
             renew_gap * 100.0 + price_term * 0.5 + slot.intensity.value() * 1e-3
@@ -191,14 +228,17 @@ mod tests {
         CarbonIntensity::new(g).expect("intensité de test")
     }
 
-    /// Créneau avec bande symétrique de demi-largeur `half`.
+    /// Créneau avec bande symétrique de demi-largeur `half`. La part passée en
+    /// `Option<f64>` est servie comme **observée** (intervalle dégénéré) — le
+    /// comportement historique des tests est inchangé.
     fn slot(g: f64, half: f64, share: Option<f64>, price: Option<f64>) -> SlotInput {
         SlotInput {
             at: OffsetDateTime::UNIX_EPOCH,
             intensity: ci(g),
             intensity_lower: ci((g - half).max(0.0)),
             intensity_upper: ci(g + half),
-            renewable_share: share,
+            renewable_share: share.map(crate::share_forecast::ShareEstimate::observed),
+            renewable_share_gap: IndeterminateReason::MissingData,
             spot_price_eur_mwh: price,
         }
     }

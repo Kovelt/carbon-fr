@@ -39,10 +39,12 @@ pub use cost::{
 };
 pub use cross_border::{CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Neighbor};
 pub use factors::{
-    EmissionFactors, TD_LOSS_FACTOR_V1, acv_ademe_consumption_intensity, acv_ademe_intensity,
-    derive_acv_ademe, derive_consumption_series,
+    EmissionFactors, MAX_FLOW_CONTEXT_AGE, TD_LOSS_FACTOR_V1, acv_ademe_consumption_intensity,
+    acv_ademe_intensity, derive_acv_ademe, derive_consumption_series,
 };
-pub use forecast::{CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, climatology_forecast};
+pub use forecast::{
+    CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams, climatology_forecast, week_slot,
+};
 pub use forecast_acv::{ACV_FORECAST_ID, ACV_FORECAST_VERSION, acv_ademe_forecast};
 pub use forecast_point::{ForecastPoint, ModelVersion};
 pub use horizon_bands::HorizonBands;
@@ -52,8 +54,8 @@ pub use measurement::{GenerationMix, Measurement, MeasurementKey};
 pub use methodology::{Methodology, Vintage};
 pub use metrics::{ErrorAccumulator, ErrorMetrics};
 pub use price::{
-    Filiere, MarginalTechnology, MixShare, PriceBreakdown, PriceComponent, PriceComponentKind,
-    PriceContext, SpotPrice, TrvReference, price_breakdown, price_series,
+    Filiere, MAX_SPOT_STALENESS, MarginalTechnology, MixShare, PriceBreakdown, PriceComponent,
+    PriceComponentKind, PriceContext, SpotPrice, TrvReference, price_breakdown, price_series,
 };
 pub use region::Region;
 pub use renewable::{RenewableModel, RenewableSample, calibrate as calibrate_renewable};

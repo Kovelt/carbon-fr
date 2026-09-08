@@ -7,11 +7,14 @@
 //! `code`). `type` reste `about:blank` : le `status` + `code` suffisent à
 //! qualifier l'erreur, on n'expose pas d'URI à déréférencer (RFC 9457 §4.2.1).
 
-use axum::http::{StatusCode, header};
+use axum::extract::{FromRequest, FromRequestParts, Query, Request};
+use axum::http::request::Parts;
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use carbonfr_core::application::ApplicationError;
 use carbonfr_core::ports::{ForecastError, RepositoryError};
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use utoipa::ToSchema;
 
 /// Type de média des Problem Details (RFC 9457 §3).
@@ -59,6 +62,19 @@ impl ApiError {
             status: StatusCode::SERVICE_UNAVAILABLE,
             code: "unavailable",
             title: "Service indisponible",
+            detail: detail.into(),
+        }
+    }
+
+    /// Rejet d'extracteur de **corps** : conserve le statut de la réjection
+    /// axum (400 JSON malformé, 413 corps trop grand, 415 Content-Type absent,
+    /// 422 champ manquant/mal typé) sous le code stable `bad_request` — c'est
+    /// toujours une faute côté client, quel que soit le statut précis.
+    fn extraction(status: StatusCode, detail: impl Into<String>) -> Self {
+        Self {
+            status,
+            code: "bad_request",
+            title: "Requête invalide",
             detail: detail.into(),
         }
     }
@@ -119,7 +135,19 @@ pub(crate) fn problem_response(
     let payload = serde_json::to_vec(&body).unwrap_or_else(|_| {
         br#"{"type":"about:blank","title":"Erreur interne","status":500,"detail":"erreur interne","code":"internal"}"#.to_vec()
     });
-    (status, [(header::CONTENT_TYPE, PROBLEM_JSON)], payload).into_response()
+    let mut response: Response =
+        (status, [(header::CONTENT_TYPE, PROBLEM_JSON)], payload).into_response();
+    // RFC 6750 §3 : un 401 sur un schéma Bearer DOIT porter `WWW-Authenticate`
+    // pour indiquer au client le schéma d'auth attendu (audit F21). Code unique
+    // `invalid_token` — simplification volontaire et conforme, couvrant les 3
+    // points d'auth de l'API (jeton absent ou clé inconnue) sans logique par site.
+    if status == StatusCode::UNAUTHORIZED {
+        response.headers_mut().insert(
+            header::WWW_AUTHENTICATE,
+            HeaderValue::from_static(r#"Bearer error="invalid_token""#),
+        );
+    }
+    response
 }
 
 impl IntoResponse for ApiError {
@@ -171,5 +199,49 @@ impl From<time::error::Format> for ApiError {
 impl From<RepositoryError> for ApiError {
     fn from(_: RepositoryError) -> Self {
         Self::internal()
+    }
+}
+
+/// Extracteur `Query<T>` qui traduit un échec de désérialisation des paramètres
+/// de requête en **Problem Details** (`400 bad_request`) au lieu du rejet
+/// `400 text/plain` par défaut d'axum (audit F15, ADR-0021). S'utilise comme
+/// `Query` : `ValidatedQuery(query): ValidatedQuery<T>`.
+pub(crate) struct ValidatedQuery<T>(pub(crate) T);
+
+impl<T, S> FromRequestParts<S> for ValidatedQuery<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        Query::<T>::from_request_parts(parts, state)
+            .await
+            .map(|Query(value)| Self(value))
+            .map_err(|rejection| ApiError::bad_request(rejection.body_text()))
+    }
+}
+
+/// Extracteur `Json<T>` qui traduit un échec d'extraction du **corps** en
+/// **Problem Details** au lieu du rejet `text/plain` par défaut d'axum
+/// (audit 2026-08, ADR-0021), en **conservant** le statut de la réjection
+/// (400 JSON malformé, 413 corps trop grand, 415 Content-Type absent, 422
+/// champ manquant/mal typé). Symétrique de [`ValidatedQuery`] pour le corps.
+/// Doit rester le **dernier** argument du handler (`FromRequest` le consomme).
+pub(crate) struct ValidatedJson<T>(pub(crate) T);
+
+impl<T, S> FromRequest<S> for ValidatedJson<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiError;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        axum::Json::<T>::from_request(request, state)
+            .await
+            .map(|axum::Json(value)| Self(value))
+            .map_err(|rejection| ApiError::extraction(rejection.status(), rejection.body_text()))
     }
 }

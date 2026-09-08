@@ -23,6 +23,7 @@ carbonfr-adapter-meteo = { workspace = true }
 carbonfr-adapter-entsoe = { workspace = true }
 carbonfr-adapter-webhook = { workspace = true }
 carbonfr-adapter-gbdt = { workspace = true }
+carbonfr-eligibility = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true, features = [
     "rt-multi-thread",
@@ -31,7 +32,10 @@ tokio = { workspace = true, features = [
     "time",
     "net",
 ] }
+# Jeton d'arrêt gracieux borné (audit 2026-08), propagé aux flux SSE.
+tokio-util = { workspace = true }
 anyhow = { workspace = true }
+rand = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 time = { workspace = true, features = ["parsing"] }

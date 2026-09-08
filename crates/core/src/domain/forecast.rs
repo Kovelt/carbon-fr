@@ -214,9 +214,11 @@ fn quantile(sorted: &[f64], q: f64) -> f64 {
 
 /// Index du créneau dans la semaine (`jour-de-semaine × pas`), en UTC pour un
 /// découpage déterministe indépendant du fuseau (cohérent avec les rollups,
-/// ADR-0004). Ex. à 15 min : 7 × 96 = 672 créneaux. `pub(crate)` : partagé avec
-/// la prévision `acv-ademe` (ADR-0013).
-pub(crate) fn week_slot(t: OffsetDateTime, step_secs: i64) -> i64 {
+/// ADR-0004). Ex. à 15 min : 7 × 96 = 672 créneaux. Partagé avec la prévision
+/// `acv-ademe` (ADR-0013) et, hors crate, avec la climatologie de part
+/// renouvelable de l'éligibilité (`share-clim@1`, ADR-0028) — la primitive de
+/// bucketing doit rester **identique** entre tous les modèles climatologiques.
+pub fn week_slot(t: OffsetDateTime, step_secs: i64) -> i64 {
     let t = t.to_offset(UtcOffset::UTC);
     let weekday = t.weekday().number_days_from_monday() as i64;
     let secs_in_day = t.hour() as i64 * 3600 + t.minute() as i64 * 60 + t.second() as i64;

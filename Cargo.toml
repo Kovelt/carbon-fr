@@ -24,7 +24,7 @@ strip = "debuginfo"
 # Version applicative unique du workspace (ADR-0019). Toutes les crates en
 # héritent (`version.workspace = true`) ; un tag git `vX.Y.Z` doit la refléter
 # et déclenche la publication de l'image Docker taguée (release.yml).
-version = "0.4.1"
+version = "0.7.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Kovelt/carbon-fr"
@@ -47,6 +47,7 @@ axum = "0.8.7"
 gbdt = "0.1"
 utoipa = { version = "5.4.0", features = ["axum_extras"] }
 sha2 = "0.10.9"
+rand = "0.9"
 async-trait = "0.1.89"
 anyhow = "1.0.100"
 tracing = "0.1.41"
@@ -62,8 +63,19 @@ reqwest = { version = "0.12.24", default-features = false, features = [
 ] }
 tokio = { version = "1.52.3", features = ["macros", "rt"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
+# Jeton d'annulation (`CancellationToken`) : arrêt gracieux borné (audit
+# 2026-08) — partagé entre la composition root et les flux SSE de l'adapter
+# HTTP. Licence MIT, déjà dans l'arbre (transitif sqlx/axum).
+tokio-util = "0.7"
+# Combinateur `take_until` (clôture des flux SSE à l'arrêt). Déjà dans l'arbre
+# via axum/hyper ; sans features par défaut (calcul pur, pas d'IO).
+futures-util = { version = "0.3", default-features = false }
 tower-http = { version = "0.7.0", features = ["trace", "cors"] }
-quick-xml = { version = "0.40.1", features = ["serialize"] }
+quick-xml = { version = "0.41.0", features = ["serialize"] }
+# Analyse d'URL WHATWG (identique à celle de reqwest) — calcul pur, pas d'IO :
+# utilisé par la validation anti-SSRF des webhooks pour voir exactement l'hôte
+# que le client contactera (ADR-0016).
+url = "2.5"
 sqlx = { version = "0.8.6", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls-ring",

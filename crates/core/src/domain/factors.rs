@@ -2,9 +2,21 @@
 //! (ADR-0008). Table **versionnée** : c'est une constante de domaine, pas une
 //! dépendance IO.
 
+use time::Duration;
+
 use crate::domain::{
     CarbonIntensity, CrossBorderFlows, CrossBorderSnapshot, GenerationMix, Measurement, Methodology,
 };
+
+/// Fraîcheur maximale du **contexte d'import** joint à une mesure de mix
+/// (`acv-ademe@2`). Les flux transfrontaliers A11 sont **horaires** (validé
+/// live) : au-delà d'une heure d'écart, le dernier snapshot connu n'est plus un
+/// alignement de cadence mais un contexte **périmé** (panne ENTSO-E) — le
+/// créneau est alors **omis** (série) ou `NotFound` (courant), plutôt que de
+/// servir un contexte arbitrairement ancien sous l'horodatage frais du mix.
+/// Même patron que `MAX_SPOT_STALENESS` pour le prix spot. Cohérent avec
+/// l'élargissement d'1 h de la fenêtre de flux côté lecture d'historique.
+pub const MAX_FLOW_CONTEXT_AGE: Duration = Duration::hours(1);
 
 /// Facteur de pertes en transport & distribution (ADR-0010 §3), **versionné**.
 ///
@@ -148,7 +160,12 @@ pub fn acv_ademe_consumption_intensity(
     }
 
     let consumed_emissions = prod_emissions - exports_mwh * prod_intensity + imported_emissions;
-    let grid_intensity = (consumed_emissions / consumption).max(0.0);
+    // Pas de clamp : un `consumed_emissions` négatif (transit net — import très
+    // peu carboné + export simultané supérieur à la production) rend l'intensité
+    // consommation physiquement indéfinie. On laisse `CarbonIntensity::new`
+    // rejeter la valeur négative → `None` (comme `acv_ademe_intensity`), plutôt
+    // que de la clamper silencieusement à 0 gCO₂eq/kWh (trompeur).
+    let grid_intensity = consumed_emissions / consumption;
 
     CarbonIntensity::new(grid_intensity * (1.0 + td_loss))
 }
@@ -173,9 +190,11 @@ pub fn derive_acv_ademe(measurement: &Measurement) -> Option<Measurement> {
 /// de mix au **contexte d'import le plus proche** (≤ son horodatage).
 ///
 /// `mix` et `snapshots` doivent être **triés par horodatage croissant** (jointure
-/// par fusion en O(n+m)). Les mesures sans mix, ou sans contexte d'import
-/// antérieur disponible, sont **omises** — `acv-ademe@2` n'est défini que là où
-/// le contexte d'import a été ingéré (ADR-0010 §6).
+/// par fusion en O(n+m)). Les mesures sans mix, sans contexte d'import antérieur
+/// disponible, ou dont le contexte le plus proche est **plus vieux que
+/// [`MAX_FLOW_CONTEXT_AGE`]**, sont **omises** — `acv-ademe@2` n'est défini que
+/// là où le contexte d'import a été ingéré (ADR-0010 §6), jamais étendu depuis
+/// un contexte périmé.
 pub fn derive_consumption_series(
     mix: &[Measurement],
     snapshots: &[CrossBorderSnapshot],
@@ -197,6 +216,11 @@ pub fn derive_consumption_series(
         let Some(snapshot) = current else {
             continue;
         };
+        // Borne de fraîcheur : un snapshot trop ancien (trou d'ingestion
+        // ENTSO-E) n'est pas reconduit — le créneau est omis.
+        if m.at - snapshot.at > MAX_FLOW_CONTEXT_AGE {
+            continue;
+        }
         if let Some(intensity) =
             acv_ademe_consumption_intensity(generation, &snapshot.flows, factors, td_loss)
         {
@@ -246,6 +270,48 @@ mod tests {
             (intensity.value() - 12.56).abs() < 0.1,
             "intensité = {}",
             intensity.value()
+        );
+    }
+
+    #[test]
+    fn consumption_intensity_is_none_on_negative_net_transit() {
+        use crate::domain::{CrossBorderFlow, CrossBorderFlows, Neighbor};
+
+        // Production 100 % gaz (facteur 406) → prod_intensity = 406.
+        let mix = GenerationMix {
+            nucleaire: 0.0,
+            gaz: 100.0,
+            charbon: 0.0,
+            fioul: 0.0,
+            hydraulique: 0.0,
+            eolien: 0.0,
+            solaire: 0.0,
+            bioenergies: 0.0,
+            pompage: 0.0,
+            echanges: 0.0,
+            thermique: None,
+        };
+        // Transit net : import massif très peu carboné (200 MW @ 6) ET export
+        // simultané supérieur à la production (150 MW vers une autre frontière).
+        let flows = CrossBorderFlows::new(vec![
+            CrossBorderFlow {
+                neighbor: Neighbor::Switzerland,
+                flow_mw: 200.0,
+                neighbor_intensity: CarbonIntensity::new(6.0).unwrap(),
+            },
+            CrossBorderFlow {
+                neighbor: Neighbor::Spain,
+                flow_mw: -150.0,
+                neighbor_intensity: CarbonIntensity::new(200.0).unwrap(),
+            },
+        ]);
+        // consommation = 100 - 150 + 200 = 150 (> 0, garde passée) ;
+        // émissions consommées = 40600 - 150·406 + 1200 = -19100 (< 0).
+        let result =
+            acv_ademe_consumption_intensity(&mix, &flows, &EmissionFactors::acv_ademe_v1(), 0.0);
+        assert!(
+            result.is_none(),
+            "intensité consommation physiquement indéfinie (transit négatif) doit être None, pas 0 : {result:?}"
         );
     }
 
@@ -323,7 +389,6 @@ mod tests {
         use crate::domain::{
             CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Neighbor, Vintage,
         };
-        use time::Duration;
 
         let t0 = OffsetDateTime::UNIX_EPOCH;
         let step = Duration::minutes(15);
@@ -355,5 +420,44 @@ mod tests {
         assert_eq!(series[0].methodology, Methodology::acv_ademe_consumption());
         // Import carboné → au-dessus de la production seule (~12,56).
         assert!(series[0].intensity.value() > 12.56);
+    }
+
+    #[test]
+    fn consumption_series_omits_slots_with_stale_import_context() {
+        use crate::domain::{
+            CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, Neighbor, Vintage,
+        };
+
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let measure = |offset: Duration| Measurement {
+            at: t0 + offset,
+            region: Region::National,
+            intensity: CarbonIntensity::new(12.0).unwrap(),
+            methodology: Methodology::acv_ademe(),
+            vintage: Vintage::Consolidated,
+            mix: Some(national_mix()),
+        };
+        // Un seul snapshot à t0 : couvre t0 et t0+1 h (≤ tolérance), PAS t0+2 h
+        // (contexte périmé, panne d'ingestion) — le créneau est omis plutôt que
+        // servi avec un contexte figé.
+        let mix = [
+            measure(Duration::ZERO),
+            measure(Duration::hours(1)),
+            measure(Duration::hours(2)),
+        ];
+        let snapshots = [CrossBorderSnapshot {
+            at: t0,
+            flows: CrossBorderFlows::new(vec![CrossBorderFlow {
+                neighbor: Neighbor::Germany,
+                flow_mw: 5000.0,
+                neighbor_intensity: CarbonIntensity::new(400.0).unwrap(),
+            }]),
+        }];
+
+        let series =
+            derive_consumption_series(&mix, &snapshots, &EmissionFactors::acv_ademe_v1(), 0.0);
+        assert_eq!(series.len(), 2, "t0+2 h omis (contexte d'import périmé)");
+        assert_eq!(series[0].at, t0);
+        assert_eq!(series[1].at, t0 + Duration::hours(1));
     }
 }

@@ -55,7 +55,7 @@
           "503": {
             "description": "Base indisponible",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -127,7 +127,7 @@
           "400": {
             "description": "Filtre inconnu (source/technologie/périmètre)",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -163,7 +163,7 @@
         "tags": [
           "échanges"
         ],
-        "summary": "`GET /v1/exchanges` — échanges transfrontaliers : flux net signé par\nfrontière (`> 0` = import vers la France) + intensité carbone du voisin\n(ADR-0017). Donnée ENTSO-E déjà ingérée pour `acv-ademe@2`, servie au pas\nquart d'heure, alignée sur la dernière mesure nationale.",
+        "summary": "`GET /v1/exchanges` — échanges transfrontaliers : flux net signé par\nfrontière (`> 0` = import vers la France) + intensité carbone du voisin\n(ADR-0017). Donnée ENTSO-E déjà ingérée pour `acv-ademe@2`, servie au pas\nquart d'heure, alignée sur la dernière mesure nationale. `404` si aucun\nsnapshot **frais** (≤ 1 h de la dernière mesure) n'est disponible — un\ncontexte périmé (panne d'ingestion) n'est pas servi comme courant.",
         "operationId": "exchanges",
         "responses": {
           "200": {
@@ -179,7 +179,7 @@
           "404": {
             "description": "Aucune donnée d'échange disponible",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -201,7 +201,7 @@
             "name": "from",
             "in": "query",
             "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -210,38 +210,9 @@
             "name": "to",
             "in": "query",
             "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "name": "region",
-            "in": "query",
-            "description": "Slug de région. National par défaut.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "methodology",
-            "in": "query",
-            "description": "Méthodologie. Défaut `rte-direct`.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "version",
-            "in": "query",
-            "description": "Version de la méthode (`acv-ademe` : `2` = consommation, national).",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
             }
           }
         ],
@@ -259,7 +230,7 @@
           "400": {
             "description": "Bornes manquantes ou invalides",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -313,7 +284,7 @@
           "400": {
             "description": "Méthode sans table de facteurs",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -345,6 +316,17 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Validée : une version inconnue — ou `acv-ademe`\nversion=2, non servie ici — est rejetée (400) plutôt qu'ignorée.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -398,7 +380,7 @@
           "400": {
             "description": "Paramètre invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -420,7 +402,7 @@
             "name": "from",
             "in": "query",
             "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -429,7 +411,7 @@
             "name": "to",
             "in": "query",
             "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -476,9 +458,9 @@
             }
           },
           "400": {
-            "description": "Paramètre invalide ou fenêtre > 366 jours",
+            "description": "Paramètre invalide ou fenêtre > 366 jours (92 jours pour acv-ademe@2, série dérivée à la lecture)",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -560,7 +542,7 @@
           "400": {
             "description": "Paramètre invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -570,7 +552,7 @@
           "404": {
             "description": "Historique insuffisant pour prévoir",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -604,6 +586,17 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Validée : une version inconnue — ou `acv-ademe`\nversion=2, non servie ici — est rejetée (400) plutôt qu'ignorée.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -687,7 +680,7 @@
           {
             "name": "electrolyzer_kwh_per_kg",
             "in": "query",
-            "description": "Override de la consommation électrolyseur (kWh/kgH₂, ]0, 200]) — **recale**\nle seuil bas-carbone dérivé (sauf si un seuil explicite est aussi fourni).",
+            "description": "Override de la consommation électrolyseur (kWh/kgH₂, [10, 200]) — **recale**\nle seuil bas-carbone dérivé (sauf si un seuil explicite est aussi fourni).",
             "required": false,
             "schema": {
               "type": "number",
@@ -709,7 +702,7 @@
           "400": {
             "description": "Paramètre invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -719,7 +712,7 @@
           "404": {
             "description": "Série insuffisante pour déterminer un créneau",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -729,7 +722,7 @@
           "503": {
             "description": "Overlay d'éligibilité demandé mais non câblé",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -791,7 +784,7 @@
           "400": {
             "description": "Région ou méthodologie invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -801,7 +794,7 @@
           "404": {
             "description": "Aucune donnée",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -823,7 +816,7 @@
             "name": "from",
             "in": "query",
             "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -832,7 +825,7 @@
             "name": "to",
             "in": "query",
             "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -888,9 +881,9 @@
             }
           },
           "400": {
-            "description": "Paramètre invalide",
+            "description": "Paramètre invalide ou fenêtre > 366 jours (92 jours pour acv-ademe@2, résumé dérivé à la lecture)",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -900,7 +893,7 @@
           "404": {
             "description": "Aucune donnée sur l'intervalle",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -946,7 +939,7 @@
           "400": {
             "description": "Région invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1029,7 +1022,7 @@
           "400": {
             "description": "Région ou méthodologie invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1039,7 +1032,7 @@
           "404": {
             "description": "Aucune donnée / mix indisponible",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1082,7 +1075,7 @@
           "400": {
             "description": "Région non nationale",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1092,7 +1085,7 @@
           "404": {
             "description": "Aucun mix ou prix spot disponible",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1107,14 +1100,14 @@
         "tags": [
           "prix"
         ],
-        "summary": "`GET /v1/price/date?from=&to=` — série de décompositions de prix sur un\nintervalle RFC 3339 (fenêtre ≤ 92 jours), pour la primitive « cheapest +\ngreenest window » (ADR-0023). National uniquement.",
+        "summary": "`GET /v1/price/date?from=&to=` — série de décompositions de prix sur un\nintervalle RFC 3339 (fenêtre ≤ 92 jours), pour la primitive « cheapest +\ngreenest window » (ADR-0023). National uniquement. Les créneaux sans prix\nspot **frais** (≤ 6 h) sont omis — jamais de report d'un prix périmé\n(trou d'ingestion ENTSO-E).",
         "operationId": "price_date",
         "parameters": [
           {
             "name": "from",
             "in": "query",
             "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -1123,7 +1116,7 @@
             "name": "to",
             "in": "query",
             "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -1152,7 +1145,7 @@
           "400": {
             "description": "Bornes manquantes/invalides ou région non nationale",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1183,7 +1176,7 @@
           "404": {
             "description": "Aucune météo disponible",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1193,7 +1186,7 @@
           "503": {
             "description": "Modèle renouvelable non calibré",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1225,6 +1218,17 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Validée : une version inconnue — ou `acv-ademe`\nversion=2, non servie ici — est rejetée (400) plutôt qu'ignorée.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           },
           {
@@ -1301,7 +1305,7 @@
           "400": {
             "description": "Paramètre invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1311,7 +1315,7 @@
           "404": {
             "description": "Série insuffisante",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1346,6 +1350,17 @@
             }
           },
           {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. Validée : une version inconnue — ou `acv-ademe`\nversion=2, non servie ici — est rejetée (400) plutôt qu'ignorée.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
             "name": "from",
             "in": "query",
             "required": false,
@@ -1366,7 +1381,7 @@
           {
             "name": "count",
             "in": "query",
-            "description": "Nombre de créneaux les moins intenses à retourner. Requis (1..=horizon).",
+            "description": "Nombre de créneaux les moins intenses à retourner. Requis, doit être > 0.\nSi `count` dépasse le nombre de créneaux disponibles sur l'horizon (pas une\nerreur : cf. `lowest_slots_caps_at_series_length` dans le core), la réponse\nest plafonnée silencieusement — le champ `count` de la réponse reflète alors\nle nombre réellement renvoyé, pas celui demandé.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1397,7 +1412,7 @@
           "400": {
             "description": "Paramètre invalide",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1470,7 +1485,7 @@
           "404": {
             "description": "Aucune donnée météo disponible",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1492,7 +1507,7 @@
             "name": "from",
             "in": "query",
             "description": "Début de l'intervalle (RFC 3339, inclus). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
             }
@@ -1501,38 +1516,9 @@
             "name": "to",
             "in": "query",
             "description": "Fin de l'intervalle (RFC 3339, exclu). Requis.",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string"
-            }
-          },
-          {
-            "name": "region",
-            "in": "query",
-            "description": "Slug de région. National par défaut.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "methodology",
-            "in": "query",
-            "description": "Méthodologie. Défaut `rte-direct`.",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "version",
-            "in": "query",
-            "description": "Version de la méthode (`acv-ademe` : `2` = consommation, national).",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "format": "int32",
-              "minimum": 0
             }
           }
         ],
@@ -1550,7 +1536,7 @@
           "400": {
             "description": "Bornes manquantes ou invalides",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1581,7 +1567,7 @@
           "401": {
             "description": "Clé API requise/inconnue",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1618,9 +1604,9 @@
             }
           },
           "400": {
-            "description": "Paramètre invalide ou URL refusée (anti-SSRF)",
+            "description": "Paramètre invalide, JSON malformé ou URL refusée (anti-SSRF)",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1630,7 +1616,17 @@
           "401": {
             "description": "Clé API requise/inconnue",
             "content": {
-              "application/json": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Corps JSON valide mais champ manquant ou mal typé",
+            "content": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1665,7 +1661,7 @@
           "401": {
             "description": "Clé API requise/inconnue",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1675,7 +1671,7 @@
           "404": {
             "description": "Abonnement introuvable",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
                 }
@@ -1955,6 +1951,13 @@
           "ruleset_version": {
             "type": "string"
           },
+          "share_model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Identité versionnée du modèle de part renouvelable **prévue**\n(`share-clim@1`, ADR-0028) — présent seulement si au moins un créneau\nporte une part de provenance `forecast` ; absent si tout est observé ou\nindéterminé (modèle non câblé / hors horizon calibré)."
+          },
           "slots": {
             "type": "array",
             "items": {
@@ -1978,11 +1981,25 @@
         "properties": {
           "basis": {
             "type": "string",
-            "description": "`regulatory` ou `indicative-non-regulatory` (seuil bas-carbone = proxy)."
+            "description": "`regulatory`, `indicative-non-regulatory` (seuil bas-carbone = proxy) ou\n`user-override` (le seuil de **ce** pilier a été surchargé par l'appelant —\nle signal ne dérive plus du texte canonique)."
           },
           "pillar": {
             "type": "string",
             "description": "Pilier : `renewable-share`, `surplus-price` ou `low-carbon-intensity`."
+          },
+          "provenance": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provenance de `value` (parité de divulgation entre piliers, revue F1) :\n`observed` (donnée mesurée/publiée — part au nowcast, prix day-ahead) ou\n`forecast` (prévision — part `share-clim@1` au-delà du nowcast, intensité\nTOUJOURS, puisqu'elle vient du modèle de prévision annoncé par la\nréponse). Absent sur un signal indéterminé (pas de valeur)."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pourquoi le pilier n'a pas tranché (`verdict: indeterminate`) :\n`missing-data`, `beyond-calibrated-horizon` (part au-delà de l'horizon\ncalibré de `share-clim@1`), `threshold-within-interval` (seuil dans\nl'intervalle de confiance, D17), `surplus-not-established` (prix connu\nau-dessus du seuil, branche EUA non évaluée — jamais un échec ferme)."
           },
           "threshold": {
             "type": [
@@ -1992,6 +2009,21 @@
             "format": "double"
           },
           "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "value_lower": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Bornes de l'intervalle de `value` quand le signal est une **prévision**\n(part renouvelable `share-clim@1`, ADR-0028) — absentes pour l'observé\n(intervalle dégénéré) et les autres piliers."
+          },
+          "value_upper": {
             "type": [
               "number",
               "null"
@@ -2034,7 +2066,8 @@
           },
           "score": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "description": "Score de classement **interne au cadre** — jamais comparable entre\n`framework`s : `low-carbon` = intensité brute (gCO₂eq/kWh) ; `rfnbo` =\nheuristique composite (pénalise la donnée manquante, échelle ~10×).\nPour comparer des créneaux entre cadres, utiliser `intensity`."
           },
           "signals": {
             "type": "array",
@@ -2071,7 +2104,8 @@
           },
           "score": {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "description": "Score de classement **interne au cadre** — jamais comparable entre\n`framework`s : `low-carbon` = intensité brute (gCO₂eq/kWh) ; `rfnbo` =\nheuristique composite (pénalise la donnée manquante, échelle ~10×).\nPour comparer des créneaux entre cadres, utiliser `intensity`."
           },
           "timestamp": {
             "type": "string"

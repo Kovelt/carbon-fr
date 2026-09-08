@@ -9,13 +9,24 @@
 //!   puis s'arrête.
 //! - `backtest` : évalue `climatology@1` (walk-forward) — MAE/RMSE modèle vs
 //!   persistance (ADR-0009).
+//! - `backtest-acv` : évalue la prévision `acv-ademe@2` sur vérité dérivée
+//!   (ADR-0013).
 //! - `backtest-sweep` : balaie une grille N × τ, classe par RMSE.
 //! - `backtest-bands` : calibre et imprime les bandes d'incertitude par horizon
 //!   (ADR-0011).
+//! - `backtest-renewable` : backtest de la dérivation météo → production
+//!   renouvelable (ADR-0018).
+//! - `analyze-renewable-signal` : gate ADR-0018 (étape A) — l'anomalie de
+//!   renouvelable améliore-t-elle la climatologie d'intensité ?
+//! - `backtest-share` : gate de `share-clim@1` — part renouvelable prévue du
+//!   pilier rfnbo (ADR-0028).
+//! - `backtest-share-meteo` : gate de `share-meteo@2` — part renouvelable
+//!   météo-pilotée (addendum ADR-0028 ; mesurée, non servie).
 //! - `train` : entraîne le modèle ML GBDT (ADR-0012) → artefact, et compare
 //!   `gbdt@1` à `climatology@1` au backtest (garde de promotion).
 //! - `mint-key` : délivre une clé API tier gratuit (ADR-0015) — stocke son
 //!   empreinte, affiche la clé une seule fois.
+//! - `--version` / `-V` : imprime la version du build et sort (ADR-0019).
 //!
 //! ## Configuration (variables d'environnement)
 //!
@@ -24,6 +35,9 @@
 //! | `DATABASE_URL`               | — (requis)     | DSN PostgreSQL                    |
 //! | `CARBONFR_BIND`              | `0.0.0.0:8080` | adresse d'écoute de l'API         |
 //! | `CARBONFR_POLL_SECS`         | `900` (15 min) | période d'ingestion ODRÉ (et TTL des caches de prévision), > 0 |
+//! | `CARBONFR_ENTSOE_TOKEN`      | (non défini)   | active l'ingestion ENTSO-E (imports `acv-ademe@2` + prix spot `/v1/price`) |
+//! | `CARBONFR_ENTSOE_BASE_URL`   | `https://web-api.tp.entsoe.eu/api` | endpoint de l'API ENTSO-E |
+//! | `CARBONFR_ENTSOE_WINDOW_HOURS` | `6`          | fenêtre récente interrogée par cycle de poll |
 //! | `CARBONFR_BACKFILL_FROM`     | `2012-01-01T00:00:00Z` | début du backfill (RFC 3339) |
 //! | `CARBONFR_BACKFILL_TO`       | maintenant     | fin du backfill (RFC 3339)        |
 //! | `CARBONFR_BACKFILL_WINDOW_DAYS` | `90`        | largeur de tranche d'export       |
@@ -32,7 +46,7 @@
 //! | `CARBONFR_BACKTEST_METHODOLOGY` | `rte-direct` | méthodologie évaluée             |
 //! | `CARBONFR_BACKTEST_ORIGIN_STEP_HOURS` | `24`  | espacement des origines           |
 //! | `CARBONFR_BACKTEST_STEP_MINUTES` | `15`       | pas natif (30 pour le jeu consolidé) |
-//! | `CARBONFR_BACKTEST_WEEKS`/`_TAU_HOURS` | grilles | `backtest-sweep` : N et τ balayés |
+//! | `CARBONFR_BACKTEST_WEEKS`/`_TAU_HOURS` | `4,6,8,10,12` × `3,6,12,24` (sweep) | `backtest-sweep` : grilles N × τ balayées ; `backtest` : le 1er élément de chaque liste surcharge le couple calé (N=10, τ=336 h) |
 //! | `CARBONFR_BACKTEST_HORIZON_HOURS` | `24`      | `backtest-bands` : horizon calibré |
 //! | `CARBONFR_BACKTEST_BAND_QUANTILE` | `0.1`     | `backtest-bands` : quantile de bord |
 //! | `CARBONFR_FORECAST_CALIBRATE_WEEKS` | `8`     | auto-calibration au démarrage (0 = off) |

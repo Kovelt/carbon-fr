@@ -11,7 +11,8 @@
 use time::Duration;
 
 use crate::domain::{
-    PriceBreakdown, Region, TimeRange, TrvReference, price_breakdown, price_series,
+    MAX_SPOT_STALENESS, PriceBreakdown, Region, TimeRange, TrvReference, price_breakdown,
+    price_series,
 };
 use crate::ports::{IntensityRepository, SpotPriceRepository};
 
@@ -20,13 +21,6 @@ use super::ApplicationError;
 /// Méthodologie de la mesure servant d'ancre (horodatage + mix). `rte-direct`
 /// est le national canonique, aligné sur `/v1/intensity/now` et `/v1/mix`.
 const ANCHOR_METHODOLOGY: &str = "rte-direct";
-
-/// Fraîcheur maximale du prix spot servi en « courant ». Le day-ahead est au pas
-/// quart d'heure (MTU 15 min, validé live 2026-06-20) et publié chaque jour ;
-/// au-delà de cette tolérance, le prix le plus
-/// récent disponible est considéré **périmé** (ENTSO-E muet) → `NotFound` plutôt
-/// que servir un prix d'il y a plusieurs jours comme s'il était courant.
-const MAX_SPOT_STALENESS: Duration = Duration::hours(6);
 
 /// Sert la décomposition de prix TRV (national). Les valeurs réglementaires
 /// (TURPE, accise/TVA, résidu) sont versionnées par période de validité.
@@ -73,8 +67,10 @@ impl<R: IntensityRepository, P: SpotPriceRepository> GetElectricityPrice<R, P> {
     }
 
     /// Série de décompositions sur `range` (pour la primitive « cheapest +
-    /// greenest window », ADR-0023). Jointure mix × prix spot au plus proche ≤ ;
-    /// les créneaux sans prix spot antérieur disponible sont omis.
+    /// greenest window », ADR-0023). Jointure mix × prix spot au plus proche ≤,
+    /// bornée par [`MAX_SPOT_STALENESS`] : les créneaux sans prix spot
+    /// **frais** disponible sont omis (jamais de report d'un prix périmé,
+    /// même garde que le chemin « courant »).
     pub async fn history(
         &self,
         region: Region,

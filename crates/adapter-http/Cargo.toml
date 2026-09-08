@@ -22,11 +22,15 @@ async-trait = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 tokio-stream = { workspace = true }
+# Arrêt gracieux (audit 2026-08) : `CancellationToken` propagé à `StreamState`
+# (clôture des flux SSE) + `take_until` pour borner le flux infini.
+tokio-util = { workspace = true }
+futures-util = { workspace = true }
 tower-http = { workspace = true }
 
 [dev-dependencies]
 carbonfr-adapter-forecast = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
 async-trait = { workspace = true }
 serde_json = { workspace = true }
 tower = { version = "0.5.3", features = ["util"] }

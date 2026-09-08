@@ -42,8 +42,11 @@ fn vintage_from_rank(rank: i16) -> Result<Vintage, RepositoryError> {
 }
 
 /// Déduplique par clé `(region, at, methodology)` en conservant la **meilleure
-/// qualité de millésime**. Indispensable avant un INSERT multi-lignes :
-/// PostgreSQL refuse qu'un même `ON CONFLICT` affecte deux fois la même ligne.
+/// qualité de millésime** ; à égalité de millésime, la **dernière** occurrence
+/// du lot l'emporte, comme l'upsert SQL (`vintage_rank >=`) et les dédups
+/// sœurs `upsert_flows`/`upsert_weather`. Indispensable avant un INSERT
+/// multi-lignes : PostgreSQL refuse qu'un même `ON CONFLICT` affecte deux fois
+/// la même ligne.
 ///
 /// L'ordre d'origine des survivants est préservé (déterminisme).
 pub(crate) fn dedup_by_key(measurements: &[Measurement]) -> Vec<&Measurement> {
@@ -51,8 +54,8 @@ pub(crate) fn dedup_by_key(measurements: &[Measurement]) -> Vec<&Measurement> {
     for (index, measurement) in measurements.iter().enumerate() {
         match best.get(&measurement.key()) {
             Some(&kept)
-                if vintage_rank(measurements[kept].vintage)
-                    >= vintage_rank(measurement.vintage) => {}
+                if vintage_rank(measurements[kept].vintage) > vintage_rank(measurement.vintage) => {
+            }
             _ => {
                 best.insert(measurement.key(), index);
             }
@@ -229,6 +232,27 @@ mod tests {
         };
         let input = [make(50.0, Vintage::Tr), other];
         assert_eq!(dedup_by_key(&input).len(), 2);
+    }
+
+    #[test]
+    fn dedup_keeps_last_at_equal_vintage() {
+        use time::OffsetDateTime;
+
+        let at = OffsetDateTime::UNIX_EPOCH;
+        let make = |g: f64, vintage: Vintage| Measurement {
+            at,
+            region: Region::National,
+            intensity: CarbonIntensity::new(g).unwrap(),
+            methodology: Methodology::rte_direct(),
+            vintage,
+            mix: None,
+        };
+        // Même clé, même millésime → la DERNIÈRE occurrence du lot l'emporte,
+        // comme l'upsert SQL (`vintage_rank >=`) et `upsert_flows`/`upsert_weather`.
+        let input = [make(50.0, Vintage::Tr), make(60.0, Vintage::Tr)];
+        let kept = dedup_by_key(&input);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].intensity.value(), 60.0);
     }
 
     #[test]

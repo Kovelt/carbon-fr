@@ -97,3 +97,29 @@ Tous additifs : aucune rupture de contrat (`basis` reste `string` côté SDK ; l
 **Passage 2** : re-test par constat sur le code corrigé et la sortie re-servie (`reason: beyond-calibrated-horizon` observé à la frontière 72 h, `provenance: forecast` sur le pilier intensité, disclaimer conforme). **Verdict : GREEN.**
 
 Constats réfutés notables du re-jeu : « `surplus-price` ne fail jamais = asymétrie intra-rfnbo » (choix documenté EUA, désormais explicité par `surplus-not-established`) ; « le 0-faux-verdict du gate est vacuement vrai » (exact — le seuil n'est jamais approché en FR — mais l'ADR-0028 §7 le dit lui-même : la revendication est correctement qualifiée).
+
+---
+
+## 7. Re-jeu du 2026-07-04 — addendum O1 « méthodes horaires » (wording, texte servi)
+
+**Évalué** : le diff complet du chantier O1 (roadmap hydrogène) **avant fusion** — addendum « méthodes horaires » de l'ADR-0026, enrichissement du `legal_basis` **servi** du ruleset `low-carbon:2025-2359` (mention des 4 méthodes de l'annexe, seuil ~64 qualifié de proxy hors annexe), descriptions OpenAPI (`/v1/intensity/forecast`, `/v1/intensity/greenest-window`, technologie marginale de `/v1/price`), README, roadmap, CHANGELOG. Déclencheur : la règle de re-jeu du présent document (« toute retouche des chaînes servies »).
+
+**Méthode** : 5 critiques à lentilles distinctes (militant pro-nucléaire, militant anti-nucléaire, précision réglementaire, lecteur pressé/intégrateur API, cohérence interne) → **contre-instruction** : 3 réfutateurs par constat (lentilles exactitude factuelle / neutralité effective / proportionnalité, constat tué si ≥ 2 réfutent) → correctifs → passage 2. 53 agents au total.
+
+**Passage 1** : 16 constats bruts, 4 tués en contre-instruction, **12 confirmés** — qui se réduisent à **trois causes racines** :
+
+- **O1-C1 (critical, ×9 constats — provenance de processus)** — le diff soumis affirmait au passé, dans trois fichiers (addendum ADR, CHANGELOG, roadmap), que « la passe de neutralité a été re-jouée (revue, §7) » alors que la présente section **n'existait pas encore** au moment de la critique : l'affirmation de conformité au processus était elle-même invérifiable — précisément le type d'assertion que ce GATE interdit. (Le re-jeu était en cours d'exécution au moment de la lecture du diff ; il n'en reste pas moins que le texte anticipait un fait non constaté — le constat est retenu tel quel.)
+- **O1-C2 (major, ×2 — précision réglementaire)** — la phrase du README généralisait « (elles exigent une donnée publiée par le GRT) » aux **quatre** méthodes, alors que l'addendum lui-même ne l'établit que pour les méthodes horaires (b)/(d) — (a) repose sur la Table 5, (c) sur un comptage d'heures pleine charge.
+- **O1-C3 (minor — exactitude de référence)** — le tableau de l'addendum citait `PriceContext.marginal` (identifiant du domaine interne) au lieu du champ **réellement servi** `marginal_technology`.
+
+**Correctifs (P8–P10, 2026-07-04)** :
+
+| # | Constat | Correctif |
+|---|---|---|
+| P8 | O1-C1 | La présente section : le re-jeu est désormais **documenté et vérifiable** — les mentions « revue §7 » des trois fichiers deviennent exactes à la fusion (le diff est fusionné en un seul lot avec cette section) |
+| P9 | O1-C2 | README nuancé méthode par méthode : « les méthodes horaires (b)/(d) exigent une donnée publiée par le GRT, (a) repose sur la Table 5 officielle, (c) sur un comptage d'heures pleine charge non implémenté » |
+| P10 | O1-C3 | Tableau de l'addendum corrigé : « le champ `marginal_technology` du contexte de `GET /v1/price` » |
+
+**Constats réfutés notables** : « RTE ne publie ni prévision day-ahead d'intensité de bidding zone ni marginale horaire — affirmation sans source » (réfuté sur proportionnalité : le fait est défendable et la charge de la preuve inversée serait celle d'une donnée qui existerait) ; « le `legal_basis` servi passe de 570 à 920 caractères, duplication » (réfuté : chiffre exact mais chaîne documentaire dont c'est le rôle, pas de duplication mot à mot) ; « la proximité numérique Table 5 (≈66-68) vs proxy ~64 est présentée comme validation » (réfuté : le texte met explicitement en garde contre cette lecture — « coïncidence d'ordre de grandeur, pas une équivalence méthodologique ») ; « le titre "alignement" contredit le corps "n'implémente aucune méthode" » (réfuté : le corps lève l'ambiguïté dès le premier paragraphe).
+
+**Passage 2** : re-vérification par constat sur le texte corrigé (les trois correctifs sont textuels et immédiatement vérifiables dans le même diff). **Verdict : GREEN.**

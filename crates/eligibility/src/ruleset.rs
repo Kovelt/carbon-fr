@@ -208,7 +208,12 @@ impl EligibilityRuleset {
                           (condition nécessaire, tout le budget attribué à l'élec). Reconnaissance \
                           du nucléaire : consultation prévue par considérant (non contraignant, \
                           échéance 30/06/2026 — lancement non constaté au 2026-07-03) ; évaluation \
-                          contraignante d'ici 07/2028 (art. 3). [FAIT seuil produit / ESTIMATION seuil élec]",
+                          contraignante d'ici 07/2028 (art. 3). L'annexe (partie A, pt 6) définit \
+                          par ailleurs 4 méthodes de comptabilisation de l'électricité réseau \
+                          (moyenne annuelle Table 5 ; mix horaire de bidding zone prévu day-ahead \
+                          par le GRT ; heures pleine charge ; marginale horaire publiée par le \
+                          GRT) — carbon-fr n'en met en œuvre aucune : le seuil ~64 est un proxy \
+                          hors annexe (ADR-0026, addendum O1). [FAIT seuil produit / ESTIMATION seuil élec]",
             description: "Vue bas-carbone inclusive (nucléaire, gaz+CCS). Signal RÉSEAU : intensité \
                           carbone ≤ seuil dérivé (~64 gCO₂eq/kWh, INDICATIF, condition nécessaire — \
                           au-delà, H₂ bas-carbone impossible par l'électricité seule). Pas de pilier \

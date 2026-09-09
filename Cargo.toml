@@ -71,7 +71,7 @@ tokio-util = "0.7"
 # via axum/hyper ; sans features par défaut (calcul pur, pas d'IO).
 futures-util = { version = "0.3", default-features = false }
 tower-http = { version = "0.7.0", features = ["trace", "cors"] }
-quick-xml = { version = "0.41.0", features = ["serialize"] }
+quick-xml = { version = "0.42.0", features = ["serialize"] }
 # Analyse d'URL WHATWG (identique à celle de reqwest) — calcul pur, pas d'IO :
 # utilisé par la validation anti-SSRF des webhooks pour voir exactement l'hôte
 # que le client contactera (ADR-0016).

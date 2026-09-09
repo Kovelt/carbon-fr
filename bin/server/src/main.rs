@@ -402,7 +402,7 @@ async fn run_mint_key() -> anyhow::Result<()> {
 /// Génère une clé aléatoire `cfr_<64 hex>` (32 octets, CSPRNG userspace `rand` —
 /// pas d'I/O fichier synchrone, cohérent avec `random_hex`, audit F29).
 fn generate_api_key() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     let mut buf = [0u8; 32];
     rand::rng().fill(&mut buf);
     let hex: String = buf.iter().map(|b| format!("{b:02x}")).collect();

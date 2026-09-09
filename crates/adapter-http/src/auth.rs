@@ -549,7 +549,7 @@ pub fn key_fingerprint(key: &str) -> String {
 /// en pratique (le CSPRNG OS ne panique qu'en cas d'échec catastrophique
 /// d'initialisation de l'entropie système, hors de portée d'un repli gracieux).
 pub(crate) fn random_hex(bytes: usize) -> Option<String> {
-    use rand::Rng;
+    use rand::RngExt;
     let mut buf = vec![0u8; bytes];
     rand::rng().fill(buf.as_mut_slice());
     Some(buf.iter().map(|b| format!("{b:02x}")).collect())

@@ -70,7 +70,7 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 - [x] **Purge des webhooks désactivés** (laissée ouverte par l'addendum ADR-0016 : ils comptent dans le quota de 50 par clé) — après `CARBONFR_WEBHOOK_PURGE_DAYS` jours (défaut 30), tâche de fond toutes les 6 h.
 - [x] **Tests hermétiques d'`adapter-webhook`** (serveur de test : succès, retry sur 5xx, timeout — aujourd'hui 2 tests seulement) — 8 tests, dont la redirection non suivie vérifiée par mutation.
 - [x] **`deny.toml`** (origine des doublons documentée, `unmaintained` explicite) : documenter en `skip` les doublons de versions connus (`tower-http` 0.6, `webpki-roots` 0.26, `rand` 0.8…), avec la crate qui les tire. Le commentaire sur les crates non maintenues est **exact** (cargo-deny ≥ 0.16 les refuse par défaut) : le rendre explicite (`unmaintained = "all"`) plutôt que le corriger.
-- [ ] **Dependabot** : relancer la montée `sqlx` 0.9 (PR #25 fermée sans merge le 2026-06-17, donc ignorée depuis) et regarder dans les journaux Dependabot (GitHub → Insights) pourquoi `reqwest` 0.13 n'a jamais été proposé.
+- [x] **Dependabot** (diagnostiqué le 2026-09-23, sans relance) : relancer la montée `sqlx` 0.9 (PR #25 fermée sans merge le 2026-06-17, donc ignorée depuis) et regarder dans les journaux Dependabot (GitHub → Insights) pourquoi `reqwest` 0.13 n'a jamais été proposé. **`reqwest` 0.13** : la feature `rustls-tls` n'existe plus (renommée `rustls`, qui tire `aws-lc-rs`) → la simple montée de version ne se résout pas et Dependabot l'abandonne en silence ; montée manuelle en **I5**. **`sqlx` 0.9** : toutes nos features existent (MSRV 1.94 < 1.98) mais l'API change ; ignorée depuis la fermeture de #25 → montée manuelle en **I7**, sans rouvrir une PR Dependabot qui resterait rouge d'ici là.
 
 **Sortie** : `npm view @carbon-fr/sdk version` = 0.2.0 ; Node 24 en CI ; `utoipa` 6.x dans `Cargo.lock` ; `cargo deny check` sans avertissement non documenté.
 
@@ -78,9 +78,9 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 
 **Objectif** : trancher **avant** toute préparation technique. Itération 100 % décisionnelle : aucune ligne de code hors `docs/`. L'ADR-0030 d'abord ; l'ADR-0031 ensuite, car il demande une petite recherche (écosystème SSE en Rust).
 
-- [ ] **ADR-0030 — politique de publication crates.io**, qui amende l'ADR-0019 (il dit aujourd'hui l'inverse : « crates non publiées ») et renoue avec l'ADR-0001 (le `core` « conçu pour être publiable »). Décisions à prendre : voir [Préparation crates.io](#préparation-cratesio) ci-dessous.
-- [ ] **Addendum ADR-0019** : 5ᵉ axe de versionnement (versions crates.io), renvoyant à l'ADR-0030.
-- [ ] **ADR-0031 — conception du SDK Rust** : nom (`carbonfr-sdk`, libre sur crates.io), client HTTP (`reqwest` 0.13 avec provider TLS explicite, cf. I5, ou client plus minimal), écriture manuelle ou génération depuis l'OpenAPI, périmètre v1 = **parité avec le SDK TS**. ⚠️ Avant de choisir, vérifier s'il existe une crate **SSE** minimale et maintenue ; sinon, chiffrer le parsing SSE fait maison (le SDK TS s'appuie sur `fetch` natif, Rust n'a pas d'équivalent standard).
+- [x] **ADR-0030 — politique de publication crates.io** ([rédigé](adr/0030-politique-publication-crates-io.md) : MSRV réelle **1.88** — fixée par `time`, pas par l'édition 2024 —, `#[non_exhaustive]` décidé enum par enum, politique de `yank`), qui amende l'ADR-0019 (il dit aujourd'hui l'inverse : « crates non publiées ») et renoue avec l'ADR-0001 (le `core` « conçu pour être publiable »). Décisions à prendre : voir [Préparation crates.io](#préparation-cratesio) ci-dessous.
+- [x] **Addendum ADR-0019** : 5ᵉ axe de versionnement (versions crates.io), renvoyant à l'ADR-0030.
+- [x] **ADR-0031 — conception du SDK Rust** ([rédigé](adr/0031-conception-sdk-rust.md) : écriture manuelle + test de parité, `ring` explicite, SSE sur `eventsource-stream`, MSRV 1.88) : nom (`carbonfr-sdk`, libre sur crates.io), client HTTP (`reqwest` 0.13 avec provider TLS explicite, cf. I5, ou client plus minimal), écriture manuelle ou génération depuis l'OpenAPI, périmètre v1 = **parité avec le SDK TS**. ⚠️ Avant de choisir, vérifier s'il existe une crate **SSE** minimale et maintenue ; sinon, chiffrer le parsing SSE fait maison (le SDK TS s'appuie sur `fetch` natif, Rust n'a pas d'équivalent standard).
 
 **Sortie** : ADR-0030 et ADR-0031 mergés (statut *Accepté*), index des ADR à jour, aucune contradiction ouverte avec l'ADR-0019.
 
@@ -105,7 +105,7 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 - [ ] **Première publication, manuelle** (le Trusted Publishing de crates.io ne peut être configuré que sur une crate **déjà publiée**) : revérifier que les noms sont toujours libres, `cargo publish --dry-run`, puis `cargo publish -p carbonfr-core` et `-p carbonfr-eligibility` (dans l'ordre des dépendances) avec un **jeton crates.io ponctuel**, révoqué juste après.
 - [ ] **Puis Trusted Publishing** pour les versions suivantes : déclarer le dépôt (`Kovelt/carbon-fr`, workflow `release-crates.yml`) comme *trusted publisher* sur la page de chaque crate ; workflow `release-crates.yml` avec OIDC GitHub (`id-token: write`, comme `release-sdk.yml` pour npm), déclenché par le tag `vX.Y.Z`.
 - [ ] **Suivi docs.rs pendant 24–48 h** (l'environnement de build peut différer du local ; remédiation = version patch). Badges crates.io/docs.rs dans le README.
-- [ ] **Ensuite seulement, `reqwest` 0.12 → 0.13** : feature `rustls-tls` renommée ; `query` devient une feature à activer (adapters ODRÉ, ENTSO-E, météo) ; **fixer explicitement le provider crypto `ring`** (cohérent avec `sqlx` en `tls-rustls-ring`) pour éviter un double provider `ring`/`aws-lc-rs` qui paniquerait au démarrage. Tester d'abord le resolver anti-SSRF des webhooks (`PublicOnlyResolver`, ADR-0016), puis **démarrer le binaire complet**, pas seulement `cargo check`.
+- [ ] **Ensuite seulement, `reqwest` 0.12 → 0.13** : feature `rustls-tls` renommée ; `query` devient une feature à activer (adapters ODRÉ, ENTSO-E, météo) ; **fixer explicitement le provider crypto `ring`** (cohérent avec `sqlx` en `tls-rustls-ring`) pour éviter un double provider `ring`/`aws-lc-rs` qui paniquerait au démarrage. ⚠️ En `rustls-no-provider`, `reqwest` 0.13 vérifie les certificats via `rustls-platform-verifier`, qui lit le **magasin système** : le paquet `ca-certificates` du `Dockerfile` redevient alors indispensable (commentaire à mettre à jour). Tester d'abord le resolver anti-SSRF des webhooks (`PublicOnlyResolver`, ADR-0016), puis **démarrer le binaire complet**, pas seulement `cargo check`.
 
 **Sortie** : fiches crates.io et pages docs.rs des deux crates en ligne ; trusted publisher configuré (plus aucun jeton nécessaire pour les versions suivantes) ; `reqwest` 0.13 en prod, doublon `tower-http` résorbé, tests anti-SSRF verts.
 
@@ -200,11 +200,11 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 
 ## Actions hors code (Morgan)
 
-- [ ] Comparer l'empreinte SSH du VPS depuis le fixe : `ssh-keygen -lF 46.225.108.44` doit afficher `SHA256:4+SU2XlJ80JLKah4ySqu1AD2RxtaleMBAuXCEx+/rZ8`.
-- [ ] Journaux Dependabot (GitHub → Insights → Dependency graph → Dependabot) : pourquoi `reqwest` 0.13 n'a jamais été proposé.
-- [ ] Activer « Automatically delete head branches » (Settings → General → Pull Requests).
+- [ ] Comparer l'empreinte SSH du VPS vue depuis le fixe avec celle enregistrée sur le portable (valeurs dans la mémoire locale d'exploitation, jamais dans ce dépôt public).
+- [x] Journaux Dependabot : pourquoi `reqwest` 0.13 n'a jamais été proposé — feature `rustls-tls` supprimée en 0.13, montée non résoluble automatiquement (cf. I2).
+- [x] Activer « Automatically delete head branches » (Settings → General → Pull Requests) — actif (constaté au merge de #115).
 - [ ] Envoyer la demande de licence à cdo@ademe.fr (débloque H6 v2).
 - [ ] Avant I5 : créer ou vérifier le compte crates.io ; générer un jeton ponctuel pour la première publication (le révoquer juste après), puis déclarer `Kovelt/carbon-fr` comme *trusted publisher* sur `carbonfr-core` et `carbonfr-eligibility`.
 - [ ] En I6 : même chose pour `carbonfr-sdk` (déclaration distincte, possible seulement après sa première publication).
-- [ ] I1 : fournir le token ENTSO-E pour le rejeu live, ou le lancer soi-même.
+- [x] I1 : fournir le token ENTSO-E pour le rejeu live, ou le lancer soi-même — rejoué le 2026-09-23 avec le token de prod, sans l'afficher.
 - [ ] I1 : dans Uptime Kuma (`status.<domaine>`), créer un canal de notification (e-mail SMTP, déjà configuré pour les sauvegardes) et l'attacher aux sondes « API /health » et « fraîcheur données » ; optionnellement une 3ᵉ sonde sur les alertes Prometheus actives.

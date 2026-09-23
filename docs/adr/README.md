@@ -28,7 +28,7 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0016](0016-webhooks.md) | Webhooks : notification sortante signée, gardée par l'ownership de clé | Accepté (implémenté) |
 | [0017](0017-endpoint-echanges-transfrontaliers.md) | Endpoint public des échanges transfrontaliers (ENTSO-E) | Accepté (implémenté) |
 | [0018](0018-derivation-renouvelable.md) | Dérivation renouvelable météo→production (prévision météo-pilotée écartée) | Accepté (engagé) |
-| [0019](0019-politique-de-versionnement.md) | Politique de versionnement (4 axes découplés : appli, API, méthodo, SDK) | Accepté (engagé) |
+| [0019](0019-politique-de-versionnement.md) | Politique de versionnement (4 axes découplés : appli, API, méthodo, SDK ; 5ᵉ axe crates.io par addendum) | Accepté (engagé), amendé par ADR-0030 |
 | [0020](0020-politique-de-depreciation.md) | Politique de dépréciation (préavis, en-têtes `Deprecation`/`Sunset`, fenêtre de retrait) — complète ADR-0019 | Accepté |
 | [0021](0021-format-erreur-rfc9457.md) | Format d'erreur : Problem Details (RFC 9457, `application/problem+json` + code stable) | Accepté |
 | [0022](0022-observabilite-metrics.md) | Observabilité : exposition Prometheus `/metrics` (registre maison, fraîcheur poller, quota amont) | Accepté |
@@ -41,6 +41,8 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0027](0027-politique-contribution-verrouillage-branche.md) | Politique de contribution & verrouillage de `main` (ruleset Phase A solo → Phase B ouverte, `bypass_actors` vide) | Accepté |
 | [0028](0028-prevision-part-renouvelable-eligibilite.md) | Prévision de la part renouvelable pour l'éligibilité rfnbo (`share-clim@1` : climatologie + intervalle calibré, gate backtest) | Accepté |
 | [0029](0029-carte-electrolyseurs-carbone-live.md) | Carte « électrolyseurs × carbone live » (couche B-light : page auto-contenue `/hydrogene`, sources EHO/IGN/Natural Earth, licences vérifiées) | Accepté |
+| [0030](0030-politique-publication-crates-io.md) | Politique de publication crates.io : `carbonfr-core` + `carbonfr-eligibility` (versions couplées au workspace, `#[non_exhaustive]` enum par enum, MSRV 1.88, 1re publication manuelle puis Trusted Publishing) — amende ADR-0019 | Accepté |
+| [0031](0031-conception-sdk-rust.md) | Conception du SDK Rust `carbonfr-sdk` (écriture manuelle + test de parité OpenAPI, `reqwest` 0.13 + `ring`, SSE `eventsource-stream`, axe `rust-sdk-v*`) | Accepté |
 
 ## Gabarit
 

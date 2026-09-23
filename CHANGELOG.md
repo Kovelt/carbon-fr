@@ -20,6 +20,17 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `sqlx`) : *lock only*, aucune contrainte de `Cargo.toml` touchée, aucun
   changement d'API.
 
+### CI
+
+- **Durcissement des workflows (état des lieux 2026-09)** — `ci.yml` passe en
+  **moindre privilège** (`permissions: contents: read`, comme `release*.yml`) ;
+  les **21 références d'actions** des trois workflows sont **épinglées par SHA
+  de commit** (un tag est réécrivable par le mainteneur de l'action),
+  commentaire de version conservé pour Dependabot. **Alerte sur le scan
+  planifié** : un échec du run quotidien ouvre une issue « CI planifiée en échec
+  sur main » (ou la commente si elle est ouverte) — l'échec `cargo-deny` sur
+  RUSTSEC-2026-0285 était passé inaperçu 8 jours. Vérifié par `actionlint`.
+
 ## [0.7.1] - 2026-08-16
 
 Solde des mineures de l'audit 2026-08 (vérifiées adversarialement) : cohérence

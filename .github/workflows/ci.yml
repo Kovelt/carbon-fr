@@ -14,6 +14,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Moindre privilège : la CI ne fait que lire le dépôt. Seul le job d'alerte
+# (scan planifié en échec) reçoit en plus le droit d'écrire des issues.
+# Les actions sont épinglées par SHA de commit (un tag est réécrivable par le
+# mainteneur de l'action) ; Dependabot (github-actions) met SHA et commentaire
+# de version à jour.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -22,14 +30,14 @@ jobs:
     name: fmt + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Toolchain Rust stable (fmt, clippy)
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Format
         run: cargo fmt --all --check
@@ -41,12 +49,12 @@ jobs:
     name: cargo-deny (licences + advisories)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       # L'action installe cargo-deny et lance les quatre contrôles
       # (advisories, bans, licenses, sources) selon ./deny.toml.
       - name: cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@v2
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check
 
@@ -73,11 +81,11 @@ jobs:
       # Les migrations sont appliquées par le test lui-même.
       DATABASE_URL: postgres://postgres:postgres@localhost:5432/carbonfr_test
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Tests du workspace
         # Les tests ODRÉ « live » sont #[ignore] (réseau + quota) : non exécutés.
@@ -87,9 +95,9 @@ jobs:
     name: build release (artefact déployable)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # Garantit que le binaire de prod compile (profil release optimisé) et que
       # le lockfile est cohérent (`--locked`).
       - name: Build du serveur (release)
@@ -102,8 +110,8 @@ jobs:
       run:
         working-directory: sdk/typescript
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: 20
           cache: npm
@@ -112,3 +120,32 @@ jobs:
         run: npm ci
       - name: Typecheck + build
         run: npm run build
+
+  # Le scan quotidien a échoué 8 jours d'affilée (RUSTSEC-2026-0285, sept.
+  # 2026) sans que personne ne le voie : un échec du run PLANIFIÉ ouvre une
+  # issue (ou la commente si elle est déjà ouverte) — visible et notifiée.
+  alerte-scan-planifie:
+    name: Alerte (scan planifié en échec)
+    needs: [lint, deny, test, build-release, sdk-typescript]
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Ouvrir ou commenter l'issue d'alerte
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: "CI planifiée en échec sur main"
+        run: |
+          NUM="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 100 \
+            --json number,title --jq ".[] | select(.title == \"$TITLE\") | .number" | head -n1)"
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --repo "$GITHUB_REPOSITORY" \
+              --body "Toujours en échec : $RUN_URL"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body "$(printf '%s\n\n%s\n\n%s' \
+              "Le run planifié de la CI a échoué sur \`main\` : $RUN_URL" \
+              "Cause la plus fréquente : un nouvel avis RustSec (job \`cargo-deny\`) sur une dépendance, souvent transitive — que Dependabot ne met pas à jour. Correctif type : \`cargo update -p <crate>\` dans une PR." \
+              "Fermer l'issue une fois \`main\` de nouveau verte.")"
+          fi

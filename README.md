@@ -182,7 +182,7 @@ docker run -e DATABASE_URL=postgres://… -e CARBONFR_VISIT_SALT=… -p 8080:808
 
 Configuration via variables d'environnement — voir [`.env.example`](.env.example). Sondes : `GET /health` (liveness) et `GET /health/ready` (vérifie la base). Métriques **Prometheus** sous `GET /metrics` (fraîcheur du poller, volume ingéré, appels amont — à restreindre au scrapeur côté proxy en prod). Les migrations sont appliquées au démarrage.
 
-Outre le serveur, le binaire expose des **sous-commandes** *one-shot* : `backfill` (rapatrie l'historique par export de masse — prérequis de `/intensity/date`, `/intensity/stats` et de la prévision), `mint-key` (délivre une clé API), les `backtest*` (`backtest`, `-acv`, `-sweep`, `-bands`, `-renewable`, `-share`, `-share-meteo`) / `train` / `analyze-renewable-signal` (évaluation, entraînement et *gates* des modèles de prévision) et `--version`.
+Outre le serveur, le binaire expose des **sous-commandes** *one-shot* : `backfill` (rapatrie l'historique par export de masse — prérequis de `/intensity/date`, `/intensity/stats` et de la prévision), `mint-key` (délivre une clé API), `list-keys` / `revoke-key` (liste les clés par empreinte, révoque une clé et ses abonnements webhook), les `backtest*` (`backtest`, `-acv`, `-sweep`, `-bands`, `-renewable`, `-share`, `-share-meteo`) / `train` / `analyze-renewable-signal` (évaluation, entraînement et *gates* des modèles de prévision) et `--version`.
 
 ## Méthodologie & données
 

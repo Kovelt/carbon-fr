@@ -120,7 +120,7 @@ RTE **révise** ses données : le temps réel du mois M est remplacé par des do
 
 - Table `measurement` simple, index sur `(region, horodatage)` et sur `(region, methodology, at)`. Le partitionnement **déclaratif par plage temporelle** (mensuel) reste **reporté** (à reconsidérer maintenant que l'historique complet est ingéré) : les insertions arrivent ordonnées dans le temps ; les révisions sont des `UPDATE` ciblés (upsert), pas une remise en cause de l'ordre physique. L'index `BRIN` sur l'horodatage est en place depuis la migration `0012` (audit perf 2026-08 : il borne le scan du rafraîchissement des rollups aux blocs des 7 derniers jours).
 - **Rollups** (horaire/journalier) pour les statistiques et le modèle : initialement des **vues matérialisées** (migration `0002`), désormais de **vraies tables incrémentales** upsertées par seau (migration `0010`, lecture inchangée) et rafraîchies par le poller. Le rafraîchissement doit être déclenché après toute révision touchant la période agrégée.
-- Autour de `measurement` gravitent les **tables satellites** : `consumption` (charge), `weather_forecast` (météo, clé `(run_at, valid_at)` anti-fuite), `cross_border_flow` (ENTSO-E), `spot_price` (prix spot A44), `api_key`, `webhook_subscription` et `visit` — cf. `crates/adapter-postgres/migrations/`.
+- Autour de `measurement` gravitent les **tables satellites** : `consumption` (charge), `weather_forecast` (météo, clé `(run_at, valid_at)` anti-fuite), `cross_border_flow` (ENTSO-E), `spot_price` (prix spot A44), `api_key`, `webhook_subscription` (clé étrangère vers `api_key`, `ON DELETE CASCADE`, migration `0013` : pas d'abonnement orphelin après une révocation) et `visit` — cf. `crates/adapter-postgres/migrations/`.
 - Choix **réversible** : le port `IntensityRepository` permet d'ajouter un adapter TimescaleDB plus tard si le volume ou l'ingestion l'exigent.
 
 ## 6. Méthodologie carbone
@@ -181,7 +181,7 @@ L'API est **live** sur un VPS géré par Kovelt (détails et alternatives : **AD
 - **DNS** : sous-domaine Kovelt (`carbon-fr-api.kovelt.fr`).
 - **Contrat d'URL** : l'API est versionnée dans le chemin (`/v1/…`) dès le départ, pour migrer de domaine ou faire évoluer l'API sans casser les intégrations.
 
-> Configuration par variables d'environnement (`DATABASE_URL` requis ; `CARBONFR_BIND`, `CARBONFR_POLL_SECS`, `CARBONFR_TRUST_PROXY`, `CARBONFR_VISIT_SALT`, `CARBONFR_RATELIMIT_ENABLED`, `CARBONFR_ENTSOE_TOKEN` (active `acv-ademe@2` + `/price`), `CARBONFR_*_CALIBRATE_WEEKS`, …) — voir `.env.example`. Sous-commandes : `backfill`, `backtest`/`-sweep`/`-bands`/`-acv`/`-renewable`/`-share`/`-share-meteo`, `analyze-renewable-signal`, `train`, `mint-key`.
+> Configuration par variables d'environnement (`DATABASE_URL` requis ; `CARBONFR_BIND`, `CARBONFR_POLL_SECS`, `CARBONFR_TRUST_PROXY`, `CARBONFR_VISIT_SALT`, `CARBONFR_RATELIMIT_ENABLED`, `CARBONFR_ENTSOE_TOKEN` (active `acv-ademe@2` + `/price`), `CARBONFR_*_CALIBRATE_WEEKS`, …) — voir `.env.example`. Sous-commandes : `backfill`, `backtest`/`-sweep`/`-bands`/`-acv`/`-renewable`/`-share`/`-share-meteo`, `analyze-renewable-signal`, `train`, `mint-key`, `list-keys`, `revoke-key`.
 
 ## 10. Sources de données & références
 

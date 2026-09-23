@@ -26,6 +26,10 @@
 //!   `gbdt@1` à `climatology@1` au backtest (garde de promotion).
 //! - `mint-key` : délivre une clé API tier gratuit (ADR-0015) — stocke son
 //!   empreinte, affiche la clé une seule fois.
+//! - `list-keys` : liste les clés API (empreinte, tier, création, abonnements
+//!   webhook, libellé) — jamais la clé en clair, qui n'est pas stockée.
+//! - `revoke-key` : révoque une clé (`CARBONFR_REVOKE_KEY` = clé `cfr_…` ou son
+//!   empreinte) et supprime ses abonnements webhook (ADR-0015, addendum 2026-09).
 //! - `--version` / `-V` : imprime la version du build et sort (ADR-0019).
 //!
 //! ## Configuration (variables d'environnement)
@@ -60,6 +64,7 @@
 //! | `CARBONFR_RATELIMIT_ANON_PER_MIN` | `60`      | quota anonyme (req/min)            |
 //! | `CARBONFR_RATELIMIT_FREE_PER_MIN` | `600`     | quota clé gratuite (req/min)        |
 //! | `CARBONFR_KEY_LABEL`         | `` (vide)      | `mint-key` : libellé de la clé      |
+//! | `CARBONFR_REVOKE_KEY`        | — (requis par `revoke-key`) | `revoke-key` : clé `cfr_…` ou son empreinte (64 hex, cf. `list-keys`) |
 //! | `CARBONFR_TRUST_PROXY`       | `0` (off)      | faire confiance à `X-Forwarded-For` (derrière un reverse proxy) |
 //! | `CARBONFR_REAL_IP_HEADER`    | (non défini)   | en-tête d'IP réelle dédié (ex. `x-real-ip`) — **uniquement** si le proxy l'écrase systématiquement ; défaut = dernier segment de `X-Forwarded-For` (audit 2026-08) |
 //! | `CARBONFR_DB_MAX_CONNECTIONS` | `20`         | taille du pool PostgreSQL           |
@@ -138,9 +143,11 @@ async fn main() -> anyhow::Result<()> {
         Some("backtest-share-meteo") => run_backtest_share_meteo().await,
         Some("train") => run_train().await,
         Some("mint-key") => run_mint_key().await,
+        Some("list-keys") => run_list_keys().await,
+        Some("revoke-key") => run_revoke_key().await,
         Some(other) => {
             anyhow::bail!(
-                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `backtest-renewable`, `analyze-renewable-signal`, `backtest-share`, `backtest-share-meteo`, `train`, `mint-key`, ou aucune pour servir l'API)"
+                "sous-commande inconnue : « {other} » (attendu : `backfill`, `backtest`, `backtest-acv`, `backtest-sweep`, `backtest-bands`, `backtest-renewable`, `analyze-renewable-signal`, `backtest-share`, `backtest-share-meteo`, `train`, `mint-key`, `list-keys`, `revoke-key`, ou aucune pour servir l'API)"
             )
         }
     }
@@ -397,6 +404,82 @@ async fn run_mint_key() -> anyhow::Result<()> {
     println!("Clé API (tier gratuit) — à conserver, non ré-affichée :");
     println!("{key}");
     Ok(())
+}
+
+/// Mode `list-keys` : liste les clés enregistrées pour retrouver celle à
+/// révoquer — empreinte, tier, date de création, abonnements webhook, libellé.
+/// Jamais de clé en clair (elle n'est pas stockée) ; l'empreinte n'est pas un
+/// secret (elle ne permet pas de s'authentifier).
+async fn run_list_keys() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let repo = connect_repo(&database_url).await?;
+    let keys = repo.list_keys().await.context("lecture des clés")?;
+    if keys.is_empty() {
+        println!("Aucune clé enregistrée.");
+        return Ok(());
+    }
+    println!("empreinte\ttier\tcréée le\twebhooks\tlibellé");
+    for key in keys {
+        let tier = match key.tier {
+            Some(ApiTier::Free) => "free",
+            None => "inconnu",
+        };
+        let created = key
+            .created_at
+            .format(&Rfc3339)
+            .unwrap_or_else(|_| key.created_at.to_string());
+        println!(
+            "{}\t{tier}\t{created}\t{}\t{}",
+            key.key_hash, key.subscriptions, key.label
+        );
+    }
+    Ok(())
+}
+
+/// Mode `revoke-key` : révoque la clé désignée par `CARBONFR_REVOKE_KEY` (clé en
+/// clair `cfr_…`, ou son empreinte telle qu'affichée par `list-keys`) et
+/// supprime ses abonnements webhook, atomiquement (ADR-0015, addendum 2026-09).
+/// Échoue si aucune clé ne correspond. Une instance en cours peut encore
+/// accepter la clé jusqu'à 60 s (cache positif de l'adapter HTTP).
+async fn run_revoke_key() -> anyhow::Result<()> {
+    let database_url =
+        std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
+    let raw = std::env::var("CARBONFR_REVOKE_KEY").context(
+        "la variable CARBONFR_REVOKE_KEY est requise (clé `cfr_…` ou son empreinte, cf. `list-keys`)",
+    )?;
+    let hash = revocation_target(&raw)?;
+    let repo = connect_repo(&database_url).await?;
+    match repo
+        .revoke_key(&hash)
+        .await
+        .context("révocation de la clé")?
+    {
+        Some(revocation) => {
+            println!(
+                "Clé révoquée (empreinte {hash}) — {} abonnement(s) webhook supprimé(s). \
+                 Les instances en cours peuvent encore l'accepter jusqu'à 60 s (cache).",
+                revocation.subscriptions_removed
+            );
+            Ok(())
+        }
+        None => anyhow::bail!("aucune clé ne correspond à l'empreinte {hash} (cf. `list-keys`)"),
+    }
+}
+
+/// Empreinte visée par `revoke-key` : la clé en clair (`cfr_…`, hachée ici comme
+/// à la délivrance) ou directement son empreinte (SHA-256, 64 caractères hex).
+fn revocation_target(raw: &str) -> anyhow::Result<String> {
+    let raw = raw.trim();
+    if raw.starts_with("cfr_") {
+        return Ok(key_fingerprint(raw));
+    }
+    if raw.len() == 64 && raw.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Ok(raw.to_ascii_lowercase());
+    }
+    anyhow::bail!(
+        "CARBONFR_REVOKE_KEY doit être une clé `cfr_…` ou son empreinte (64 caractères hex, cf. `list-keys`)"
+    )
 }
 
 /// Génère une clé aléatoire `cfr_<64 hex>` (32 octets, CSPRNG userspace `rand` —
@@ -2054,7 +2137,24 @@ fn init_tracing() {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_poll_secs;
+    use super::{parse_poll_secs, revocation_target};
+
+    /// `revoke-key` accepte la clé en clair (hachée comme à la délivrance) ou son
+    /// empreinte (casse normalisée), et refuse tout le reste plutôt que de
+    /// chercher une empreinte qui ne peut pas exister.
+    #[test]
+    fn revocation_target_accepts_key_or_fingerprint() {
+        let key = "cfr_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let hash = carbonfr_adapter_http::key_fingerprint(key);
+        assert_eq!(revocation_target(key).unwrap(), hash);
+        assert_eq!(revocation_target(&format!("  {key}\n")).unwrap(), hash);
+        assert_eq!(revocation_target(&hash).unwrap(), hash);
+        assert_eq!(revocation_target(&hash.to_ascii_uppercase()).unwrap(), hash);
+        assert!(revocation_target("").is_err());
+        assert!(revocation_target("projet-test").is_err());
+        assert!(revocation_target(&hash[..63]).is_err());
+        assert!(revocation_target(&format!("{}z", &hash[..63])).is_err());
+    }
 
     /// Audit 2026-08 : `CARBONFR_POLL_SECS=0` était accepté à la config puis
     /// faisait paniquer le poller (`tokio::time::interval` refuse une période

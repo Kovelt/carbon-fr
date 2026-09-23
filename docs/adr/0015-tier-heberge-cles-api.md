@@ -108,7 +108,7 @@ Décider « cible = tier gratuit » **n'oblige pas à le construire tout de suit
 
 ## Questions ouvertes (implémentation — n'impactent pas le principe)
 
-- Délivrance de clé : lien magique vs clé par email simple ; politique de rotation/révocation.
+- Délivrance de clé : lien magique vs clé par email simple ; politique de rotation (la **révocation** est livrée, cf. addendum 2026-09-23).
 - Limites chiffrées par niveau (anonyme vs clé) et fenêtres de rate-limit.
 - Granularité et rétention du métering (`UsageMeter`).
 - Surface de gestion : endpoint `/v1/keys` vs petit portail sur le site statique (o2switch, ADR-0007).
@@ -124,3 +124,17 @@ Précision de **positionnement** (sans modifier la décision : §7 « payant = e
 - **Conséquence inter-ADR :** la précaution « confirmation écrite de réutilisation à demander à RTE avant un palier payant » (ADR-0024 §risques) reste **en veille** — elle ne se réactive que si un tel tier payant venait à s'appuyer spécifiquement sur la donnée **RTE**. Tant que le service est gratuit/d'intérêt général, la réutilisation des chiffres-faits publics est couverte sans démarche commerciale (CRPA + faits non protégés).
 
 En somme : **gratuit par nature, payant par exception** (et seulement contre l'abus de bande passante commercial), sans jamais déplacer la barrière devant la donnée ou la mesure.
+
+## Addendum (2026-09-23) — Révocation de clé
+
+Jusqu'ici `mint-key` ne faisait qu'upserter : une clé compromise ne pouvait être invalidée que par du SQL à la main. **Livré** : deux sous-commandes d'exploitation, derrière le même port `ApiKeyRepository` (deux méthodes ajoutées, `core` toujours sans IO).
+
+- **`list-keys`** : empreinte, tier, date de création, nombre d'abonnements webhook, libellé. L'empreinte (SHA-256 d'un aléa de 256 bits) n'est **pas un secret** — elle ne permet pas de s'authentifier — et suffit à désigner la clé : l'opérateur n'a jamais la clé en clair.
+- **`revoke-key`** (`CARBONFR_REVOKE_KEY` = clé `cfr_…` ou son empreinte) : supprime la clé **et ses abonnements webhook dans la même transaction**. Un abonnement orphelin continuerait d'être livré alors qu'aucune clé ne peut plus le lister ni le supprimer ; il disparaît donc avec sa clé. Empreinte inconnue → échec explicite (code de sortie ≠ 0), rien n'est touché.
+- **Invariant porté par la base** (migration `0013`) : clé étrangère `webhook_subscription.owner_key_hash → api_key.key_hash`, `ON DELETE CASCADE`. La revue adversariale a montré qu'un `POST /v1/webhooks` concurrent d'une révocation pouvait, sans elle, laisser un abonnement orphelin (l'authentification du handler précède la transaction de création). `revoke_key` verrouille aussi la ligne de la clé (`FOR UPDATE`) : une création en vol se termine d'abord (son abonnement est compté puis supprimé) ou échoue après la révocation. Les orphelins éventuels hérités sont purgés par la migration.
+
+Choix assumés :
+
+- **Suppression franche**, pas de révocation « douce » (`revoked_at`) : au volume du tier gratuit, l'historique d'une clé révoquée n'apporte rien et la minimisation des données prime ; ré-émettre une clé coûte un `mint-key`. Réversible si un besoin d'audit apparaît (colonne + filtre derrière le même port).
+- **Propagation ≤ 60 s** : la révocation s'exécute dans un autre processus que le serveur ; une instance en cours peut accepter la clé jusqu'à l'expiration de son cache positif (TTL 60 s, `adapter-http`). Acceptable pour le tier gratuit ; un besoin d'immédiateté passerait par une invalidation explicite (non prévue).
+

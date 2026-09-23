@@ -8,6 +8,28 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Modifié
+
+- **`/v1/price` : millésime TRV `2026-H2` à partir du 1/8/2026**
+  ([addendum ADR-0023](docs/adr/0023-affichage-prix-electricite.md)) — la
+  construction du 1er semestre était appliquée à tout horodatage, alors qu'au
+  1/8/2026 le TURPE a été revalorisé (+3,04 %, CRE délib. n°2026-105) et
+  l'accise a baissé (30,85 → **30,62 €/MWh**, délib. n°2026-147). Nouveau
+  millésime (TURPE **79,43 €/MWh** recalculé sur la grille officielle,
+  commercialisation 18,11 maintenue faute de total republié, TVA 20 %) et
+  **sélection par horodatage** : chaque point, y compris dans
+  `/v1/price/date`, reçoit la construction de sa période de validité (bascule
+  à minuit, heure de Paris). Le champ `vintage` vaut `2026-H2` après la
+  bascule ; le millésime `2026` n'est pas modifié. Schéma inchangé.
+- **Rulesets d'éligibilité : échéances réglementaires mises à jour** (texte
+  `legal_basis` servi par `/v1/eligibility/rulesets`) — consultation nucléaire
+  du considérant 7 du 2025/2359 **non lancée au 2026-09-23** (échéance non
+  contraignante du 30/06/2026 dépassée) ; révision ciblée RFNBO **annoncée
+  pour l'automne 2026** (déclaration orale de la DG ENER en audition ITRE du
+  14/07/2026, rapportée par la presse, sans texte officiel), aucun projet
+  publié. Dates et états seulement, cadrage inchangé ; seuils et verdicts
+  inchangés.
+
 ### CI
 
 - **Tests d'intégration sur PostgreSQL 17** (`postgres:16-alpine` →

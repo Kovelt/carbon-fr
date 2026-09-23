@@ -62,7 +62,7 @@ impl<R: IntensityRepository, P: SpotPriceRepository> GetElectricityPrice<R, P> {
             region,
             &spot,
             &mix,
-            &TrvReference::trv_2026(),
+            &TrvReference::in_force_at(base.at),
         ))
     }
 
@@ -88,7 +88,7 @@ impl<R: IntensityRepository, P: SpotPriceRepository> GetElectricityPrice<R, P> {
         Ok(price_series(
             &measurements,
             &spots,
-            &TrvReference::trv_2026(),
+            TrvReference::in_force_at,
         ))
     }
 }

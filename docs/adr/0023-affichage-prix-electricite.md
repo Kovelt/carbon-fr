@@ -113,3 +113,16 @@ Création d'un endpoint dédié `/price` plutôt qu'enrichissement de `/mix`. Ju
 ## Suite
 
 Une fois cet ADR ratifié (et le point 3 tranché), préparation d'un **brief d'implémentation pour Claude Code** : définition du/des port(s), schéma de la réponse `/price`, stratégie de millésime des références réglementaires, spécification OpenAPI et couverture SDK.
+
+## Addendum (2026-09-23) — Millésime `2026-H2` et sélection par horodatage
+
+**Constat.** Le 1/8/2026, la grille TURPE 7 HTA-BT a évolué de **+3,04 %** (CRE, délib. n°2026-105 du 21/05/2026 ; le terme Rf est indexé à part) et l'accise sur l'électricité des ménages ≤ 36 kVA est passée de 30,85 à **30,62 €/MWh** (CRE, délib. TRVE n°2026-147 du 15/07/2026 ; LF 2026, art. 71-72). `TrvReference::trv_2026()` était pourtant appliqué **en dur** à tout horodatage : du 1/8 au 23/9/2026, `/v1/price` a servi la construction du 1er semestre au-delà de sa période de validité (écart d'environ +1,2 €/MWh HT, TURPE et accise cumulés).
+
+**Décision.**
+
+1. **Nouveau millésime `2026-H2`** (`TrvReference::trv_2026_h2`), en vigueur à partir du **1/8/2026 à 00:00, heure de Paris** : TURPE **79,43 €/MWh**, recalculé avec la **même conversion** que 2026 sur la grille officielle de l'annexe 2 de la délib. n°2026-105 (part fixe 102,31 €/an → 42,63 €/MWh à 2 400 kWh ; part variable CU4, moyenne simple des 4 plages : 36,80 €/MWh) ; accise **30,62 €/MWh** (socle 24,69 + majoration ZNI 5,93) ; commercialisation **18,11 €/MWh HT maintenue** (la délib. n°2026-147 ne republie pas de total, seulement des écarts partiels) ; TVA 20 %. Le millésime `2026` publié **n'est pas modifié**.
+2. **Sélection par horodatage** (`TrvReference::in_force_at`) : chaque point est décomposé avec la construction **de sa propre période de validité** — y compris dans une série `/v1/price/date` à cheval sur la bascule. Le prix étant dérivé à la lecture (rien de stocké), l'historique depuis le 1/8/2026 est corrigé dès le déploiement.
+3. **Champ `vintage`** de la réponse : `2026` avant la bascule, `2026-H2` après. Nouvelle valeur, aucun changement de schéma.
+
+**Récurrence.** Les TRVE et l'accise changent d'ordinaire au **1er février**, le TURPE au **1er août** : chaque changement donne un nouveau millésime et une nouvelle borne dans `in_force_at` (échéances suivies dans [`docs/plan-iterations.md`](../plan-iterations.md)). Validation des chiffres : recherche sur sources primaires, puis contre-vérification indépendante (PDF CRE relus page à page, Légifrance, guide fiscal DGEC).
+

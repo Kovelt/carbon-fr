@@ -63,7 +63,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # Même version majeure que la prod (PostgreSQL 17) : un comportement
+        # propre à la 17 doit casser ici, pas en production.
+        image: postgres:17-alpine
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: carbonfr_test

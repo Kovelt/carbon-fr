@@ -1,7 +1,7 @@
 # Plan de la suite — itérations I0 → I7 (à partir du 2026-09-23)
 
 - **Statut** : document vivant — cocher les cases au fil des PR, dater chaque révision en tête.
-- **Dernière mise à jour** : 2026-09-23 (I0 : v0.7.2 déployée, #100 et #101 mergées, release v0.8.0 en PR).
+- **Dernière mise à jour** : 2026-09-23 (I0 terminée hors fermeture des issues #76/#81 ; I1 démarrée).
 - **Sources** : état des lieux multi-agents du 2026-09-23 (constats revérifiés contre le code), recherche en 4 volets (préparation crates.io, backlog consolidé des ADR/roadmaps, montées majeures des dépendances, échéances datées), 3 plans concurrents (« fiabilité d'abord », « adoption d'abord », « valeur métier d'abord ») départagés par un juge. Base retenue : **valeur métier d'abord**, avec les greffes des deux autres.
 - **Horizon** : 13 à 17 semaines selon les itérations, soit vers mi-janvier 2027 au rythme d'un mainteneur seul assisté de Claude Code. Les durées sont des ordres de grandeur, pas des engagements.
 - **Liens** : feuille de route produit dans le [README](../README.md#feuille-de-route), [roadmap hydrogène](roadmap-hydrogene.md), [index des ADR](adr/README.md), [CHANGELOG](../CHANGELOG.md).
@@ -41,7 +41,7 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 - [x] **Release v0.7.2** (#99, déployée le 2026-09-23) (`rustls` 0.23.45, RUSTSEC-2026-0285) : PR `chore(release)`, tag, image GHCR, **déploiement** selon la procédure de la mémoire locale `prod-vps-kovelt-acces`.
 - [x] Rebaser puis merger `feat/revoke-key` (#100) (migration 0013 : FK `webhook_subscription → api_key` `ON DELETE CASCADE`), puis `feat/webhook-auto-disable` (#101, migration 0014).
 - [x] Vérifier que `status`/`disabled_at` de `GET /v1/webhooks` sont bien **additifs** (diff du snapshot OpenAPI v0.7.2 → main : ajouts seulement) pour les clients du SDK TS 0.1.0 déjà publié (champs ignorés, rien de retiré).
-- [ ] **Release v0.8.0** (migrations 0013 + 0014) : dump de la base juste avant le déploiement (comme avant la 0.2.1), déploiement, contrôle des migrations au démarrage.
+- [x] **Release v0.8.0** (#102, déployée le 2026-09-23 ; migrations 0013/0014 appliquées) (migrations 0013 + 0014) : dump de la base juste avant le déploiement (comme avant la 0.2.1), déploiement, contrôle des migrations au démarrage.
 - [ ] Fermer les issues de veille conclues #76 et #81.
 
 **Sortie** : `GET /v1/openapi.json` annonce `0.8.0` en prod ; migrations 0013/0014 appliquées sans erreur ; CI verte ; 0 PR ouverte ; #76/#81 fermées.
@@ -53,7 +53,7 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 
 - [ ] **TRV 2026-H2** (en premier : `/v1/price` sert une grille périmée depuis le 1/8/2026). Le code le signale lui-même (`crates/core/src/domain/price.rs`, caveat « +3,04 % au 1/8/2026 — à re-millésimer »). Sourcer la délibération CRE du TURPE 7 revalorisé et une éventuelle réindexation de l'accise ; créer un **nouveau millésime** `2026-H2` sans modifier `trv_2026()` (versions portées par la donnée) ; addendum ADR-0023 ; CHANGELOG.
 - [ ] **Restauration testée** : récupérer l'archive nocturne sur o2switch, la déchiffrer, restaurer le dump carbon-fr dans un PostgreSQL 17 jetable, comparer les comptes de lignes (`measurement`, `api_key`, `webhook_subscription`). Documenter la procédure dans `deploy/README.md` (**sans aucun secret** : chemins, commandes, RPO = 24 h, durée mesurée). Les sauvegardes étaient cassées du 2026-06-21 au 2026-09-23 : un test de restauration réel est le seul moyen de s'assurer qu'elles marchent vraiment.
-- [ ] **CI en PostgreSQL 17** (`postgres:16-alpine` → `postgres:17-alpine`), comme la prod (17.11).
+- [x] **CI en PostgreSQL 17** (`postgres:16-alpine` → `postgres:17-alpine`), comme la prod (17.11).
 - [ ] **Alerte de fraîcheur du poller** (formule de l'ADR-0022 : `time() - carbonfr_poller_last_success_timestamp_seconds > 2 × intervalle de poll`) dans le Prometheus du VPS ; la documenter dans `deploy/README.md` ; la tester en arrêtant volontairement le poller sur une instance de test.
 - [ ] **Rejeu live ENTSO-E** (`cargo test -p carbonfr-adapter-entsoe --test live -- --ignored`, token requis) : jamais rejoué depuis le correctif du parseur A03 (0.7.0) ni les montées de `quick-xml`. Dater le rejeu dans `crates/adapter-entsoe/src/lib.rs`.
 - [ ] **Dates réglementaires périmées dans `ruleset.rs`** (`legal_basis` : échéance du 30/06/2026 dépassée, révision RFNBO glissée à l'automne). ⚠️ Texte **servi** par `/v1/eligibility/rulesets` : reformuler à partir des sources de la veille #90, avec une relecture de neutralité (ADR-0026).

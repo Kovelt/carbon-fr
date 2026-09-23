@@ -15,6 +15,17 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   comportement propre à la 17 casse désormais en CI, pas en prod. Suite
   complète (migrations 0001 → 0014 comprises) validée localement sur 17.10.
 
+### Documentation
+
+- **Exploitation : supervision et sauvegarde/restauration** (`deploy/README.md`
+  §3-4) — règles d'alerte Prometheus de l'ADR-0022 désormais **versionnées**
+  (`deploy/prometheus/alerts.yml` : ingestion gelée, scrape en échec, erreurs
+  d'ingestion) avec l'extrait de configuration, sonde externe de fraîcheur
+  (JSONata), et rappel qu'une règle sans canal de notification ne prévient
+  personne. Procédure de **restauration testée** le 2026-09-23 (archive
+  distante → PostgreSQL 17 vierge : 5 s, sans erreur, comptages conformes ;
+  RPO 24 h, RTO ≈ 5 min), à rejouer chaque trimestre.
+
 ## [0.8.0] - 2026-09-23
 
 Exploitation du tier hébergé : **révocation de clé API** (`list-keys`,

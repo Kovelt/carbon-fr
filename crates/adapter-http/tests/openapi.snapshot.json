@@ -1916,11 +1916,11 @@
           "best_eligible": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/EligibleSlotBody",
                 "description": "Meilleur créneau éligible (score le plus bas), s'il en existe un."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -2381,11 +2381,11 @@
           "eligibility": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/EligibilityBody",
                 "description": "Overlay d'éligibilité électrolyseur (présent uniquement si `?eligibility=`)."
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -2790,11 +2790,11 @@
           "marginal_technology": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/MarginalTechnologyBody",
                 "description": "Technologie marginale **estimée** (ordre de mérite), ou `null`."
+              },
+              {
+                "type": "null"
               }
             ]
           },

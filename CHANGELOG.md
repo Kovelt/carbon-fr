@@ -8,6 +8,15 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Modifié
+
+- **`utoipa` 5 → 6.0** (génération de l'OpenAPI) — montée isolée, sans
+  modification de code : la feature `axum_extras` et les macros restent
+  compatibles. Seul effet sur le contrat publié : l'ordre des deux membres de
+  3 `oneOf` nullables (`best_eligible`, `eligibility`,
+  `marginal_technology`) s'inverse — sans effet pour un client (un `oneOf`
+  n'est pas ordonné). `openapi` reste `3.1.0`.
+
 ### Tests
 
 - **Livraison des webhooks testée de bout en bout** (`adapter-webhook`, de

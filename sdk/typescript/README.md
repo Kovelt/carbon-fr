@@ -2,7 +2,7 @@
 
 Client **TypeScript** de l'API [carbon-fr](https://github.com/Kovelt/carbon-fr) — l'intensité carbone de l'électricité française (gCO₂eq/kWh), souveraine et _dev-first_.
 
-- **Zéro dépendance runtime** (utilise `fetch` natif — navigateur, Node ≥ 18, Deno, Bun).
+- **Zéro dépendance runtime** (utilise `fetch` natif — navigateur, Node ≥ 22, Deno, Bun). Node 22 est le plancher testé en CI (plus ancienne LTS maintenue) ; le code n'utilise que `fetch`, disponible dès Node 18.
 - **Typé de bout en bout** : chaque endpoint de **données** `/v1` a sa méthode et son type de réponse (les endpoints d'exploitation/spec — `/health`, `/metrics`, `/v1/openapi.json` — ne sont pas exposés).
 - **Flux live** (SSE) exposé en `AsyncGenerator`.
 

@@ -13,6 +13,9 @@
 # maintenues du graphe de l'espace de travail aussi. Un crate « yanké »
 # (retiré de crates.io) fait échouer le contrôle.
 yanked = "deny"
+# Crates non maintenues : refusées sur TOUT le graphe (défaut de cargo-deny
+# ≥ 0.16, rendu explicite ici pour que le commentaire ci-dessus fasse foi).
+unmaintained = "all"
 # Avis à ignorer ponctuellement (id RustSec + justification). Vide par défaut.
 ignore = []
 
@@ -42,8 +45,15 @@ confidence-threshold = 0.8
 # ─── Bans / doublons ───────────────────────────────────────────────────────
 [bans]
 # Plusieurs versions d'une même caisse = avertissement, pas erreur : c'est
-# courant et hors de notre contrôle dans l'arbre transitif (hashbrown,
-# windows-sys, etc.). On le voit sans bloquer la CI.
+# courant et hors de notre contrôle dans l'arbre transitif. On le voit sans
+# bloquer la CI. Origine des doublons connus (relevé du 2026-09-23) — plutôt
+# que des `skip` qui deviendraient faux aux prochaines migrations :
+#   - `tower-http` 0.6            ← reqwest 0.12        → disparaît avec reqwest 0.13 (plan I5)
+#   - `webpki-roots` 0.26, `hashbrown` 0.15 ← sqlx 0.8 → disparaissent avec sqlx 0.9 (plan I7)
+#   - `rand`/`rand_core`/`getrandom` 0.8/0.6/0.2 ← gbdt 0.1 et sqlx-postgres 0.8
+#   - `syn` 2 et 3                ← macros procédurales tierces (transition de l'écosystème)
+#   - `cpufeatures`, `windows-*`, `redox_syscall` ← dépendances de plateforme (non compilées sous Linux)
+# Un NOUVEAU doublon hors de cette liste mérite un coup d'œil (`cargo tree -d`).
 multiple-versions = "warn"
 # Caisses dont l'usage est explicitement interdit (vide par défaut).
 deny = []

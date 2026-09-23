@@ -17,6 +17,18 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `marginal_technology`) s'inverse — sans effet pour un client (un `oneOf`
   n'est pas ordonné). `openapi` reste `3.1.0`.
 
+### CI
+
+- **Node.js hors fin de vie** (Node 20 : fin de vie le 2026-04-30) — le job
+  SDK de la CI compile sur **Node 22**, plancher désormais déclaré par le SDK
+  (`engines.node` : `>=18` → `>=22`, plus ancienne LTS maintenue) ; la
+  publication npm (`release-sdk.yml`) passe sur **Node 24** (LTS active). Le
+  code du SDK n'utilise toujours que `fetch` natif.
+- **`deny.toml`** : règle `unmaintained = "all"` rendue explicite (c'était déjà
+  le comportement par défaut de cargo-deny) ; origine documentée de chacun des
+  doublons de versions connus et migration qui le résorbera (`reqwest` 0.13,
+  `sqlx` 0.9), pour qu'un **nouveau** doublon se remarque.
+
 ### Tests
 
 - **Livraison des webhooks testée de bout en bout** (`adapter-webhook`, de

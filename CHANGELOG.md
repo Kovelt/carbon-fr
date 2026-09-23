@@ -6,6 +6,15 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### CI
+
+- **Tests d'intégration sur PostgreSQL 17** (`postgres:16-alpine` →
+  `postgres:17-alpine`), la version majeure de la production (17.11) : un
+  comportement propre à la 17 casse désormais en CI, pas en prod. Suite
+  complète (migrations 0001 → 0014 comprises) validée localement sur 17.10.
+
 ## [0.8.0] - 2026-09-23
 
 Exploitation du tier hébergé : **révocation de clé API** (`list-keys`,

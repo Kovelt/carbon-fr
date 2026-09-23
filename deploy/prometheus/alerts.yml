@@ -1,0 +1,38 @@
+# Règles d'alerte carbon-fr (ADR-0022) — référence versionnée, identique aux
+# règles de l'instance Kovelt. À charger via `rule_files` (cf. deploy/README.md
+# §3). ⚠️ Des règles SANS routage de notification (Alertmanager, ou un
+# superviseur externe) ne préviennent personne : elles ne sont visibles que
+# dans l'onglet Alerts de l'UI Prometheus.
+groups:
+  - name: carbon-fr
+    rules:
+      # Le scrape échoue (conteneur down, réseau, /metrics injoignable).
+      - alert: CarbonfrDown
+        expr: up{job="carbon-fr"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "carbon-fr injoignable au scrape (/metrics)"
+          description: "Aucune réponse de carbon-fr:8080/metrics depuis 5 min."
+
+      # Alerte phare (ADR-0022) : ingestion gelée. Poller par défaut = 900 s ;
+      # on alerte si aucun cycle réussi depuis > 2× l'intervalle (1800 s).
+      - alert: CarbonfrIngestionStale
+        expr: time() - carbonfr_poller_last_success_timestamp_seconds > 1800
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ingestion carbon-fr gelée (donnée RTE non rafraîchie)"
+          description: "Aucun cycle de poll réussi depuis plus de 30 min — l'API sert de la donnée potentiellement obsolète."
+
+      # Erreurs d'ingestion qui s'accumulent (régions en échec répété).
+      - alert: CarbonfrIngestionErrors
+        expr: increase(carbonfr_poller_ingest_errors_total[15m]) > 10
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Erreurs d'ingestion carbon-fr fréquentes"
+          description: "Plus de 10 échecs d'ingestion sur les 15 dernières minutes."

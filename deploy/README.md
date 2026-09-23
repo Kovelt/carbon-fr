@@ -82,3 +82,48 @@ Avec, côté service, **`CARBONFR_TRUST_PROXY=1`** (Traefik est le proxy de conf
 ```
 
 > ⚠️ `ipAllowList` filtre sur l'**IP source vue par Traefik**. Si Traefik est lui-même derrière un autre balanceur, régler `ipallowlist.ipstrategy.depth` pour lire la bonne IP dans `X-Forwarded-For` (sinon l'allow-list verrait l'IP du balanceur, pas celle du client). Le routeur principal `carbonfr` (rule `Host(...)` seule, priorité = longueur de règle) reste plus bas que `priority=100` : `/metrics` part donc bien sur le routeur restreint, tout le reste sur le routeur public.
+
+## 3. Supervision & alertes
+
+Deux couches complémentaires, **à relier à un canal de notification** (sans lui, une alerte déclenchée ne prévient personne) :
+
+1. **Prometheus** scrute `/metrics` sur le réseau interne (cf. ci-dessus) et évalue les règles de [`prometheus/alerts.yml`](prometheus/alerts.yml) (ADR-0022) :
+   - `CarbonfrIngestionStale` — **alerte phare** : aucun cycle de poll réussi depuis plus de 2 × l'intervalle (`time() - carbonfr_poller_last_success_timestamp_seconds > 1800` pour le défaut de 900 s ; à ajuster si `CARBONFR_POLL_SECS` change) ;
+   - `CarbonfrDown` — scrape en échec depuis 5 min ;
+   - `CarbonfrIngestionErrors` — plus de 10 échecs d'ingestion en 15 min.
+
+   ```yaml
+   # prometheus.yml (extrait)
+   rule_files:
+     - /etc/prometheus/alerts.yml
+   scrape_configs:
+     - job_name: carbon-fr            # le nom de job est utilisé par CarbonfrDown
+       metrics_path: /metrics
+       static_configs:
+         - targets: ["carbonfr:8080"] # nom du service sur le réseau Docker
+   ```
+
+   Le routage vers une notification passe par **Alertmanager** (non fourni ici).
+
+2. **Sonde externe** (ex. Uptime Kuma), qui voit l'API comme un client :
+   - `GET /health` — mot-clé `ok` ;
+   - **fraîcheur de la donnée servie** — `GET /v1/intensity/now`, requête JSON (JSONata) `$toMillis(timestamp) > ($millis() - 3600000)`, valeur attendue `true` (le point le plus récent a moins d'1 h ; la publication éCO2mix arrive d'ordinaire 20 à 30 min après l'heure du point).
+
+   Là encore, **attacher un canal de notification** (e-mail, messagerie…) à chaque sonde.
+
+## 4. Sauvegarde & restauration
+
+**Principe** : un `pg_dump` quotidien de la base, archivé **hors du serveur** et chiffré ; plus un dump ponctuel **juste avant chaque déploiement** (droits `600` : il contient les empreintes de clés API et les secrets de webhooks). Ce que la base contient d'irremplaçable : clés API, abonnements webhook, compteur de visites, historique des millésimes. Les mesures, elles, se re-backfillent (export de masse ODRÉ, ADR-0003), mais au prix de plusieurs heures.
+
+**Restauration** (procédure testée le 2026-09-23 sur l'instance Kovelt) :
+
+1. Récupérer l'archive du jour voulu depuis le stockage distant, la déchiffrer, en extraire le dump SQL de carbon-fr.
+2. Restaurer dans un PostgreSQL **de même version majeure** (17), sur une base vide :
+   ```bash
+   psql -U carbonfr -d carbonfr -v ON_ERROR_STOP=1 -q < carbon-fr.sql
+   ```
+3. Démarrer carbon-fr sur cette base : les migrations manquantes (si le dump précède une release) s'appliquent au démarrage.
+4. Vérifier : `GET /health/ready`, comptages de `measurement`, `api_key`, `webhook_subscription` contre les attendus, puis fraîcheur de `/v1/intensity/now` après un cycle de poll (le poller rattrape seul l'écart depuis l'heure du dump).
+
+**Mesures du test** (~536 000 mesures, dump SQL de 128 Mo) : téléchargement de l'archive ~4 min, restauration **5 s**, sans aucune erreur ; **RPO = 24 h** (dump quotidien), **RTO ≈ 5 min** pour la base, hors redéploiement. **Refaire le test une fois par trimestre** : une sauvegarde jamais restaurée n'est pas une sauvegarde (celles de l'instance Kovelt ont échoué en silence du 2026-06-21 au 2026-09-23 ; le script alerte désormais aussi en cas d'échec).
+

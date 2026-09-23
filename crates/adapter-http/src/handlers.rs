@@ -1366,6 +1366,7 @@ where
         direction,
         callback_url: request.callback_url,
         secret,
+        disabled_at: None,
     };
     // Quota par clé : comptage + insertion **atomiques** côté adapter (verrou
     // consultatif Postgres par propriétaire) — pas de fenêtre TOCTOU entre deux

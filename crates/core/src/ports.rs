@@ -372,8 +372,22 @@ pub trait SubscriptionRepository: Send + Sync {
     /// ligne a été supprimée (sinon : inexistant ou non possédé → pas de fuite).
     async fn delete(&self, id: &str, owner_key_hash: &str) -> Result<bool, RepositoryError>;
 
-    /// Tous les abonnements actifs (pour l'évaluation par le watcher).
+    /// Tous les abonnements **actifs** — non désactivés — (pour l'évaluation par
+    /// le watcher).
     async fn active(&self) -> Result<Vec<Subscription>, RepositoryError>;
+
+    /// Enregistre l'issue d'une livraison (après ses retries), **atomiquement** :
+    /// un succès remet à zéro le compteur d'échecs consécutifs ; un échec
+    /// l'incrémente et **désactive** l'abonnement quand il atteint
+    /// `max_consecutive_failures` (ADR-0016, addendum 2026-09). Renvoie `true` si
+    /// **cet** échec vient de désactiver l'abonnement. Abonnement inconnu
+    /// (supprimé entre-temps) ou déjà désactivé : `Ok(false)`, rien n'est touché.
+    async fn record_delivery(
+        &self,
+        id: &str,
+        delivered: bool,
+        max_consecutive_failures: u32,
+    ) -> Result<bool, RepositoryError>;
 }
 
 /// Une livraison de webhook prête à émettre : corps JSON + signature HMAC.

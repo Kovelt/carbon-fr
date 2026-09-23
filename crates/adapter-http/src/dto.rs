@@ -1575,6 +1575,13 @@ pub(crate) struct WebhookSummary {
     threshold: f64,
     direction: &'static str,
     callback_url: String,
+    /// `active`, ou `disabled` : désactivé automatiquement après une série de
+    /// livraisons échouées consécutives (ADR-0016) — plus aucune livraison.
+    /// Pour le réactiver, le supprimer puis le recréer (nouveau secret).
+    #[schema(example = "active")]
+    status: &'static str,
+    /// Instant de la désactivation (RFC 3339), `null` si actif.
+    disabled_at: Option<String>,
 }
 
 /// Réponse de `GET /v1/webhooks`.
@@ -1594,6 +1601,12 @@ impl WebhookListResponse {
                 threshold: s.threshold,
                 direction: s.direction.code(),
                 callback_url: s.callback_url.clone(),
+                status: if s.disabled_at.is_some() {
+                    "disabled"
+                } else {
+                    "active"
+                },
+                disabled_at: s.disabled_at.and_then(|at| to_rfc3339(at).ok()),
             })
             .collect::<Vec<_>>();
         Self {

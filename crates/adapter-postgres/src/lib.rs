@@ -1006,6 +1006,9 @@ fn row_to_subscription(
         .try_get("callback_url")
         .map_err(|e| backend(e.to_string()))?;
     let secret: String = row.try_get("secret").map_err(|e| backend(e.to_string()))?;
+    let disabled_at: Option<OffsetDateTime> = row
+        .try_get("disabled_at")
+        .map_err(|e| backend(e.to_string()))?;
 
     let (Some(region), Some(direction)) = (
         Region::from_slug(&region_slug),
@@ -1021,6 +1024,7 @@ fn row_to_subscription(
         direction,
         callback_url,
         secret,
+        disabled_at,
     }))
 }
 
@@ -1091,7 +1095,8 @@ impl SubscriptionRepository for PgIntensityRepository {
         owner_key_hash: &str,
     ) -> Result<Vec<Subscription>, RepositoryError> {
         let rows = sqlx::query(
-            "SELECT id, owner_key_hash, region, threshold, direction, callback_url, secret \
+            "SELECT id, owner_key_hash, region, threshold, direction, callback_url, secret, \
+                    disabled_at \
              FROM webhook_subscription WHERE owner_key_hash = $1 ORDER BY created_at ASC",
         )
         .bind(owner_key_hash)
@@ -1119,8 +1124,9 @@ impl SubscriptionRepository for PgIntensityRepository {
 
     async fn active(&self) -> Result<Vec<Subscription>, RepositoryError> {
         let rows = sqlx::query(
-            "SELECT id, owner_key_hash, region, threshold, direction, callback_url, secret \
-             FROM webhook_subscription",
+            "SELECT id, owner_key_hash, region, threshold, direction, callback_url, secret, \
+                    disabled_at \
+             FROM webhook_subscription WHERE disabled_at IS NULL",
         )
         .fetch_all(&self.pool)
         .await
@@ -1129,5 +1135,42 @@ impl SubscriptionRepository for PgIntensityRepository {
             .iter()
             .filter_map(|r| row_to_subscription(r).transpose())
             .collect::<Result<Vec<_>, _>>()?)
+    }
+
+    async fn record_delivery(
+        &self,
+        id: &str,
+        delivered: bool,
+        max_consecutive_failures: u32,
+    ) -> Result<bool, RepositoryError> {
+        if delivered {
+            sqlx::query(
+                "UPDATE webhook_subscription SET consecutive_failures = 0 \
+                 WHERE id = $1 AND disabled_at IS NULL AND consecutive_failures <> 0",
+            )
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| backend(format!("record_delivery (succès) : {e}")))?;
+            return Ok(false);
+        }
+        // Incrément + décision de désactivation dans UNE instruction : deux
+        // livraisons échouées concurrentes du même abonnement ne peuvent pas se
+        // marcher dessus (verrou de ligne de l'UPDATE). À droite du SET,
+        // `consecutive_failures` désigne l'ancienne valeur.
+        let max = i32::try_from(max_consecutive_failures.max(1)).unwrap_or(i32::MAX);
+        let disabled: Option<bool> = sqlx::query_scalar(
+            "UPDATE webhook_subscription \
+             SET consecutive_failures = consecutive_failures + 1, \
+                 disabled_at = CASE WHEN consecutive_failures + 1 >= $2 THEN now() END \
+             WHERE id = $1 AND disabled_at IS NULL \
+             RETURNING disabled_at IS NOT NULL",
+        )
+        .bind(id)
+        .bind(max)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| backend(format!("record_delivery (échec) : {e}")))?;
+        Ok(disabled.unwrap_or(false))
     }
 }

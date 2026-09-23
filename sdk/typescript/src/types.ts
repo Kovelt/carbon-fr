@@ -552,6 +552,14 @@ export interface WebhookSummary {
   threshold: number;
   direction: ThresholdDirection;
   callback_url: string;
+  /**
+   * `disabled` : désactivé automatiquement après une série de livraisons
+   * échouées consécutives (ADR-0016) — plus aucune livraison. Pour le
+   * réactiver, le supprimer puis le recréer (nouveau secret).
+   */
+  status: "active" | "disabled";
+  /** Instant de la désactivation (RFC 3339), `null` si actif. */
+  disabled_at: string | null;
 }
 
 /** `GET /v1/webhooks`. */

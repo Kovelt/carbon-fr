@@ -1693,6 +1693,7 @@ name = "server"
 version = "0.7.2"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "carbonfr-adapter-entsoe",
  "carbonfr-adapter-forecast",

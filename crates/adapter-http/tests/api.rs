@@ -298,6 +298,9 @@ impl carbonfr_core::ports::SubscriptionRepository for FakeRepo {
     async fn active(&self) -> Result<Vec<carbonfr_core::domain::Subscription>, RepositoryError> {
         Ok(self.subs.lock().unwrap().clone())
     }
+    async fn record_delivery(&self, _: &str, _: bool, _: u32) -> Result<bool, RepositoryError> {
+        Ok(false)
+    }
 }
 
 #[async_trait]
@@ -2457,6 +2460,9 @@ async fn webhook_create_list_delete_roundtrip() {
     let lbody = json_body(listed).await;
     assert_eq!(lbody["count"], 1);
     assert!(lbody["webhooks"][0].get("secret").is_none());
+    // Statut exposé (ADR-0016, addendum 2026-09) : actif à la création.
+    assert_eq!(lbody["webhooks"][0]["status"], "active");
+    assert!(lbody["webhooks"][0]["disabled_at"].is_null());
 
     // Suppression → 204, puis liste vide.
     let deleted = send(

@@ -8,6 +8,14 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### SDK TypeScript
+
+- **`@carbon-fr/sdk` 0.2.0 publié sur npm** (tag `sdk-v0.2.0`, 2026-09-23) —
+  première publication par *trusted publishing* OIDC, sans jeton, avec
+  provenance signée. Prérequis ajouté en tête de `release-sdk.yml` : la
+  permission « publish » du trusted publisher doit être cochée côté npmjs.com
+  (sinon `E403 … OIDC permission denied for this action`).
+
 ### Documentation
 
 - **Revue complète de la doc contre le code** (chaque correction prouvée par le

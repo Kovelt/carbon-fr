@@ -1,7 +1,7 @@
 # Plan de la suite — itérations I0 → I7 (à partir du 2026-09-23)
 
 - **Statut** : document vivant — cocher les cases au fil des PR, dater chaque révision en tête.
-- **Dernière mise à jour** : 2026-09-23 (I0 terminée hors fermeture des issues #76/#81 ; I1 livrée en v0.8.1, reste la notification Uptime Kuma ; I2 livrée en v0.8.2, restent la publication npm `sdk-v0.2.0` et les deux points Dependabot).
+- **Dernière mise à jour** : 2026-09-23 (I0 terminée hors fermeture des issues #76/#81 ; I1 livrée en v0.8.1, reste la notification Uptime Kuma ; I2 livrée : v0.8.2 déployée et `@carbon-fr/sdk` 0.2.0 publié sur npm, restent les deux points Dependabot).
 - **Sources** : état des lieux multi-agents du 2026-09-23 (constats revérifiés contre le code), recherche en 4 volets (préparation crates.io, backlog consolidé des ADR/roadmaps, montées majeures des dépendances, échéances datées), 3 plans concurrents (« fiabilité d'abord », « adoption d'abord », « valeur métier d'abord ») départagés par un juge. Base retenue : **valeur métier d'abord**, avec les greffes des deux autres.
 - **Horizon** : 13 à 17 semaines selon les itérations, soit vers mi-janvier 2027 au rythme d'un mainteneur seul assisté de Claude Code. Les durées sont des ordres de grandeur, pas des engagements.
 - **Liens** : feuille de route produit dans le [README](../README.md#feuille-de-route), [roadmap hydrogène](roadmap-hydrogene.md), [index des ADR](adr/README.md), [CHANGELOG](../CHANGELOG.md).
@@ -64,7 +64,7 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 
 **Objectif** : rattraper ce que voient les consommateurs (SDK, runtimes) et traiter les dépendances à faible risque.
 
-- [x] **SDK TypeScript 0.2.0** : 6 fonctionnalités livrées depuis `sdk-v0.1.0` (RFC 9457, `/price`, `/cost-reference`, éligibilité, GATE de neutralité, `share-clim@1`) plus `status` des webhooks, mais npm est toujours en 0.1.0. Relire `client.ts`/`types.ts` contre l'OpenAPI, bump, tag `sdk-v0.2.0`, vérifier le trusted publishing npm en conditions réelles.
+- [x] **SDK TypeScript 0.2.0** : 6 fonctionnalités livrées depuis `sdk-v0.1.0` (RFC 9457, `/price`, `/cost-reference`, éligibilité, GATE de neutralité, `share-clim@1`) plus `status` des webhooks, mais npm est toujours en 0.1.0. Relire `client.ts`/`types.ts` contre l'OpenAPI, bump, tag `sdk-v0.2.0`, vérifier le trusted publishing npm en conditions réelles. — **publié le 2026-09-23** par trusted publishing (provenance signée, publié par « GitHub Actions ») ; piège rencontré : la permission « publish » du trusted publisher doit être cochée (sinon `E403 OIDC permission denied`), documenté dans `release-sdk.yml`.
 - [x] **Node 20 → 24** (CI sur Node 22 = plancher `engines`, publication sur Node 24) (Node 20 est en fin de vie depuis le 2026-04-30) dans `ci.yml` et `release-sdk.yml` ; aligner `engines.node` du SDK sur ce que teste la CI.
 - [x] **`utoipa` 5 → 6** (sorti le 2026-09-22 ; l'OpenAPI reste en 3.1 par défaut), PR isolée : régénérer le snapshot et **relire le diff ligne à ligne**. Le champ `servers` de l'OpenAPI fait l'objet d'une **PR séparée**, après (principe 5).
 - [x] **Purge des webhooks désactivés** (laissée ouverte par l'addendum ADR-0016 : ils comptent dans le quota de 50 par clé) — après `CARBONFR_WEBHOOK_PURGE_DAYS` jours (défaut 30), tâche de fond toutes les 6 h.

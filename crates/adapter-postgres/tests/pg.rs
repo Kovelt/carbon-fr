@@ -1123,3 +1123,78 @@ async fn webhook_subscription_crud_scoped_to_owner() {
     assert!(repo.delete(id, "owner-aaa").await.unwrap());
     assert!(repo.list_for_owner("owner-aaa").await.unwrap().is_empty());
 }
+
+/// Purge des abonnements désactivés (ADR-0016, addendum 2026-09-23 « Purge des
+/// abonnements désactivés ») : seul un abonnement **désactivé depuis plus
+/// longtemps** que le seuil disparaît — un abonnement désactivé récemment ou
+/// toujours **actif** (quelle que soit son ancienneté) est conservé. Le
+/// décompte retourné est exact.
+#[tokio::test]
+async fn purge_disabled_removes_only_old_disabled_subscriptions() {
+    let Some(repo) = setup("test-pg-webhook-purge").await else {
+        return;
+    };
+    use carbonfr_core::domain::{Subscription, ThresholdDirection};
+    use carbonfr_core::ports::SubscriptionRepository;
+
+    let owner = "deadbeefcafe0006";
+    sqlx::query("DELETE FROM api_key WHERE key_hash = $1")
+        .bind(owner)
+        .execute(repo.pool())
+        .await
+        .expect("nettoyage api_key");
+    repo.insert_key(owner, ApiTier::Free, "purge")
+        .await
+        .unwrap();
+
+    let sub = |id: &str| Subscription {
+        id: id.to_string(),
+        owner_key_hash: owner.to_string(),
+        region: Region::National,
+        threshold: 50.0,
+        direction: ThresholdDirection::Below,
+        callback_url: "https://hooks.example.com/c".to_string(),
+        secret: "s3cr3t".to_string(),
+        disabled_at: None,
+    };
+    assert!(repo.create(&sub("wh-purge-active"), 50).await.unwrap());
+    assert!(repo.create(&sub("wh-purge-recent"), 50).await.unwrap());
+    assert!(repo.create(&sub("wh-purge-old"), 50).await.unwrap());
+
+    let now = OffsetDateTime::now_utc();
+    // Désactivé il y a 400 jours : au-delà du seuil de 30 jours (défaut).
+    sqlx::query("UPDATE webhook_subscription SET disabled_at = $2 WHERE id = $1")
+        .bind("wh-purge-old")
+        .bind(now - Duration::days(400))
+        .execute(repo.pool())
+        .await
+        .expect("désactivation ancienne");
+    // Désactivé il y a 1 jour : sous le seuil, conservé.
+    sqlx::query("UPDATE webhook_subscription SET disabled_at = $2 WHERE id = $1")
+        .bind("wh-purge-recent")
+        .bind(now - Duration::days(1))
+        .execute(repo.pool())
+        .await
+        .expect("désactivation récente");
+    // "wh-purge-active" reste actif (disabled_at NULL), quelle que soit la
+    // date de création — jamais purgé.
+
+    let cutoff = now - Duration::days(30);
+    let purged = repo.purge_disabled(cutoff).await.unwrap();
+    assert_eq!(
+        purged, 1,
+        "seul l'abonnement désactivé depuis 400 j doit être purgé"
+    );
+
+    let remaining = repo.list_for_owner(owner).await.unwrap();
+    let ids: Vec<&str> = remaining.iter().map(|s| s.id.as_str()).collect();
+    assert!(ids.contains(&"wh-purge-active"));
+    assert!(ids.contains(&"wh-purge-recent"));
+    assert!(!ids.contains(&"wh-purge-old"));
+    assert_eq!(remaining.len(), 2);
+
+    // Ré-exécuter la purge : plus rien à purger, décompte exact à zéro.
+    assert_eq!(repo.purge_disabled(cutoff).await.unwrap(), 0);
+
+    repo.revoke_key(owner).await.unwrap();
+}

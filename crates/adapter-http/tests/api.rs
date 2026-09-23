@@ -301,6 +301,15 @@ impl carbonfr_core::ports::SubscriptionRepository for FakeRepo {
     async fn record_delivery(&self, _: &str, _: bool, _: u32) -> Result<bool, RepositoryError> {
         Ok(false)
     }
+    async fn purge_disabled(
+        &self,
+        disabled_before: OffsetDateTime,
+    ) -> Result<u64, RepositoryError> {
+        let mut subs = self.subs.lock().unwrap();
+        let before = subs.len();
+        subs.retain(|s| !matches!(s.disabled_at, Some(at) if at < disabled_before));
+        Ok((before - subs.len()) as u64)
+    }
 }
 
 #[async_trait]

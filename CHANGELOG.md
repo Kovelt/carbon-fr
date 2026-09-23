@@ -8,6 +8,18 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté
+
+- **Purge des abonnements webhook désactivés**
+  ([addendum ADR-0016](docs/adr/0016-webhooks.md)) — un abonnement désactivé
+  automatiquement (N échecs consécutifs) est supprimé après
+  `CARBONFR_WEBHOOK_PURGE_DAYS` jours (défaut **30**, laissant au
+  propriétaire le temps de constater la désactivation via `GET /v1/webhooks`) ;
+  il cessait sinon de compter dans le quota de 50 abonnements par clé
+  seulement à sa suppression manuelle. Tâche de fond au démarrage puis toutes
+  les 6 h, supervisée comme le poller et le watcher. Port
+  `SubscriptionRepository::purge_disabled` ; aucune migration.
+
 ### Modifié
 
 - **`utoipa` 5 → 6.0** (génération de l'OpenAPI) — montée isolée, sans

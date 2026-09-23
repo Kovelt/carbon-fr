@@ -6,10 +6,18 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.8.1] - 2026-09-23
+
+Donnée publiée et exploitation (itération I1 du [plan](docs/plan-iterations.md)) :
+`/v1/price` applique enfin le **millésime TRV en vigueur** (2026-H2 depuis le
+1/8/2026), les échéances réglementaires servies par les rulesets d'éligibilité
+sont à jour, la CI teste sur PostgreSQL 17 comme la prod, et la supervision
+ainsi que la restauration (testée) sont documentées. Aucun changement de
+schéma `/v1`.
 
 ### Modifié
 
+- **Dépendances** : `rand` 0.10.2 → 0.10.3 (groupe mineur Dependabot, #104).
 - **`/v1/price` : millésime TRV `2026-H2` à partir du 1/8/2026**
   ([addendum ADR-0023](docs/adr/0023-affichage-prix-electricite.md)) — la
   construction du 1er semestre était appliquée à tout horodatage, alors qu'au

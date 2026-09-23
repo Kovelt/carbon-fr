@@ -29,6 +29,15 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `marginal_technology`) s'inverse — sans effet pour un client (un `oneOf`
   n'est pas ordonné). `openapi` reste `3.1.0`.
 
+### SDK TypeScript
+
+- **`@carbon-fr/sdk` 0.2.0** (publication npm par le tag `sdk-v0.2.0`) —
+  rattrape les 6 fonctionnalités de l'API livrées depuis 0.1.0 et le statut des
+  webhooks ; audit de parité exhaustif contre l'OpenAPI (26 opérations,
+  51 schémas) : paramètres de requête manquants (`version` sur `mix`,
+  `schedule`, `scheduleSlots`, `below`, `greenestWindow`…), champs et
+  nullabilités alignés sur la réponse réelle. Toujours zéro dépendance runtime.
+
 ### CI
 
 - **Node.js hors fin de vie** (Node 20 : fin de vie le 2026-04-30) — le job

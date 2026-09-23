@@ -1,6 +1,6 @@
 {
   "name": "@carbon-fr/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Client TypeScript de l'API carbon-fr — intensité carbone de l'électricité française (gCO₂eq/kWh).",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,14 +12,27 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "src", "README.md"],
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
   "sideEffects": false,
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["carbon", "electricity", "france", "co2", "rte", "eco2mix", "api", "sdk"],
+  "keywords": [
+    "carbon",
+    "electricity",
+    "france",
+    "co2",
+    "rte",
+    "eco2mix",
+    "api",
+    "sdk"
+  ],
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",

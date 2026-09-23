@@ -6,6 +6,27 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### Ajouté
+
+- **Révocation de clé API** ([addendum ADR-0015](docs/adr/0015-tier-heberge-cles-api.md)) —
+  jusqu'ici `mint-key` ne faisait qu'upserter : une clé compromise ne pouvait
+  être invalidée qu'en SQL à la main. Deux sous-commandes d'exploitation :
+  **`list-keys`** (empreinte, tier, création, nombre d'abonnements webhook,
+  libellé — jamais la clé en clair) et **`revoke-key`**
+  (`CARBONFR_REVOKE_KEY` = clé `cfr_…` ou son empreinte) qui supprime la clé
+  **et ses abonnements webhook dans la même transaction** (un abonnement
+  orphelin resterait livré sans plus pouvoir être géré). Empreinte inconnue →
+  échec explicite, rien n'est touché. Propagation ≤ 60 s aux instances en cours
+  (cache positif). Port `ApiKeyRepository` : `list_keys` + `revoke_key`.
+  **Migration `0013`** : clé étrangère `webhook_subscription.owner_key_hash →
+  api_key.key_hash` (`ON DELETE CASCADE`) — l'absence d'abonnement orphelin est
+  garantie par la base, y compris quand un `POST /v1/webhooks` court pendant
+  une révocation (course relevée en revue adversariale, test de régression à
+  deux connexions) ; les orphelins éventuels hérités sont purgés par la
+  migration. Aucun changement de contrat `/v1`.
+
 ## [0.7.2] - 2026-09-23
 
 Release de maintenance et de sécurité : correctif RustSec `rustls`
@@ -34,25 +55,6 @@ de contrat `/v1`.
   (mention des quatre méthodes ; seuil ~64 = proxy hors annexe). Aucun nouveau
   champ, aucun seuil modifié ; passe de neutralité re-jouée sur le wording
   (revue ADR-0026, §7).
-
-### Ajouté
-
-- **Révocation de clé API** ([addendum ADR-0015](docs/adr/0015-tier-heberge-cles-api.md)) —
-  jusqu'ici `mint-key` ne faisait qu'upserter : une clé compromise ne pouvait
-  être invalidée qu'en SQL à la main. Deux sous-commandes d'exploitation :
-  **`list-keys`** (empreinte, tier, création, nombre d'abonnements webhook,
-  libellé — jamais la clé en clair) et **`revoke-key`**
-  (`CARBONFR_REVOKE_KEY` = clé `cfr_…` ou son empreinte) qui supprime la clé
-  **et ses abonnements webhook dans la même transaction** (un abonnement
-  orphelin resterait livré sans plus pouvoir être géré). Empreinte inconnue →
-  échec explicite, rien n'est touché. Propagation ≤ 60 s aux instances en cours
-  (cache positif). Port `ApiKeyRepository` : `list_keys` + `revoke_key`.
-  **Migration `0013`** : clé étrangère `webhook_subscription.owner_key_hash →
-  api_key.key_hash` (`ON DELETE CASCADE`) — l'absence d'abonnement orphelin est
-  garantie par la base, y compris quand un `POST /v1/webhooks` court pendant
-  une révocation (course relevée en revue adversariale, test de régression à
-  deux connexions) ; les orphelins éventuels hérités sont purgés par la
-  migration. Aucun changement de contrat `/v1`.
 
 ### Sécurité
 

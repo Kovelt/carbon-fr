@@ -15,6 +15,9 @@
 //! Chemins XML, codes EIC et URL de base (flux A11 / génération A75) **validés
 //! contre l'API live** le 2026-06-16 (test `tests/live.rs`, `--ignored`) : 5
 //! frontières actives (BE/DE/ES/IT/CH), flux et intensités voisines plausibles.
+//! **Rejoué le 2026-09-23** (après le correctif du signe A03 de 0.7.0 et
+//! `quick-xml` 0.42) : 5 frontières, signes cohérents (export FR vers BE/DE/IT/CH,
+//! import depuis ES à la pointe solaire), prix A44 au pas 15 min.
 //! La frontière GB est indisponible côté ENTSO-E depuis le Brexit — dégradation
 //! propre (frontière simplement absente des snapshots, pas d'erreur).
 //!

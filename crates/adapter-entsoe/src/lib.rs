@@ -1,7 +1,7 @@
 //! Adapter sortant **ENTSO-E** : contexte d'import transfrontalier pour la
 //! méthode `acv-ademe@2` *consumption-based* (ADR-0010).
 //!
-//! Implémente le port [`CrossBorderSource`](carbonfr_core::ports::CrossBorderSource)
+//! Implémente le port [`CrossBorderSource`]
 //! : pour chaque frontière de la France métropolitaine, le **flux net signé**
 //! (flux physique import − export, `documentType=A11`) et l'**intensité carbone
 //! du voisin** dérivée de sa génération par type (`documentType=A75`,
@@ -18,7 +18,7 @@
 //! La frontière GB est indisponible côté ENTSO-E depuis le Brexit — dégradation
 //! propre (frontière simplement absente des snapshots, pas d'erreur).
 //!
-//! Implémente aussi [`SpotPriceSource`](carbonfr_core::ports::SpotPriceSource) :
+//! Implémente aussi [`SpotPriceSource`] :
 //! le **prix spot day-ahead** de la zone FR (`documentType=A44`, ADR-0023),
 //! composante énergie de la décomposition du prix. Chemin A44 **validé contre
 //! l'API live le 2026-06-20** (`recent_prices_live`, `--ignored`) : zone FR,

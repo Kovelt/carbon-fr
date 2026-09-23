@@ -48,3 +48,7 @@ Conséquences :
 - En phase 1, l'adapter ODRÉ renvoie `SourceError::NoData(region)` pour toute région ≠ `National`.
 - Le port `Eco2mixSource` et le modèle de domaine sont **inchangés** : la dérivation régionale sera un calcul du domaine alimenté par la production régionale, exposé via une **méthodologie versionnée dédiée** (champ `methodology`). Elle ne doit **pas** être confondue avec `rte-direct` (intensité nationale publiée par RTE) et fera l'objet de son **propre ADR** quand elle sera spécifiée.
 - Piste de secours si une intensité régionale « officielle » devenait nécessaire : un adapter `Eco2mixSource` secondaire (ENTSO-E, Electricity Maps) — sans impact sur le domaine.
+
+## Addendum — 2026-09-23 : budget de quota réel avec le régional
+
+Le budget « ~6 % du quota » de la décision valait pour le **seul national**. Depuis l'ingestion régionale au même cycle (un appel ODRÉ par région, ADR-0008), le poller fait **14 appels par cycle** (1 national + 12 régions + 1 charge) × 96 cycles/jour ≈ **1 344 appels/jour ≈ 40 300/mois, soit ~80 % du quota de 50 000** (recompté sur le code du poller, `bin/server`). La décision tient — le quota reste absorbé par construction et indépendant du nombre de clients — mais la **marge est fine** : ne pas densifier le poll ni ajouter de jeu ODRÉ sans recompter (ARCHITECTURE §3, métrique `upstream_requests_total{source="odre"}`, ADR-0022).

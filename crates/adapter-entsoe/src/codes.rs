@@ -2,7 +2,8 @@
 //!
 //! Tables de correspondance vers le vocabulaire du domaine. Sources : codes EIC
 //! des zones d'ajustement et liste `PsrType` du guide RESTful API ENTSO-E
-//! (IEC 62325). ⚠️ **à valider contre l'API live** (test `--ignored`).
+//! (IEC 62325). Codes EIC **validés contre l'API live** le 2026-06-16 (test
+//! `--ignored`, cf. la doc du crate).
 
 use carbonfr_core::domain::Neighbor;
 

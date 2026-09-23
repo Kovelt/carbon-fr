@@ -274,6 +274,7 @@ name = "carbonfr-adapter-webhook"
 version = "0.8.1"
 dependencies = [
  "async-trait",
+ "axum",
  "carbonfr-core",
  "reqwest",
  "tokio",

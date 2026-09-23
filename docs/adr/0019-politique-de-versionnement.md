@@ -1,6 +1,6 @@
 # ADR-0019 — Politique de versionnement (quatre axes découplés)
 
-- **Statut** : Accepté, **engagé** (axe applicatif livré : version de workspace + exposition au démarrage + image Docker taguée sur `v*`)
+- **Statut** : Accepté, **engagé** (axe applicatif livré : version de workspace + exposition au démarrage + image Docker taguée sur `v*`) — **amendé par ADR-0030** (2026-09-23, 5ᵉ axe : versions crates.io)
 - **Date** : 2026-06-17
 - **S'appuie sur** : ADR-0005/0006 (versions de méthodologie & millésime portés par la donnée), ADR-0007 (déploiement, API `/v1`), ADR-0011 (versions de modèle)
 
@@ -52,3 +52,14 @@ Correspondances typiques : refonte interne → bump applicatif seul ; rupture d'
 - **Déployer `main` HEAD (statu quo)** — écarté : aucune traçabilité, rollback hasardeux.
 - **Calquer la version applicative sur `/v1`** — écarté : couple deux rythmes différents (le code itère bien plus vite que le contrat) ; c'est précisément ce que le découplage évite.
 - **`git describe`/hash de commit comme « version »** — écarté comme *source* de version (illisible, non SemVer) ; le hash reste un complément utile dans les labels d'image, pas le numéro de release.
+
+---
+
+## Addendum — 5ᵉ axe : versions crates.io (2026-09-23)
+
+**Amendé par [ADR-0030](0030-politique-publication-crates-io.md)**, qui inverse la position prise ci-dessus en Contexte et en Conséquences (« les crates ne sont pas publiées séparément […] les crates restent `publish = false` ») : `carbonfr-core` et `carbonfr-eligibility` seront publiées sur crates.io (détails, séquence et garde-fous dans ADR-0030). Cette section ne réécrit pas le reste du document ci-dessus — laissé en l'état pour l'historique de la décision d'origine — elle ajoute le 5ᵉ axe manquant.
+
+- **Axe 5 — Versions crates.io des bibliothèques publiées.** Pour `carbonfr-core` et `carbonfr-eligibility` : **couplées à l'axe applicatif** (§ Axe applicatif ci-dessus) — un tag `vX.Y.Z` publie les deux crates à la version `X.Y.Z` du workspace. Ce n'est pas un axe indépendant comme les quatre premiers : c'est une **conséquence directe** de la dépendance interne versionnée (`carbonfr-core = { path = "crates/core", version = "…" }` dans `[workspace.dependencies]`, requise par `cargo package`, cf. ADR-0030 §2).
+- **`carbonfr-sdk` (SDK Rust, ADR-0031) fait exception** : il garde un **axe propre**, tag `rust-sdk-v*` — même logique que le SDK TypeScript (`sdk-v*`, axe 3 ci-dessus), découplé de la version applicative et de celle de `core`/`eligibility`.
+- **Règle de découplage mise à jour** : `v0.4.2` (code) ≠ `/v1` (contrat) ≠ `acv-ademe@2` (donnée) ≠ `sdk-v0.1.0` (client TS) ≠ `rust-sdk-v0.1.0` (client Rust) — `carbonfr-core`/`carbonfr-eligibility` sur crates.io suivent la première valeur (couplées), pas une sixième.
+- **Détail des règles SemVer** (bump minor en 0.x, `#[non_exhaustive]`, MSRV, contenu du paquet, procédure de publication, docs.rs) : renvoi intégral à [ADR-0030](0030-politique-publication-crates-io.md), pas dupliqué ici.

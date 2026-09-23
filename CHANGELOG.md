@@ -18,6 +18,19 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ### Documentation
 
+- **Décisions de l'itération I3** : [ADR-0030](docs/adr/0030-politique-publication-crates-io.md)
+  (politique de publication crates.io de `carbonfr-core` et
+  `carbonfr-eligibility` : versions couplées au workspace, `#[non_exhaustive]`
+  décidé enum par enum, MSRV 1.88 fixée par `time`, `cargo-semver-checks`,
+  première publication manuelle puis Trusted Publishing, politique de `yank`),
+  addendum à l'ADR-0019 (5ᵉ axe de versionnement) et
+  [ADR-0031](docs/adr/0031-conception-sdk-rust.md) (SDK Rust `carbonfr-sdk` :
+  écriture manuelle avec test de parité contre l'OpenAPI, `reqwest` 0.13 avec
+  provider `ring` explicite, SSE sur `eventsource-stream`, axe `rust-sdk-v*`).
+  Aucune ligne de code.
+- **Plan** : Dependabot diagnostiqué (`reqwest` 0.13 non résoluble sans
+  changement de features, `sqlx` 0.9 ignorée depuis #25 — montées manuelles
+  en I5/I7) ; IP et empreinte SSH du serveur retirées du plan (dépôt public).
 - **Revue complète de la doc contre le code** (chaque correction prouvée par le
   code ou git) : `ARCHITECTURE` (watcher et purge des webhooks, six phases
   livrées), README (purge des webhooks), index des ADR (revue de neutralité

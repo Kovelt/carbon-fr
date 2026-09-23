@@ -8,6 +8,20 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Modifié
+
+- **Positionnement vis-à-vis des méthodes horaires du Règl. (UE) 2025/2359**
+  (chantier O1 de la roadmap hydrogène) : l'[addendum O1 de l'ADR-0026](docs/adr/0026-methodologie-overlays-eligibilite.md)
+  documente, méthode par méthode, l'alignement **et les écarts** entre la donnée
+  carbon-fr et les quatre méthodes de comptabilisation de l'électricité réseau
+  de l'annexe (partie A, pt 6). Répercuté dans le README, les descriptions
+  OpenAPI (`/v1/intensity/forecast` et `/v1/intensity/greenest-window` : « pas
+  la prévision day-ahead du GRT » ; technologie marginale de `/v1/price` :
+  renvoi méthode (d)) et le `legal_basis` du ruleset `low-carbon:2025-2359`
+  (mention des quatre méthodes ; seuil ~64 = proxy hors annexe). Aucun nouveau
+  champ, aucun seuil modifié ; passe de neutralité re-jouée sur le wording
+  (revue ADR-0026, §7).
+
 ### Sécurité
 
 - **`rustls` mis à jour sur advisory RustSec** (porte `cargo-deny` de la CI,
@@ -30,6 +44,23 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   planifié** : un échec du run quotidien ouvre une issue « CI planifiée en échec
   sur main » (ou la commente si elle est ouverte) — l'échec `cargo-deny` sur
   RUSTSEC-2026-0285 était passé inaperçu 8 jours. Vérifié par `actionlint`.
+
+### Documentation
+
+- **Résorption de la dérive doc ↔ code (état des lieux 2026-09)** — README :
+  la promesse « moins de 8 % du quota » (valable avant l'ingestion régionale)
+  devient le budget réel (~1 350 appels ODRÉ/jour, ≈ 80 % du plafond mensuel,
+  tracé par un addendum à l'ADR-0003) ; `/v1/stats` ajouté au tableau des
+  fonctionnalités ; refus de `acv-ademe&version=2` par `/v1/mix` précisé ;
+  couverture de la collection Bruno bornée (hors SSE). Doc de crate de
+  `carbonfr-adapter-http` : les 34 routes par famille (elle n'en listait que le
+  socle initial). ARCHITECTURE §4 : `FindGreenestWindow` n'est plus appelé par
+  `/greenest-window` (ADR-0026 D16). `CLAUDE.md` : alerte périmée sur
+  `TD_LOSS_FACTOR_V1` retirée (sourcé, ADR-0010 §3), rejeu live ENTSO-E
+  requalifié (validé en juin, à rejouer après le correctif A03 de 0.7.0),
+  compose de prod hors dépôt. CHANGELOG : l'entrée O1 (#72, mergée après
+  0.7.1), rangée par erreur sous `[0.6.1]` lors d'un rebase, replacée ici.
+  Aucun changement de code ni de contrat.
 
 ## [0.7.1] - 2026-08-16
 
@@ -323,6 +354,7 @@ contrat sont listés en « Modifié ».
   arbitraire dans la page. Épinglage exact `swagger-ui-dist@5.32.13` +
   attributs `integrity` (SHA-384, vérifiés croisés jsDelivr/unpkg) et
   `crossorigin="anonymous"` sur la feuille de style et le bundle.
+
 ## [0.6.1] - 2026-07-04
 
 La page carte `GET /hydrogene` devient embarquable par le site vitrine
@@ -337,20 +369,6 @@ La page carte `GET /hydrogene` devient embarquable par le site vitrine
   `X-Frame-Options: SAMEORIGIN` posé globalement par le reverse proxy — qui
   reste effectif sur `/docs` et le reste. Uniquement la page : les datasets
   `/hydrogene/*.json|geojson` sont inchangés.
-
-### Modifié
-
-- **Positionnement vis-à-vis des méthodes horaires du Règl. (UE) 2025/2359**
-  (chantier O1 de la roadmap hydrogène) : l'[addendum O1 de l'ADR-0026](docs/adr/0026-methodologie-overlays-eligibilite.md)
-  documente, méthode par méthode, l'alignement **et les écarts** entre la donnée
-  carbon-fr et les quatre méthodes de comptabilisation de l'électricité réseau
-  de l'annexe (partie A, pt 6). Répercuté dans le README, les descriptions
-  OpenAPI (`/v1/intensity/forecast` et `/v1/intensity/greenest-window` : « pas
-  la prévision day-ahead du GRT » ; technologie marginale de `/v1/price` :
-  renvoi méthode (d)) et le `legal_basis` du ruleset `low-carbon:2025-2359`
-  (mention des quatre méthodes ; seuil ~64 = proxy hors annexe). Aucun nouveau
-  champ, aucun seuil modifié ; passe de neutralité re-jouée sur le wording
-  (revue ADR-0026, §7).
 
 ## [0.6.0] - 2026-07-03
 

@@ -96,7 +96,7 @@ Budget indicatif : ~14 appels ODRÉ par cycle (1 national + 12 régions + 1 char
 - `VisitCounter` — compteur de visiteurs (IP jamais stockée).
 - `Clock` — fournir l'instant courant (testabilité).
 
-**Ports entrants** (cas d'usage exposés, génériques sur leurs ports) : `GetCurrentIntensity`, `GetIntensityHistory`, `GetIntensityStats`, `IngestLatest` (le poller), `BackfillHistory`, `FindGreenestWindow`, `CarbonAwareScheduler` (planification carbon-aware), `GetConsumptionIntensity` (`acv-ademe@2` à la lecture), `GetCrossBorderExchanges` (`/exchanges`), `GetElectricityPrice` (`/price`), `GetWeather`, `CalibrateRenewable`, `AnalyzeRenewableSignal`, plus les backtests (`BacktestForecast`, `BacktestConsumptionForecast`, `BacktestRenewable`).
+**Ports entrants** (cas d'usage exposés, génériques sur leurs ports) : `GetCurrentIntensity`, `GetIntensityHistory`, `GetIntensityStats`, `IngestLatest` (le poller), `BackfillHistory`, `FindGreenestWindow` (conservé et testé dans le `core`, mais **plus appelé** par `/greenest-window` : le handler calcule le créneau via `domain::greenest_window` sur la prévision **unique** partagée avec l'overlay d'éligibilité, ADR-0026 D16), `CarbonAwareScheduler` (planification carbon-aware), `GetConsumptionIntensity` (`acv-ademe@2` à la lecture), `GetCrossBorderExchanges` (`/exchanges`), `GetElectricityPrice` (`/price`), `GetWeather`, `CalibrateRenewable`, `AnalyzeRenewableSignal`, plus les backtests (`BacktestForecast`, `BacktestConsumptionForecast`, `BacktestRenewable`).
 
 **Pourquoi ce pattern ici précisément** :
 

@@ -10,29 +10,45 @@
 //! dispatch statique de bout en bout. La composition root (`bin/server`) injecte
 //! l'implémentation concrète (PostgreSQL).
 //!
-//! ## Endpoints (socle national)
+//! ## Endpoints
 //!
-//! - `GET /v1/intensity/now` — dernière intensité carbone (gCO₂eq/kWh).
-//! - `GET /v1/intensity/date?from=&to=` — série historique sur un intervalle
-//!   RFC 3339 (fenêtre ≤ 366 jours).
-//! - `GET /v1/intensity/stats?from=&to=[&interval=hour|day]` — résumé
-//!   (moyenne/min/max) et, optionnellement, série agrégée (rollups).
-//! - `GET /v1/mix` — mix de production (MW par filière).
-//! - `GET /v1/intensity/forecast?from=&horizon_hours=` — intensité **prévue**
-//!   sur l'horizon (modèle `climatology@1`, ADR-0009).
-//! - `GET /v1/intensity/greenest-window?from=&horizon_hours=&window_minutes=` —
-//!   créneau le plus bas-carbone à venir.
-//! - `GET /v1/schedule`, `GET /v1/schedule/slots`, `GET /v1/intensity/below` —
-//!   scheduling carbon-aware (ADR-0014).
-//! - `GET /v1/intensity/stream` — flux **live** SSE des mises à jour (ADR-0014).
-//! - `POST`/`GET /v1/webhooks`, `DELETE /v1/webhooks/{id}` — abonnements webhook
+//! Vue d'ensemble par famille ; le **contrat détaillé** (paramètres, schémas,
+//! codes d'erreur) fait foi dans `GET /v1/openapi.json` et le README
+//! (§ Fonctionnalités). Le routeur est dans [`router`].
+//!
+//! - **Intensité** : `GET /v1/intensity/now`, `/v1/intensity/date?from=&to=`
+//!   (fenêtre ≤ 366 jours, ≤ 92 jours en `acv-ademe@2`),
+//!   `/v1/intensity/stats?from=&to=[&interval=hour|day]` (résumé exact sur les
+//!   mesures brutes ; série agrégée optionnelle depuis les rollups) ;
+//!   `GET /v1/mix` (mix de production, MW par filière).
+//! - **Prévision & scheduling** : `GET /v1/intensity/forecast` (`climatology@1`,
+//!   ADR-0009), `/v1/intensity/greenest-window` (+ overlay électrolyseur
+//!   `?eligibility=rfnbo|low-carbon`, ADR-0025/0026), `/v1/schedule`,
+//!   `/v1/schedule/slots`, `/v1/intensity/below` (carbon-aware, ADR-0014).
+//! - **Live** : `GET /v1/intensity/stream` — flux SSE des mises à jour (ADR-0014).
+//! - **Contexte** : `GET /v1/exchanges`, `/v1/exchanges/date` (échanges
+//!   transfrontaliers, ADR-0017), `/v1/weather`, `/v1/weather/date`,
+//!   `/v1/renewable` (renouvelable estimé, ADR-0018).
+//! - **Prix & coût** : `GET /v1/price`, `/v1/price/date` (ADR-0023),
+//!   `/v1/cost-reference` (LCOE, ADR-0024).
+//! - **Catalogues** : `GET /v1/methodologies`, `/v1/factors`,
+//!   `/v1/eligibility/rulesets`.
+//! - **Webhooks** : `POST`/`GET /v1/webhooks`, `DELETE /v1/webhooks/{id}`
 //!   (ADR-0016, **clé API requise**).
-//! - `GET /v1/openapi.json` — spécification OpenAPI 3.1 ; `GET /docs` — Swagger UI.
-//! - `GET /health` — sonde de disponibilité.
+//! - **Compteur de visites** : `GET /v1/stats`, `POST /v1/stats/visit` (IP jamais
+//!   stockée).
+//! - **Documentation** : `GET /v1` (redirige vers `/docs`), `GET /v1/openapi.json`
+//!   (OpenAPI 3.1), `GET /docs` (Swagger UI).
+//! - **Hors contrat `/v1`** : `GET /hydrogene` (+ `sites.json`,
+//!   `regions.geojson`, `pays.geojson`) — carte électrolyseurs × carbone live
+//!   (ADR-0029) ; `GET /health`, `GET /health/ready` (sondes). `/metrics` est
+//!   monté par `bin/server`, pas ici.
 //!
-//! Les endpoints `/v1` acceptent les paramètres optionnels `?region=<slug>`
-//! (national par défaut) et `?methodology=<id>` (`rte-direct` par défaut ;
-//! `acv-ademe` pour la vue cycle de vie, ADR-0008).
+//! Les endpoints d'intensité acceptent `?region=<slug>` (national par défaut) et
+//! `?methodology=<id>` (`rte-direct` par défaut, national uniquement ;
+//! `acv-ademe` pour la vue cycle de vie, national + 12 régions, ADR-0008 ;
+//! `&version=2` pour la vue consommation, national, ADR-0010 — refusée par
+//! `/v1/mix`, qui ne sert que le mix de production).
 //!
 //! Les **erreurs** suivent **Problem Details** (RFC 9457, `application/problem+json`) :
 //! `type`/`title`/`status`/`detail` + un `code` court et stable (ADR-0021, module

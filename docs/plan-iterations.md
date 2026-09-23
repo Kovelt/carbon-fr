@@ -1,7 +1,7 @@
 # Plan de la suite — itérations I0 → I7 (à partir du 2026-09-23)
 
 - **Statut** : document vivant — cocher les cases au fil des PR, dater chaque révision en tête.
-- **Dernière mise à jour** : 2026-09-23 (I0 en cours : dérive doc et CI mergées, release v0.7.2 en PR).
+- **Dernière mise à jour** : 2026-09-23 (I0 : v0.7.2 déployée, #100 et #101 mergées, release v0.8.0 en PR).
 - **Sources** : état des lieux multi-agents du 2026-09-23 (constats revérifiés contre le code), recherche en 4 volets (préparation crates.io, backlog consolidé des ADR/roadmaps, montées majeures des dépendances, échéances datées), 3 plans concurrents (« fiabilité d'abord », « adoption d'abord », « valeur métier d'abord ») départagés par un juge. Base retenue : **valeur métier d'abord**, avec les greffes des deux autres.
 - **Horizon** : 13 à 17 semaines selon les itérations, soit vers mi-janvier 2027 au rythme d'un mainteneur seul assisté de Claude Code. Les durées sont des ordres de grandeur, pas des engagements.
 - **Liens** : feuille de route produit dans le [README](../README.md#feuille-de-route), [roadmap hydrogène](roadmap-hydrogene.md), [index des ADR](adr/README.md), [CHANGELOG](../CHANGELOG.md).
@@ -38,9 +38,9 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 
 - [x] Merger `docs/derive-2026-09` (#98, dérive doc ↔ code), puis **vérifier** que les dérives listées par l'état des lieux sont bien toutes closes (dont le tableau README : `/v1/stats`, refus de `acv-ademe@2` par `/v1/mix`).
 - [x] Merger `ci/durcissement-2026-09` (#97) (permissions minimales, actions épinglées par SHA, issue d'alerte si le scan planifié échoue).
-- [ ] **Release v0.7.2** (`rustls` 0.23.45, RUSTSEC-2026-0285) : PR `chore(release)`, tag, image GHCR, **déploiement** selon la procédure de la mémoire locale `prod-vps-kovelt-acces`.
-- [ ] Rebaser puis merger `feat/revoke-key` (migration 0013 : FK `webhook_subscription → api_key` `ON DELETE CASCADE`), puis `feat/webhook-auto-disable` (migration 0014).
-- [ ] Vérifier que `status`/`disabled_at` de `GET /v1/webhooks` sont bien **additifs** pour les clients du SDK TS 0.1.0 déjà publié (champs ignorés, rien de retiré).
+- [x] **Release v0.7.2** (#99, déployée le 2026-09-23) (`rustls` 0.23.45, RUSTSEC-2026-0285) : PR `chore(release)`, tag, image GHCR, **déploiement** selon la procédure de la mémoire locale `prod-vps-kovelt-acces`.
+- [x] Rebaser puis merger `feat/revoke-key` (#100) (migration 0013 : FK `webhook_subscription → api_key` `ON DELETE CASCADE`), puis `feat/webhook-auto-disable` (#101, migration 0014).
+- [x] Vérifier que `status`/`disabled_at` de `GET /v1/webhooks` sont bien **additifs** (diff du snapshot OpenAPI v0.7.2 → main : ajouts seulement) pour les clients du SDK TS 0.1.0 déjà publié (champs ignorés, rien de retiré).
 - [ ] **Release v0.8.0** (migrations 0013 + 0014) : dump de la base juste avant le déploiement (comme avant la 0.2.1), déploiement, contrôle des migrations au démarrage.
 - [ ] Fermer les issues de veille conclues #76 et #81.
 

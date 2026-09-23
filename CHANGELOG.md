@@ -6,7 +6,15 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.8.0] - 2026-09-23
+
+Exploitation du tier hébergé : **révocation de clé API** (`list-keys`,
+`revoke-key`) et **désactivation automatique des webhooks** après N livraisons
+échouées consécutives. Deux migrations appliquées au démarrage : `0013` (clé
+étrangère abonnement → clé, `ON DELETE CASCADE`, purge préalable d'éventuels
+orphelins) et `0014` (`consecutive_failures`, `disabled_at`). Contrat `/v1`
+**additif** uniquement : `GET /v1/webhooks` expose `status` et `disabled_at`.
+Nouvelle variable `CARBONFR_WEBHOOK_MAX_FAILURES` (défaut 10).
 
 ### Ajouté
 

@@ -35,4 +35,4 @@ Conséquence : notre stockage **n'est pas purement append-only**. Une même `(r�
 
 ## Addendum (2026-06-20) — rollups en tables incrémentales
 
-Le point 5 est conservé dans son intention (toute révision touchant une période agrégée recalcule les rollups concernés), mais l'implémentation est passée des **vues matérialisées** (migration `0002`) à des **tables de rollup incrémentales** rafraîchies par seau (migration `0010`). L'invariant fonctionnel est inchangé. L'index `BRIN` évoqué en Conséquences reste **reporté** (cf. addendum ADR-0004).
+Le point 5 est conservé dans son intention (toute révision touchant une période agrégée recalcule les rollups concernés), mais l'implémentation est passée des **vues matérialisées** (migration `0002`) à des **tables de rollup incrémentales** rafraîchies par seau (migration `0010`). L'invariant fonctionnel est inchangé. L'index `BRIN` évoqué en Conséquences a été livré le 2026-08-15 (migration `0012`) — cf. addendum ADR-0004 ; seul le partitionnement reste reporté.

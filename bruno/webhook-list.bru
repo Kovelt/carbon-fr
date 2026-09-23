@@ -18,4 +18,13 @@ assert {
   res.status: eq 200
   res.body.count: isNumber
   res.body.webhooks: isArray
+  res.body.webhooks[0].status: isString
+}
+
+docs {
+  `status` (`active`/`disabled` — désactivé automatiquement après
+  `CARBONFR_WEBHOOK_MAX_FAILURES` livraisons échouées consécutives, ADR-0016)
+  et `disabled_at` (RFC 3339, `null` si actif). Les abonnements désactivés
+  sont purgés après `CARBONFR_WEBHOOK_PURGE_DAYS` (défaut 30, ADR-0016
+  addendum « purge »).
 }

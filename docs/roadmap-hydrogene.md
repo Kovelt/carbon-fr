@@ -6,7 +6,7 @@
 
 ## Position
 
-L'hydrogène est servi comme **extension de la couche carbon-aware** (pas de produit sœur) : le seul substrat à la fois carbon-relevant et temps réel est l'intensité carbone de l'électricité alimentant l'électrolyseur — donnée que carbon-fr possède déjà. Beaucoup de choses bougeront d'ici/après 2030 (révision RFNBO, RED IV, reconnaissance du nucléaire) : cette roadmap prend de l'avance en séquençant par **déclencheurs** plutôt que par dates, et en ne codant **jamais** un paramètre réglementaire non adopté (leçon ADR-0026 D6/D8).
+L'hydrogène est servi comme **extension de la couche carbon-aware** (pas de produit sœur) : le seul substrat à la fois carbon-relevant et temps réel est l'intensité carbone de l'électricité alimentant l'électrolyseur — donnée que carbon-fr possède déjà. Beaucoup de choses bougeront d'ici/après 2030 (révision RFNBO, RED IV, reconnaissance du nucléaire) : cette roadmap prend de l'avance en séquençant par **déclencheurs** plutôt que par dates, et en ne codant **jamais** un paramètre réglementaire non adopté (leçon ADR-0026 D6).
 
 ## État des lieux (livré)
 

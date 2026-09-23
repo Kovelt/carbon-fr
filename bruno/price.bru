@@ -24,5 +24,7 @@ docs {
   (prix spot day-ahead ENTSO-E) + acheminement (TURPE) + accise + commercialisation
   + TVA, avec contexte (mix par filière + technologie marginale ESTIMÉE). National
   uniquement. Requiert que le prix spot ENTSO-E (CARBONFR_ENTSOE_TOKEN) ait été
-  ingéré — sinon 404 (no_data). Valeurs réglementaires best-effort 2026 (à sourcer).
+  ingéré — sinon 404 (no_data). Valeurs réglementaires sourcées CRE/BOFiP
+  (ADR-0023) ; le millésime TRV bascule automatiquement selon la date (`2026`
+  jusqu'au 31/07/2026, `2026-H2` depuis, cf. `vintage` dans la réponse).
 }

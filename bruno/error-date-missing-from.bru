@@ -16,5 +16,5 @@ params:query {
 
 assert {
   res.status: eq 400
-  res.body.error: eq bad_request
+  res.body.code: eq bad_request
 }

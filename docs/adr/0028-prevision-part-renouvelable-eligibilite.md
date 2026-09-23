@@ -1,6 +1,6 @@
 # ADR-0028 — Prévision de la part renouvelable pour l'éligibilité (`share-clim@1`)
 
-- **Statut** : Accepté (GATE de backtest franchi le 2026-07-03 ; re-jeu du GATE de neutralité requis avant service, cf. §Conséquences)
+- **Statut** : Accepté (GATE de backtest franchi le 2026-07-03 ; GATE de neutralité re-joué et **GREEN** le 2026-07-03, cf. [`0026-revue-neutralite.md`](0026-revue-neutralite.md) §6 — servi)
 - **Date** : 2026-07-03
 - **Décideurs** : Morgan (Kovelt / carbon-fr)
 - **ADR liés** : ADR-0026 (parent — amende sa décision 9), ADR-0009 (famille de modèle climatologique), ADR-0011 (intervalles), ADR-0013 (≠ `MixForecaster` GBDT, chantier distinct), ADR-0018 (précédent du gate mesuré), ADR-0019 (versionnement)
@@ -46,7 +46,7 @@ Contraintes héritées : jamais d'extrapolation muette (l'indétermination est u
 - La part **prévue** reste un proxy **instantané** de l'Article 4 (moyenne annuelle légale) — inchangé, documenté.
 - Modèle climatologique pur : ne voit pas la météo. La variante météo-pilotée (RenewableModel ADR-0018 sur météo prévue, plafond 48 h du store actuel) est une **itération mesurable** : elle devra battre `share-clim@1` au `backtest-share` pour être promue (`share-meteo@2` le cas échéant, jamais de mutation silencieuse).
 - τ/N hérités de `climatology@1` sans re-calage dédié (le gate passe avec ; un `backtest-share-sweep` est possible si besoin).
-- **Re-jeu obligatoire du GATE de neutralité** (engagement de la revue du 2026-07-03) avant mise en production : le rééquilibrage d'information (rfnbo gagne un signal étayé, low-carbon inchangé) est précisément l'angle « symétrie » à re-tester.
+- **Re-jeu du GATE de neutralité** (engagement de la revue du 2026-07-03) : effectué le jour même sur le rééquilibrage d'information (rfnbo gagne un signal étayé, low-carbon inchangé) — angle « symétrie » re-testé, verdict **GREEN** ([`0026-revue-neutralite.md`](0026-revue-neutralite.md) §6).
 
 ## Alternatives envisagées
 

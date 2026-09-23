@@ -24,6 +24,11 @@ bru run --env Local
 > s'appuie sur ~8 semaines en amont du `from`. Les requêtes régionales
 > supposent que le poller a tourné au moins une fois.
 
+> Les requêtes Webhook (`{{apiKey}}`) nécessitent une clé émise via
+> `DATABASE_URL=… cargo run -p server -- mint-key` (affichée une seule fois) ; positionner
+> `apiKey` en variable d'environnement. `{{webhookId}}` (pour la suppression)
+> se copie depuis le `id` renvoyé par la requête de création.
+
 ## Contenu
 
 | Requête | Vérifie |
@@ -54,6 +59,9 @@ bru run --env Local
 | Webhook — créer (clé requise) | `201`, `id`, `secret` (nécessite `{{apiKey}}`) |
 | Webhook — lister (clé requise) | `200`, `webhooks` (nécessite `{{apiKey}}`) |
 | Webhook — supprimer (clé requise) | `204` (nécessite `{{apiKey}}` + `{{webhookId}}`) |
+| Éligibilité — catalogue des rulesets | `200`, `rulesets`, `disclaimer` |
+| Éligibilité — greenest-window (cadre rfnbo) | `200`, `eligibility.framework`, `bidding_zone: FR` |
+| Éligibilité — greenest-window (cadre low-carbon) | `200`, `eligibility.framework`, `bidding_zone: FR` |
 | OpenAPI — spec | `200`, `openapi: 3.1.0` |
 | Erreur — région en rte-direct | `404 no_data` |
 | Erreur — région inconnue | `400 bad_request` |
@@ -61,6 +69,10 @@ bru run --env Local
 | Erreur — version inconnue | `400 bad_request` |
 | Erreur — facteurs en rte-direct | `400 bad_request` |
 | Erreur — source LCOE inconnue | `400 bad_request` |
+| Erreur — cadre d'éligibilité invalide | `400 bad_request` |
 
 > La collection n'est **pas** dans la CI : elle exige une API live (+ base,
 > + données ODRÉ). C'est un outil de dev/QA manuel.
+>
+> `/v1/intensity/stream` (SSE) n'a pas de requête ici : Bruno n'assert pas un
+> flux `text/event-stream` — le vérifier manuellement (`curl -N`).

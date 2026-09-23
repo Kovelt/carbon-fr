@@ -57,7 +57,7 @@ L'analyse du paysage de données 2026 fait apparaître un constat structurant :
 
 **Suite**
 - Un ADR de méthodologie dédié (**ADR-0026** pressenti) détaillera la paramétrisation fine des overlays au moment de l'implémentation, à l'image des ADR-0008/0010 pour `acv-ademe`.
-- Un **brief d'implémentation** de la couche A accompagne cet ADR : [`brief-couche-A-electrolyseur`](../brief-claude-code-couche-A-electrolyseur.md).
+- Un **brief d'implémentation** de la couche A accompagne cet ADR : [`brief-couche-A-electrolyseur`](https://github.com/Kovelt/carbon-fr/blob/77bdab8/docs/brief-claude-code-couche-A-electrolyseur.md) (exécuté en v0.4.0 ; retiré du dépôt le 2026-09-23, lien vers sa dernière version dans l'historique).
 
 ---
 

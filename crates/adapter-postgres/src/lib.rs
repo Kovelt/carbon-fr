@@ -946,19 +946,23 @@ impl ApiKeyRepository for PgIntensityRepository {
     }
 
     async fn revoke_key(&self, key_hash: &str) -> Result<Option<KeyRevocation>, RepositoryError> {
-        // Clé et abonnements dans la MÊME transaction : jamais d'abonnement
-        // orphelin (encore livré, plus gérable) ni de clé à demi révoquée.
+        // L'absence d'orphelin est garantie par la base (FK `ON DELETE CASCADE`,
+        // migration 0013), pas par cette séquence. On verrouille d'abord la ligne
+        // de la clé (FOR UPDATE) : toute création concurrente d'abonnement (qui
+        // pose un KEY SHARE via le contrôle de FK) soit s'est terminée avant — et
+        // son abonnement est visible du DELETE ci-dessous —, soit attend la fin de
+        // la révocation puis échoue. Le décompte renvoyé est donc exact.
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|e| backend(format!("revoke_key (begin) : {e}")))?;
-        let deleted = sqlx::query("DELETE FROM api_key WHERE key_hash = $1")
+        let locked = sqlx::query("SELECT 1 FROM api_key WHERE key_hash = $1 FOR UPDATE")
             .bind(key_hash)
-            .execute(&mut *tx)
+            .fetch_optional(&mut *tx)
             .await
-            .map_err(|e| backend(format!("revoke_key (clé) : {e}")))?;
-        if deleted.rows_affected() == 0 {
+            .map_err(|e| backend(format!("revoke_key (verrou) : {e}")))?;
+        if locked.is_none() {
             // Empreinte inconnue : rien n'est touché (rollback au drop de `tx`).
             return Ok(None);
         }
@@ -968,6 +972,11 @@ impl ApiKeyRepository for PgIntensityRepository {
                 .execute(&mut *tx)
                 .await
                 .map_err(|e| backend(format!("revoke_key (abonnements) : {e}")))?;
+        sqlx::query("DELETE FROM api_key WHERE key_hash = $1")
+            .bind(key_hash)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| backend(format!("revoke_key (clé) : {e}")))?;
         tx.commit()
             .await
             .map_err(|e| backend(format!("revoke_key (commit) : {e}")))?;

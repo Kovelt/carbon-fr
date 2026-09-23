@@ -941,11 +941,77 @@ async fn api_key_revoke_removes_key_and_only_its_subscriptions() {
             .any(|s| s.owner_key_hash == revoked)
     );
 
+    // La base refuse tout abonnement dont la clé n'existe pas (FK, migration
+    // 0013) : une création concurrente d'une révocation ne peut pas laisser
+    // d'orphelin, quel que soit l'ordre des requêtes applicatives.
+    assert!(repo.create(&sub("wh-revoke-3", revoked), 50).await.is_err());
+    assert!(repo.list_for_owner(revoked).await.unwrap().is_empty());
+
     // Empreinte inconnue (ou déjà révoquée) : `None`, rien n'est touché.
     assert!(repo.revoke_key(revoked).await.unwrap().is_none());
     assert_eq!(repo.list_for_owner(kept).await.unwrap().len(), 1);
 
     repo.revoke_key(kept).await.unwrap();
+}
+
+/// Scénario de la revue adversariale de `revoke-key` : un `POST /v1/webhooks`
+/// est « en vol » (INSERT fait, transaction pas encore validée) quand la
+/// révocation démarre. La révocation doit attendre la création, puis emporter
+/// l'abonnement — jamais d'orphelin, et un décompte exact.
+#[tokio::test]
+async fn revoke_key_waits_for_in_flight_subscription_and_removes_it() {
+    let Some(repo) = setup("test-pg-apikey-race").await else {
+        return;
+    };
+    use carbonfr_core::ports::SubscriptionRepository;
+
+    let hash = "deadbeefcafe0004";
+    sqlx::query("DELETE FROM api_key WHERE key_hash = $1")
+        .bind(hash)
+        .execute(repo.pool())
+        .await
+        .expect("nettoyage api_key");
+    repo.insert_key(hash, ApiTier::Free, "course")
+        .await
+        .unwrap();
+
+    // Création en vol : transaction ouverte, ligne insérée, pas encore commitée.
+    let mut in_flight = repo.pool().begin().await.expect("begin");
+    sqlx::query(
+        "INSERT INTO webhook_subscription \
+         (id, owner_key_hash, region, threshold, direction, callback_url, secret) \
+         VALUES ('wh-race-1', $1, 'national', 50, 'below', 'https://hooks.example.com/c', 's')",
+    )
+    .bind(hash)
+    .execute(&mut *in_flight)
+    .await
+    .expect("insertion en vol");
+
+    let revoker = {
+        let repo = repo.clone();
+        tokio::spawn(async move { repo.revoke_key(hash).await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !revoker.is_finished(),
+        "la révocation doit attendre la création en vol (verrou sur la clé)"
+    );
+
+    in_flight.commit().await.expect("commit de la création");
+    let revocation = revoker
+        .await
+        .expect("tâche de révocation")
+        .unwrap()
+        .expect("clé révoquée");
+    assert_eq!(revocation.subscriptions_removed, 1);
+    assert!(
+        repo.active()
+            .await
+            .unwrap()
+            .iter()
+            .all(|s| s.owner_key_hash != hash),
+        "aucun abonnement orphelin ne doit survivre à la révocation"
+    );
 }
 
 #[tokio::test]
@@ -962,6 +1028,10 @@ async fn webhook_subscription_crud_scoped_to_owner() {
         .execute(repo.pool())
         .await
         .expect("nettoyage");
+    // Un abonnement appartient à une clé existante (FK, migration 0013).
+    repo.insert_key("owner-aaa", ApiTier::Free, "proprietaire")
+        .await
+        .unwrap();
 
     let sub = Subscription {
         id: id.to_string(),

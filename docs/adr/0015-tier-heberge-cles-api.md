@@ -131,6 +131,7 @@ Jusqu'ici `mint-key` ne faisait qu'upserter : une clé compromise ne pouvait êt
 
 - **`list-keys`** : empreinte, tier, date de création, nombre d'abonnements webhook, libellé. L'empreinte (SHA-256 d'un aléa de 256 bits) n'est **pas un secret** — elle ne permet pas de s'authentifier — et suffit à désigner la clé : l'opérateur n'a jamais la clé en clair.
 - **`revoke-key`** (`CARBONFR_REVOKE_KEY` = clé `cfr_…` ou son empreinte) : supprime la clé **et ses abonnements webhook dans la même transaction**. Un abonnement orphelin continuerait d'être livré alors qu'aucune clé ne peut plus le lister ni le supprimer ; il disparaît donc avec sa clé. Empreinte inconnue → échec explicite (code de sortie ≠ 0), rien n'est touché.
+- **Invariant porté par la base** (migration `0013`) : clé étrangère `webhook_subscription.owner_key_hash → api_key.key_hash`, `ON DELETE CASCADE`. La revue adversariale a montré qu'un `POST /v1/webhooks` concurrent d'une révocation pouvait, sans elle, laisser un abonnement orphelin (l'authentification du handler précède la transaction de création). `revoke_key` verrouille aussi la ligne de la clé (`FOR UPDATE`) : une création en vol se termine d'abord (son abonnement est compté puis supprimé) ou échoue après la révocation. Les orphelins éventuels hérités sont purgés par la migration.
 
 Choix assumés :
 

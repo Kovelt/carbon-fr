@@ -46,8 +46,13 @@ de contrat `/v1`.
   **et ses abonnements webhook dans la même transaction** (un abonnement
   orphelin resterait livré sans plus pouvoir être géré). Empreinte inconnue →
   échec explicite, rien n'est touché. Propagation ≤ 60 s aux instances en cours
-  (cache positif). Port `ApiKeyRepository` : `list_keys` + `revoke_key` ;
-  aucune migration, aucun changement de contrat `/v1`.
+  (cache positif). Port `ApiKeyRepository` : `list_keys` + `revoke_key`.
+  **Migration `0013`** : clé étrangère `webhook_subscription.owner_key_hash →
+  api_key.key_hash` (`ON DELETE CASCADE`) — l'absence d'abonnement orphelin est
+  garantie par la base, y compris quand un `POST /v1/webhooks` court pendant
+  une révocation (course relevée en revue adversariale, test de régression à
+  deux connexions) ; les orphelins éventuels hérités sont purgés par la
+  migration. Aucun changement de contrat `/v1`.
 
 ### Sécurité
 

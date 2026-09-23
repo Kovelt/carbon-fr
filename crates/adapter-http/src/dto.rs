@@ -1592,27 +1592,31 @@ pub(crate) struct WebhookListResponse {
 }
 
 impl WebhookListResponse {
-    pub(crate) fn new(subs: &[carbonfr_core::domain::Subscription]) -> Self {
+    pub(crate) fn new(
+        subs: &[carbonfr_core::domain::Subscription],
+    ) -> Result<Self, time::error::Format> {
         let webhooks = subs
             .iter()
-            .map(|s| WebhookSummary {
-                id: s.id.clone(),
-                region: s.region.slug().to_string(),
-                threshold: s.threshold,
-                direction: s.direction.code(),
-                callback_url: s.callback_url.clone(),
-                status: if s.disabled_at.is_some() {
-                    "disabled"
-                } else {
-                    "active"
-                },
-                disabled_at: s.disabled_at.and_then(|at| to_rfc3339(at).ok()),
+            .map(|s| {
+                Ok(WebhookSummary {
+                    id: s.id.clone(),
+                    region: s.region.slug().to_string(),
+                    threshold: s.threshold,
+                    direction: s.direction.code(),
+                    callback_url: s.callback_url.clone(),
+                    status: if s.disabled_at.is_some() {
+                        "disabled"
+                    } else {
+                        "active"
+                    },
+                    disabled_at: s.disabled_at.map(to_rfc3339).transpose()?,
+                })
             })
-            .collect::<Vec<_>>();
-        Self {
+            .collect::<Result<Vec<_>, time::error::Format>>()?;
+        Ok(Self {
             count: webhooks.len(),
             webhooks,
-        }
+        })
     }
 }
 

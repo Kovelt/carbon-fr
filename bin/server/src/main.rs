@@ -2115,7 +2115,6 @@ where
                 let repo = repo.clone();
                 let id = sub.id.clone();
                 tokio::spawn(async move {
-                    let _permit = permit; // relâché à la fin de la livraison
                     let delivered = match notifier.deliver(&delivery).await {
                         Ok(()) => {
                             info!(subscription = %id, "webhook livré");
@@ -2126,6 +2125,10 @@ where
                             false
                         }
                     };
+                    // Le permis borne les connexions HTTPS sortantes, pas les
+                    // écritures en base : relâché dès la fin de la livraison, pour
+                    // qu'une base lente ne fasse pas sauter d'autres livraisons.
+                    drop(permit);
                     // Compteur d'échecs consécutifs (remis à zéro par un succès).
                     // Base indisponible : l'issue est perdue — sans effet sur les
                     // livraisons, au pire une désactivation retardée.

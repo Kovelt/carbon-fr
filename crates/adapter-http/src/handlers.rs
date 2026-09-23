@@ -1405,7 +1405,7 @@ where
 {
     let owner = authenticate_owner(&state.repo, &headers).await?;
     let subscriptions = state.repo.list_for_owner(&owner).await?;
-    Ok(Json(WebhookListResponse::new(&subscriptions)))
+    Ok(Json(WebhookListResponse::new(&subscriptions)?))
 }
 
 /// `DELETE /v1/webhooks/{id}` — supprime un abonnement **possédé par la clé**.

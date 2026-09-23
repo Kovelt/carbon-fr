@@ -1,7 +1,7 @@
 # Plan de la suite — itérations I0 → I7 (à partir du 2026-09-23)
 
 - **Statut** : document vivant — cocher les cases au fil des PR, dater chaque révision en tête.
-- **Dernière mise à jour** : 2026-09-23 (I0 terminée hors fermeture des issues #76/#81 ; I1 livrée en v0.8.1, reste la notification Uptime Kuma ; I2 livrée : v0.8.2 déployée et `@carbon-fr/sdk` 0.2.0 publié sur npm, restent les deux points Dependabot).
+- **Dernière mise à jour** : 2026-09-23 (I0 terminée hors fermeture des issues #76/#81 ; I1 livrée en v0.8.1, reste la notification Uptime Kuma ; I2 livrée (v0.8.2 déployée, `@carbon-fr/sdk` 0.2.0 sur npm) ; I3 livrée (ADR-0030/0031) ; I4 en PR (version 0.9.0, rien de publié)).
 - **Sources** : état des lieux multi-agents du 2026-09-23 (constats revérifiés contre le code), recherche en 4 volets (préparation crates.io, backlog consolidé des ADR/roadmaps, montées majeures des dépendances, échéances datées), 3 plans concurrents (« fiabilité d'abord », « adoption d'abord », « valeur métier d'abord ») départagés par un juge. Base retenue : **valeur métier d'abord**, avec les greffes des deux autres.
 - **Horizon** : 13 à 17 semaines selon les itérations, soit vers mi-janvier 2027 au rythme d'un mainteneur seul assisté de Claude Code. Les durées sont des ordres de grandeur, pas des engagements.
 - **Liens** : feuille de route produit dans le [README](../README.md#feuille-de-route), [roadmap hydrogène](roadmap-hydrogene.md), [index des ADR](adr/README.md), [CHANGELOG](../CHANGELOG.md).
@@ -88,15 +88,15 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 
 **Objectif** : rendre les deux crates publiables avec une documentation propre et sans rupture SemVer silencieuse — **sans publier**.
 
-- [ ] Corriger les **2 liens rustdoc** de `core` vers des items privés (`forecast.rs` → `BAND_QUANTILE`, `price.rs` → `Filiere::merit_order`) et les **8 annotations** `[FAIT]`/`[ESTIMATION]` de `eligibility/src/ruleset.rs` que rustdoc prend pour des liens cassés. docs.rs publierait quand même (il ne refuse pas les avertissements), mais avec des liens morts.
-- [ ] **Métadonnées** des deux crates : `readme`, `documentation`, `homepage`, `keywords` (≤ 5), `categories` (taxonomie crates.io), `rust-version` ; les 9 autres membres gardent `publish = false`.
-- [ ] **Dépendance interne versionnée** : `carbonfr-core = { path = "crates/core", version = "…" }` dans `[workspace.dependencies]` (sinon `cargo package -p carbonfr-eligibility` échoue).
-- [ ] **`#[non_exhaustive]`** sur les enums publics qui grandiront (au minimum les erreurs : `SourceError`, `RepositoryError`, `ForecastError`, `ApplicationError`, `WebhookUrlError`) selon la règle fixée par l'ADR-0030 ; **décision documentée** pour les structs à champs publics (`GenerationMix`, `Measurement`…).
-- [ ] Documenter dans le README de chaque crate les types tiers exposés par l'API publique (`async-trait`, `time::OffsetDateTime`), et ce qui reste **hors** des crates publiées (migrations SQL, données de la carte `/hydrogene`).
-- [ ] Feature flags : aucun aujourd'hui. Acter dans l'ADR-0030 si une feature optionnelle (ex. `serde` sur les types du domaine) est prévue avant une 1.0, pour ne pas l'ajouter plus tard de façon cassante.
-- [ ] **CI** : job MSRV (valeur fixée par l'ADR-0030, plancher de fait ≈ 1.85 avec l'édition 2024), job `cargo-semver-checks` (référence posée), job `RUSTDOCFLAGS="-D warnings" cargo doc` sur les deux crates.
+- [x] Corriger les **2 liens rustdoc** de `core` vers des items privés (`forecast.rs` → `BAND_QUANTILE`, `price.rs` → `Filiere::merit_order`) et les **8 annotations** `[FAIT]`/`[ESTIMATION]` de `eligibility/src/ruleset.rs` que rustdoc prend pour des liens cassés. docs.rs publierait quand même (il ne refuse pas les avertissements), mais avec des liens morts.
+- [x] **Métadonnées** des deux crates : `readme`, `documentation`, `homepage`, `keywords` (≤ 5), `categories` (taxonomie crates.io), `rust-version` ; les 9 autres membres gardent `publish = false`.
+- [x] **Dépendance interne versionnée** : `carbonfr-core = { path = "crates/core", version = "…" }` dans `[workspace.dependencies]` (sinon `cargo package -p carbonfr-eligibility` échoue).
+- [x] **`#[non_exhaustive]`** sur les enums publics qui grandiront (au minimum les erreurs : `SourceError`, `RepositoryError`, `ForecastError`, `ApplicationError`, `WebhookUrlError`) selon la règle fixée par l'ADR-0030 ; **décision documentée** pour les structs à champs publics (`GenerationMix`, `Measurement`…).
+- [x] Documenter dans le README de chaque crate les types tiers exposés par l'API publique (`async-trait`, `time::OffsetDateTime`), et ce qui reste **hors** des crates publiées (migrations SQL, données de la carte `/hydrogene`).
+- [x] Feature flags : aucun aujourd'hui. Acter dans l'ADR-0030 si une feature optionnelle (ex. `serde` sur les types du domaine) est prévue avant une 1.0, pour ne pas l'ajouter plus tard de façon cassante.
+- [x] **CI** : job MSRV (valeur fixée par l'ADR-0030, plancher de fait ≈ 1.85 avec l'édition 2024), job `cargo-semver-checks` (référence posée), job `RUSTDOCFLAGS="-D warnings" cargo doc` sur les deux crates.
 
-**Sortie** : `cargo package -p carbonfr-core` et `-p carbonfr-eligibility` passent ; `cargo doc -D warnings` passe sur les deux ; jobs MSRV, semver-checks et rustdoc verts ; workspace complet toujours vert.
+**Sortie** (atteinte le 2026-09-23 en local ; à confirmer par la CI de la PR, dont le job MSRV 1.88) : `cargo package -p carbonfr-core -p carbonfr-eligibility` passe (les deux ensemble : `eligibility` seule ne peut pas être vérifiée avant la publication de `core`) ; `cargo doc -D warnings` passe sur les deux ; jobs MSRV, semver-checks et rustdoc verts ; workspace complet toujours vert.
 
 ## I5 — Publication crates.io et `reqwest` 0.13 (~2 semaines → v0.9.1)
 

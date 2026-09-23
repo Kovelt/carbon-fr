@@ -103,6 +103,7 @@ pub fn should_fire(
 
 /// Raison de rejet d'une URL de rappel (ADR-0016 §3).
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
 pub enum WebhookUrlError {
     #[error("schéma non autorisé (HTTPS requis)")]
     NotHttps,

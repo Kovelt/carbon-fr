@@ -327,6 +327,11 @@ fn parse_ip(value: &str) -> Option<String> {
 fn limit_for(tier: ApiTier, config: &AuthConfig) -> u32 {
     match tier {
         ApiTier::Free => config.free_per_min,
+        // `ApiTier` est `#[non_exhaustive]` (ADR-0030) : un palier pas encore
+        // connu de cet adapter reçoit le quota le plus restrictif connu, jamais
+        // davantage — repli sûr (on ne peut pas sur-accorder un quota qu'on ne
+        // sait pas interpréter).
+        _ => config.free_per_min,
     }
 }
 

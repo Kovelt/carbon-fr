@@ -14,6 +14,7 @@ use crate::domain::CarbonIntensity;
 /// adjacente à RTE). Les interconnexions Manche (IFA/IFA2/ElecLink) sont
 /// agrégées sous `GreatBritain`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum Neighbor {
     Belgium,
     Germany,

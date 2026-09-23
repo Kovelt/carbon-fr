@@ -276,6 +276,10 @@ fn neighbor_name(n: Neighbor) -> &'static str {
         Neighbor::Italy => "Italie",
         Neighbor::Switzerland => "Suisse",
         Neighbor::GreatBritain => "Royaume-Uni",
+        // `Neighbor` est `#[non_exhaustive]` (ADR-0030) : libellé neutre et
+        // explicite pour une frontière pas encore connue de cet adapter,
+        // jamais le nom erroné d'un pays existant.
+        _ => "Voisin inconnu",
     }
 }
 

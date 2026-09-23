@@ -44,6 +44,7 @@ pub struct SlotInput {
 
 /// Pilier d'éligibilité (de quel test provient un signal).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Pillar {
     /// Part renouvelable instantanée (proxy réseau, cadre `rfnbo`).
     RenewableShare,
@@ -79,6 +80,7 @@ pub fn basis_of(pillar: Pillar) -> &'static str {
 
 /// Signal émis par un pilier sur un créneau.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
 pub enum EligibilitySignal {
     /// Part renouvelable vs seuil (proxy ; ≠ Article 4 annuel). Observée
     /// (nowcast) ou prévue (`share-clim@1`) — dans le second cas le verdict est
@@ -117,6 +119,7 @@ pub enum EligibilitySignal {
 
 /// Pourquoi un pilier n'a pas pu trancher (servi avec le signal — additif).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IndeterminateReason {
     /// Donnée absente (mix/prix/seuil indisponible au créneau).
     MissingData,

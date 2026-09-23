@@ -186,6 +186,10 @@ impl From<ForecastError> for ApiError {
                 Self::not_found("historique insuffisant pour établir une prévision")
             }
             ForecastError::Unavailable(_) => Self::internal(),
+            // `ForecastError` est `#[non_exhaustive]` (ADR-0030) : une variante
+            // future non prévue par cet adapter reste une erreur serveur
+            // générique (même réponse que `Unavailable`), jamais un succès.
+            _ => Self::internal(),
         }
     }
 }

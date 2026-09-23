@@ -1,6 +1,6 @@
 # ADR-0018 — Dérivation renouvelable : météo → production éolien/solaire
 
-- **Statut** : Accepté, **engagé** (calculateur + backtest + **exposition `/v1/renewable`** livrés ; prévision météo-pilotée à suivre)
+- **Statut** : Accepté, **engagé** (calculateur + backtest + **exposition `/v1/renewable`** livrés ; prévision d'intensité météo-pilotée écartée, gate non franchi — cf. addendum)
 - **Date** : 2026-06-16
 - **S'appuie sur** : ADR-0002 (hexagonal), ADR-0009 (gardé par backtest), ADR-0012 (store météo)
 

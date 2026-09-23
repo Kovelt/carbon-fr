@@ -6,6 +6,8 @@ Client **TypeScript** de l'API [carbon-fr](https://github.com/Kovelt/carbon-fr) 
 - **Typé de bout en bout** : chaque endpoint de **données** `/v1` a sa méthode et son type de réponse (les endpoints d'exploitation/spec — `/health`, `/metrics`, `/v1/openapi.json` — ne sont pas exposés).
 - **Flux live** (SSE) exposé en `AsyncGenerator`.
 
+> **Versions** : ce README documente la **0.2.0** (publiée sur npm par le tag `sdk-v0.2.0`). La 0.1.0 n'expose ni `price`/`priceHistory`, ni `costReference`, ni `eligibilityRulesets`, ni l'option `eligibility` de `greenestWindow` — vérifier la version installée (`npm view @carbon-fr/sdk version`).
+
 ## Installation
 
 ```bash

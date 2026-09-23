@@ -36,3 +36,4 @@ La décision (PostgreSQL natif, sans extension) reste valide. Deux points d'impl
 
 - **Rollups** : d'abord des **vues matérialisées** (migration `0002`), puis remplacées par de **vraies tables incrémentales** upsertées par seau (migration `0010_rollups_incremental.sql`). Le rafraîchissement n'est donc plus complet mais ciblé sur les seaux touchés ; la surface de lecture est inchangée.
 - **Partitionnement déclaratif + index `BRIN`** : **reportés** (la table `measurement` reste simple, cf. commentaire de la migration `0001`). À reconsidérer maintenant que l'historique complet est ingéré ; le choix reste réversible via le port `IntensityRepository`.
+- **2026-08-15** : l'index `BRIN` sur `measurement(at)` a été livré (migration `0012`, audit perf) pour accélérer le rafraîchissement incrémental des rollups (fenêtre 7 j) — cf. CHANGELOG [0.7.0]. Seul le **partitionnement déclaratif** reste reporté.

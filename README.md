@@ -66,8 +66,6 @@ const now = await cf.intensityNow();
 console.log(now.intensity.value, now.intensity.unit); // 20 gCO2eq/kWh
 ```
 
-<!-- TODO: capture /docs -->
-
 ## Fonctionnalités
 
 | Endpoint | Nature | Statut |
@@ -88,7 +86,7 @@ console.log(now.intensity.value, now.intensity.unit); // 20 gCO2eq/kWh
 | `GET /v1/methodologies` · `/factors` | Catalogue des méthodes + table des facteurs (vérifiabilité) | ✅ |
 | `GET /v1/price` · `/price/date` | Décomposition du prix payé ancrée sur le TRV (énergie spot ENTSO-E + TURPE + taxes + résidu, ADR-0023) | ✅ |
 | `GET /v1/cost-reference` | Couche comparative **LCOE** (coût de production), estimation en fourchette, jamais soustraite du marché (ADR-0024) | ✅ |
-| `POST`/`GET`/`DELETE /v1/webhooks` | Abonnements webhook signés (clé API requise), désactivés automatiquement après une série de livraisons échouées (`status`) | ✅ |
+| `POST`/`GET`/`DELETE /v1/webhooks` | Abonnements webhook signés (clé API requise), désactivés automatiquement après une série de livraisons échouées (`status`) puis purgés après `CARBONFR_WEBHOOK_PURGE_DAYS` jours (défaut 30) | ✅ |
 | `GET /v1/stats` · `POST /v1/stats/visit` | Compteur de consultation (IP jamais stockée, empreinte salée) | ✅ |
 
 Les endpoints d'**intensité** (`/intensity/now`, `/intensity/date`, `/intensity/stats`, `/mix`) acceptent `?region=<slug>` (national par défaut) et `?methodology=<id>` : **`rte-direct`** (estimation RTE, combustion directe — défaut, **national uniquement**) ou **`acv-ademe`** (cycle de vie ADEME, national + 12 régions, ADR-0008) ; `&version=2` (vue consommation, national) est acceptée par `/intensity/*` mais **refusée par `/mix`** (`400` : le mix servi est celui de production). Les endpoints de prix, coût, échanges, météo, renouvelable et catalogue (`/price`, `/cost-reference`, `/exchanges`, `/weather`, `/renewable`, `/methodologies`, `/factors`) sont **nationaux** (`/price` renvoie `400` hors national).

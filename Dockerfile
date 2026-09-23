@@ -20,7 +20,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 # ─── Runtime ─────────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
-# Certificats TLS (clients sortants ODRÉ/Open-Meteo/ENTSO-E/webhooks via rustls).
+# Magasin CA système : les clients TLS du binaire (reqwest, sqlx) embarquent
+# webpki-roots et ne le lisent pas ; conservé pour tout outil qui s'y fierait.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*

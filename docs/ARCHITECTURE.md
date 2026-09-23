@@ -155,11 +155,11 @@ Les crates publiables sont préfixées `carbonfr-*` même si les dossiers resten
 | `adapter-entsoe` | `CrossBorderSource` (flux A11 + intensité voisine A75) + `SpotPriceSource` (spot A44) | reqwest, quick-xml |
 | `adapter-webhook` | `Notifier` (livraison HMAC signée, anti-SSRF) | reqwest |
 | `adapter-gbdt` | `ForecastModel` ML (`gbdt@1`, gardé par backtest — non servi) | gbdt |
-| `server` (bin) | composition root + poller unique + registre `/metrics` + sous-commandes | toutes les précédentes |
+| `server` (bin) | composition root + poller unique + watcher de webhooks + purge des abonnements désactivés + registre `/metrics` + sous-commandes | toutes les précédentes |
 
 ## 8. Roadmap
 
-Les cinq phases sont **livrées**. État réel (version de workspace : cf. `[workspace.package] version` dans le `Cargo.toml` racine ; contrat d'API `/v1`) :
+Les six phases sont **livrées**. État réel (version de workspace : cf. `[workspace.package] version` dans le `Cargo.toml` racine ; contrat d'API `/v1`) :
 
 1. **Socle** ✅ — `core` + poller unique (`IngestLatest`) + `/intensity/now` + `/mix` + `/health`, national.
 2. **Historique + régional** ✅ — backfill par export de masse (2012→), `/intensity/date`, `/intensity/stats`, 12 régions (servies en `acv-ademe`), rollups (passés de vues matérialisées à tables incrémentales).
@@ -176,7 +176,7 @@ L'API est **live** sur un VPS géré par Kovelt (détails et alternatives : **AD
 
 - **API** : service `carbonfr-server` (poller **intégré**) + PostgreSQL dédié, déployé en conteneur sur le **VPS Kovelt**, derrière **Traefik** (terminaison TLS Let's Encrypt, en-têtes de sécurité, `X-Forwarded-For` de confiance). Le service tire une **image taguée depuis GHCR** (`ghcr.io/kovelt/carbon-fr:X.Y.Z`, épinglée — pas de build sur place) ; backfill réalisé, sauvegardes quotidiennes hors serveur avec **restauration testée** (procédure et mesures : [`deploy/README.md` §4](../deploy/README.md#4-sauvegarde--restauration)), supervision Prometheus + sonde externe ([§3](../deploy/README.md#3-supervision--alertes)).
 - **Image & release** : `Dockerfile` multi-stage (build `rust:1-bookworm` via rustls sans OpenSSL, runtime `debian:bookworm-slim` non-root). Le workflow `release.yml` se déclenche sur tag `v*` (garde-fou : tag == version de workspace) et publie l'image GHCR taguée `X.Y.Z`/`X.Y`/`latest` (publique).
-- **Forme du poller** : **intégré** au `server` (un seul binaire ; le SSE passe par un canal mémoire `tokio::broadcast`). Un `bin/poller` séparé sur `LISTEN`/`NOTIFY` reste documenté comme évolution si plusieurs instances API sont nécessaires.
+- **Forme du poller** : **intégré** au `server` (un seul binaire ; le SSE passe par un canal mémoire `tokio::broadcast`). Un `bin/poller` séparé sur `LISTEN`/`NOTIFY` reste documenté comme évolution si plusieurs instances API sont nécessaires. Le même binaire porte aussi le **watcher de webhooks** (ADR-0016, détecte les franchissements et livre) et la **purge périodique** (6 h) des abonnements désactivés (ADR-0016, addendum « purge »).
 - **Variantes self-host fournies** dans `deploy/` (exemples, pas la prod) : un `Caddyfile` (terminaison TLS + reverse proxy, sonde `/health/ready`) et une unité `carbonfr.service` durcie (systemd, `Restart=on-failure`). À coupler avec `CARBONFR_TRUST_PROXY=1` et un `CARBONFR_VISIT_SALT` non-défaut (le serveur refuse de démarrer sans, derrière proxy).
 - **DNS** : sous-domaine Kovelt (`carbon-fr-api.kovelt.fr`).
 - **Contrat d'URL** : l'API est versionnée dans le chemin (`/v1/…`) dès le départ, pour migrer de domaine ou faire évoluer l'API sans casser les intégrations.

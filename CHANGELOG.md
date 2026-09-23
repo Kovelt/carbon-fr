@@ -6,6 +6,26 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### Documentation
+
+- **Revue complète de la doc contre le code** (chaque correction prouvée par le
+  code ou git) : `ARCHITECTURE` (watcher et purge des webhooks, six phases
+  livrées), README (purge des webhooks), index des ADR (revue de neutralité
+  0026 manquante), statuts et addenda d'ADR périmés (0004/0006 : index BRIN
+  livré en 0012 ; 0016 : purge livrée ; 0018 : prévision météo-pilotée
+  écartée ; 0021 : code `not_found` ; 0022 : métrique
+  `carbonfr_poller_last_flows_timestamp_seconds` ; 0028 : GATE de neutralité
+  re-joué GREEN), README du SDK (versions 0.1.0/0.2.0).
+- **Collection Bruno** : assertions d'erreur alignées sur RFC 9457 (`code`, et
+  non plus `error`), fenêtres maximales corrigées (92 jours pour `/exchanges`
+  et `/weather`), numéros de séquence dédoublonnés, requêtes d'éligibilité et
+  statut des webhooks documentés.
+- **Retrait de deux documents de travail exécutés** : le plan et le brief
+  d'implémentation de la couche A électrolyseur (livrée en v0.4.0), dont le
+  contenu vit dans les ADR-0025/0026, le CHANGELOG et l'historique git.
+
 ## [0.8.2] - 2026-09-23
 
 Hygiène DX et dépendances légères (itération I2 du [plan](docs/plan-iterations.md)) :

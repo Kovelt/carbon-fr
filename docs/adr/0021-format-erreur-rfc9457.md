@@ -32,7 +32,7 @@ L'API renvoyait ses erreurs sous une forme **maison** : `{"error": "<code>", "me
   ```
 
 - **`type` = `about:blank`** : le couple `status` + `code` suffit à qualifier l'erreur ; on n'expose **pas** d'URI à déréférencer (RFC 9457 §4.2.1 autorise explicitement `about:blank`). Si un catalogue d'erreurs documenté apparaît un jour, `type` pourra pointer vers lui sans rupture (extension, pas changement).
-- **`code` (extension carbon-fr)** : on **conserve** le code court, **stable et machine-lisible** (`no_data`, `bad_request`, `unauthorized`, `unavailable`, `internal`, `rate_limited`). C'est la valeur sur laquelle un client s'aligne (plus robuste qu'un parsing de `title`/`detail`, qui sont du texte humain susceptible d'évoluer). Le SDK lit `code`.
+- **`code` (extension carbon-fr)** : on **conserve** le code court, **stable et machine-lisible** (`no_data`, `bad_request`, `unauthorized`, `unavailable`, `internal`, `rate_limited`, `not_found`). C'est la valeur sur laquelle un client s'aligne (plus robuste qu'un parsing de `title`/`detail`, qui sont du texte humain susceptible d'évoluer). Le SDK lit `code`.
 - **`title`** : libellé court **stable par code** ; **`detail`** : message spécifique à l'occurrence.
 - **Uniformité** : une seule fonction `problem_response(status, code, title, detail)` produit le corps **et** le type de média, partagée par le mapping d'erreurs métier (`ApiError`) **et** le middleware d'authentification/quota (`auth.rs`). Aucune divergence possible entre les chemins.
 

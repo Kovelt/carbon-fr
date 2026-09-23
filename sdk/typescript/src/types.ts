@@ -245,11 +245,13 @@ export interface RulesetInfo {
   adr: string;
   granularity: string;
   hourly_switchover?: string;
-  article4_renewable_threshold: number;
+  /** Absent pour `low-carbon` (pilier propre à `rfnbo`). */
+  article4_renewable_threshold?: number;
   surplus_price_eur_mwh?: number;
   low_carbon_intensity_threshold_g_per_kwh?: number;
   low_carbon_intensity_is_indicative: boolean;
-  electrolyzer_kwh_per_kg: number;
+  /** Absent pour `rfnbo` (dérive le seuil `low-carbon` uniquement). */
+  electrolyzer_kwh_per_kg?: number;
   legal_basis: string;
   description: string;
 }

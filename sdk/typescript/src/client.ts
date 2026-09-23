@@ -105,10 +105,11 @@ export class CarbonFr {
   }
 
   /** Mix de production de la dernière mesure (MW par filière). */
-  mix(opts: { region?: Region; methodology?: Methodology } = {}) {
+  mix(opts: { region?: Region; methodology?: Methodology; version?: number } = {}) {
     return this.get<MixResponse>("/v1/mix", {
       region: opts.region,
       methodology: opts.methodology,
+      version: opts.version,
     });
   }
 
@@ -178,6 +179,7 @@ export class CarbonFr {
   greenestWindow(opts: {
     region?: Region;
     methodology?: Methodology;
+    version?: number;
     from?: string;
     horizonHours?: number;
     windowMinutes?: number;
@@ -191,6 +193,7 @@ export class CarbonFr {
     return this.get<GreenestWindowResponse>("/v1/intensity/greenest-window", {
       region: opts.region,
       methodology: opts.methodology,
+      version: opts.version,
       from: opts.from,
       horizon_hours: opts.horizonHours,
       window_minutes: opts.windowMinutes,
@@ -212,6 +215,7 @@ export class CarbonFr {
   schedule(opts: {
     region?: Region;
     methodology?: Methodology;
+    version?: number;
     from?: string;
     horizonHours?: number;
     durationMinutes?: number;
@@ -222,6 +226,7 @@ export class CarbonFr {
     return this.get<ScheduleResponse>("/v1/schedule", {
       region: opts.region,
       methodology: opts.methodology,
+      version: opts.version,
       from: opts.from,
       horizon_hours: opts.horizonHours,
       duration_minutes: opts.durationMinutes,
@@ -236,6 +241,7 @@ export class CarbonFr {
     count: number;
     region?: Region;
     methodology?: Methodology;
+    version?: number;
     from?: string;
     horizonHours?: number;
     estimator?: Estimator;
@@ -244,6 +250,7 @@ export class CarbonFr {
       count: opts.count,
       region: opts.region,
       methodology: opts.methodology,
+      version: opts.version,
       from: opts.from,
       horizon_hours: opts.horizonHours,
       estimator: opts.estimator,
@@ -255,6 +262,7 @@ export class CarbonFr {
     threshold: number;
     region?: Region;
     methodology?: Methodology;
+    version?: number;
     from?: string;
     horizonHours?: number;
     estimator?: Estimator;
@@ -263,6 +271,7 @@ export class CarbonFr {
       threshold: opts.threshold,
       region: opts.region,
       methodology: opts.methodology,
+      version: opts.version,
       from: opts.from,
       horizon_hours: opts.horizonHours,
       estimator: opts.estimator,
@@ -319,16 +328,24 @@ export class CarbonFr {
 
   // ─── Prix (ADR-0023/0024) ───────────────────────────────────────────────
 
-  /** Décomposition du prix payé (TRV : énergie spot + TURPE + accise + TVA + résidu). */
-  price() {
-    return this.get<PriceResponse>("/v1/price");
+  /**
+   * Décomposition du prix payé (TRV : énergie spot + TURPE + accise + TVA + résidu).
+   * `region` est accepté mais **national uniquement** (le TRV est national) : toute
+   * autre valeur renvoie une 400.
+   */
+  price(opts: { region?: Region } = {}) {
+    return this.get<PriceResponse>("/v1/price", { region: opts.region });
   }
 
-  /** Série de décompositions de prix (primitive « cheapest + greenest window »). */
-  priceHistory(opts: { from: string; to: string }) {
+  /**
+   * Série de décompositions de prix (primitive « cheapest + greenest window »).
+   * `region` est accepté mais **national uniquement**, comme {@link price}.
+   */
+  priceHistory(opts: { from: string; to: string; region?: Region }) {
     return this.get<PriceHistoryResponse>("/v1/price/date", {
       from: opts.from,
       to: opts.to,
+      region: opts.region,
     });
   }
 

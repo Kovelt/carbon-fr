@@ -1,7 +1,7 @@
 # Plan de la suite — itérations I0 → I7 (à partir du 2026-09-23)
 
 - **Statut** : document vivant — cocher les cases au fil des PR, dater chaque révision en tête.
-- **Dernière mise à jour** : 2026-09-23 (I0 terminée hors fermeture des issues #76/#81 ; I1 démarrée).
+- **Dernière mise à jour** : 2026-09-23 (I0 terminée hors fermeture des issues #76/#81 ; I1 livrée en v0.8.1, reste la notification Uptime Kuma).
 - **Sources** : état des lieux multi-agents du 2026-09-23 (constats revérifiés contre le code), recherche en 4 volets (préparation crates.io, backlog consolidé des ADR/roadmaps, montées majeures des dépendances, échéances datées), 3 plans concurrents (« fiabilité d'abord », « adoption d'abord », « valeur métier d'abord ») départagés par un juge. Base retenue : **valeur métier d'abord**, avec les greffes des deux autres.
 - **Horizon** : 13 à 17 semaines selon les itérations, soit vers mi-janvier 2027 au rythme d'un mainteneur seul assisté de Claude Code. Les durées sont des ordres de grandeur, pas des engagements.
 - **Liens** : feuille de route produit dans le [README](../README.md#feuille-de-route), [roadmap hydrogène](roadmap-hydrogene.md), [index des ADR](adr/README.md), [CHANGELOG](../CHANGELOG.md).

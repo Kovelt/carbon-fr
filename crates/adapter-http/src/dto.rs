@@ -1102,7 +1102,8 @@ pub(crate) struct PriceResponse {
     region: String,
     /// Horodatage (RFC 3339, UTC), aligné sur `/v1/intensity/now`.
     timestamp: String,
-    /// Millésime de la construction réglementaire (TRV) appliquée.
+    /// Millésime de la construction réglementaire (TRV) **en vigueur à cet
+    /// horodatage** (`2026` jusqu'au 31/07/2026, `2026-H2` à partir du 1/8/2026…).
     vintage: &'static str,
     /// Unité des montants `*_eur_mwh` (`EUR/MWh`). Les champs `*_eur_kwh` sont,
     /// eux, en €/kWh (confort d'usage).

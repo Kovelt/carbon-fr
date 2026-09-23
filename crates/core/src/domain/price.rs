@@ -97,8 +97,9 @@ impl TrvReference {
     /// - **TVA** = **20 %** unique — BOFiP ACTU-2025-00057.
     ///
     /// ⚠️ Caveats : `turpe_eur_mwh` est une **conversion** dépendant du profil
-    /// (6 kVA / 2 400 kWh retenus) ; au 2e semestre 2026 le TURPE est revalorisé
-    /// (+3,04 %) et l'accise peut être réindexée — à re-millésimer le cas échéant.
+    /// (6 kVA / 2 400 kWh retenus). Valable jusqu'au 31/07/2026 : au 1/8/2026 le
+    /// TURPE est revalorisé et l'accise baisse → millésime
+    /// [`TrvReference::trv_2026_h2`], choisi par [`TrvReference::in_force_at`].
     pub const fn trv_2026() -> Self {
         Self {
             vintage: "2026",
@@ -108,7 +109,63 @@ impl TrvReference {
             tva_rate: 0.20,
         }
     }
+
+    /// Empilement TRV **millésime 2026-H2** (en vigueur à partir du **1/8/2026**,
+    /// même profil que [`TrvReference::trv_2026`] : Tarif Bleu résidentiel,
+    /// option Base, 6 kVA / ~2 400 kWh/an). Valeurs sourcées.
+    ///
+    /// **Sources primaires** (consultées 2026-09-23) :
+    /// - **TURPE 7 HTA-BT** — CRE délib. n°2026-105 (21/05/2026) : évolution de la
+    ///   grille de **+3,04 %** au 1/8/2026 (Z = IPC + X + k = 0,39 − 0,35 + 3 %),
+    ///   sauf le terme Rf, indexé à part sur l'inflation. Même conversion qu'en
+    ///   2026, sur la grille de l'annexe 2 : part fixe = gestion (y c. Rf) 17,12 +
+    ///   comptage Linky 22,67 + 6 kVA × 10,42 (CU4) = **102,31 €/an** → 42,63 €/MWh
+    ///   à 2 400 kWh ; + part variable CU4, moyenne simple des 4 plages (7,72 ;
+    ///   4,09 ; 1,71 ; 1,20 c€/kWh) = 36,80 €/MWh ⇒ **79,43 €/MWh** (confiance
+    ///   « moyenne » sur la conversion, comme en 2026). La valeur 2026 (78) était
+    ///   arrondie par excès : l'écart entre millésimes (+1,43) mêle l'évolution de
+    ///   la grille et cet arrondi.
+    /// - **Accise** = **30,62 €/MWh** (ménages ≤ 36 kVA : socle 24,69 + majoration
+    ///   de péréquation ZNI 5,93), en baisse au 1/8/2026 — CRE délib. TRVE
+    ///   n°2026-147 (15/07/2026) + Guide 2026 sur la fiscalité des énergies (DGEC,
+    ///   à jour de la LF 2026 du 19/02/2026, art. 71-72).
+    /// - **Commercialisation** = **18,11 €/MWh HT**, **maintenue** : la délib.
+    ///   n°2026-147 ne republie pas de total pour le 1/8/2026 (écarts partiels
+    ///   seulement : +0,01 hors CEE ; −0,64 CEE + Rf, non ventilé par segment).
+    /// - **TVA** = **20 %** unique, inchangée (BOFiP ACTU-2025-00057).
+    ///
+    /// Entrée en vigueur des TRVE correspondants : décision du 29/07/2026 (JORF),
+    /// au 1/8/2026.
+    pub const fn trv_2026_h2() -> Self {
+        Self {
+            vintage: "2026-H2",
+            turpe_eur_mwh: 79.43,
+            accise_eur_mwh: 30.62,
+            commercialisation_eur_mwh: 18.11,
+            tva_rate: 0.20,
+        }
+    }
+
+    /// Millésime **en vigueur** à l'instant `at` (ADR-0023, addendum 2026-09-23) :
+    /// chaque horodatage est décomposé avec la construction réglementaire de sa
+    /// période de validité, ce qui garde l'historique reproductible de part et
+    /// d'autre d'un changement de millésime.
+    ///
+    /// Avant le 1/8/2026 : [`TrvReference::trv_2026`] (seul millésime modélisé
+    /// pour le 1er semestre ; les instants antérieurs à 2026 reçoivent aussi cette
+    /// construction, faute de millésime plus ancien).
+    pub fn in_force_at(at: OffsetDateTime) -> Self {
+        if at.unix_timestamp() >= TRV_2026_H2_FROM_UNIX {
+            Self::trv_2026_h2()
+        } else {
+            Self::trv_2026()
+        }
+    }
 }
+
+/// Début de validité du millésime `2026-H2` : **1/8/2026 à 00:00, heure de
+/// Paris** (CEST, UTC+2), soit 2026-07-31T22:00:00Z, en secondes Unix.
+const TRV_2026_H2_FROM_UNIX: i64 = 1_785_535_200;
 
 /// Une composante de la chaîne du prix payé (ADR-0023 §1-3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -404,11 +461,14 @@ pub fn price_breakdown(
 /// O(n+m)). Les mesures sans mix, sans prix spot antérieur disponible, ou dont
 /// le prix le plus proche est **plus vieux que [`MAX_SPOT_STALENESS`]**, sont
 /// **omises** : la décomposition n'est définie que là où l'énergie spot existe —
-/// jamais reportée depuis un prix périmé.
+/// jamais reportée depuis un prix périmé. `reference_at` fournit la construction
+/// réglementaire **de chaque horodatage** (en production :
+/// [`TrvReference::in_force_at`]), pour qu'une série à cheval sur un changement
+/// de millésime reste exacte des deux côtés.
 pub fn price_series(
     measurements: &[Measurement],
     spots: &[SpotPrice],
-    reference: &TrvReference,
+    reference_at: fn(OffsetDateTime) -> TrvReference,
 ) -> Vec<PriceBreakdown> {
     let mut out = Vec::new();
     let mut j = 0usize;
@@ -429,7 +489,13 @@ pub fn price_series(
         if m.at - spot.at > MAX_SPOT_STALENESS {
             continue;
         }
-        out.push(price_breakdown(m.at, m.region, spot, mix, reference));
+        out.push(price_breakdown(
+            m.at,
+            m.region,
+            spot,
+            mix,
+            &reference_at(m.at),
+        ));
     }
     out
 }
@@ -437,6 +503,51 @@ pub fn price_series(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Bascule du millésime TRV au 1/8/2026 à minuit **heure de Paris**
+    /// (2026-07-31T22:00Z), et millésime publié 2026 inchangé.
+    #[test]
+    fn trv_vintage_switches_at_paris_midnight_on_august_first() {
+        let before = OffsetDateTime::from_unix_timestamp(1_785_535_199).unwrap();
+        let at = OffsetDateTime::from_unix_timestamp(1_785_535_200).unwrap();
+        assert_eq!(TrvReference::in_force_at(before).vintage, "2026");
+        assert_eq!(TrvReference::in_force_at(at).vintage, "2026-H2");
+        assert_eq!(TrvReference::in_force_at(before), TrvReference::trv_2026());
+        let h2 = TrvReference::trv_2026_h2();
+        assert_eq!(h2.turpe_eur_mwh, 79.43);
+        assert_eq!(h2.accise_eur_mwh, 30.62);
+        // Millésime publié : jamais muté (ADR-0005/0019).
+        let h1 = TrvReference::trv_2026();
+        assert_eq!((h1.turpe_eur_mwh, h1.accise_eur_mwh), (78.0, 30.85));
+    }
+
+    /// Une série à cheval sur la bascule applique à chaque point la construction
+    /// de sa propre période de validité.
+    #[test]
+    fn price_series_applies_the_vintage_in_force_at_each_point() {
+        let t0 = OffsetDateTime::from_unix_timestamp(1_785_535_200 - 900).unwrap();
+        let t1 = OffsetDateTime::from_unix_timestamp(1_785_535_200).unwrap();
+        let point = |at| Measurement {
+            at,
+            region: Region::National,
+            intensity: crate::domain::CarbonIntensity::new(30.0).unwrap(),
+            methodology: crate::domain::Methodology::rte_direct(),
+            vintage: crate::domain::Vintage::Tr,
+            mix: Some(national_mix()),
+        };
+        let spots = vec![SpotPrice::new(t0, 60.0).unwrap()];
+        let series = price_series(&[point(t0), point(t1)], &spots, TrvReference::in_force_at);
+        let vintages: Vec<_> = series.iter().map(|b| b.vintage).collect();
+        assert_eq!(vintages, vec!["2026", "2026-H2"]);
+        let accise = |b: &PriceBreakdown| {
+            b.components
+                .iter()
+                .find(|c| c.kind == PriceComponentKind::Accise)
+                .map(|c| c.amount_eur_mwh)
+        };
+        assert_eq!(accise(&series[0]), Some(30.85));
+        assert_eq!(accise(&series[1]), Some(30.62));
+    }
 
     fn national_mix() -> GenerationMix {
         GenerationMix {
@@ -560,7 +671,7 @@ mod tests {
         // Un seul prix à t0+1 → couvre t1 et t2, PAS t0 (aucun prix antérieur).
         let spots = [SpotPrice::new(t0 + step, 55.0).unwrap()];
 
-        let series = price_series(&measurements, &spots, &TrvReference::trv_2026());
+        let series = price_series(&measurements, &spots, |_| TrvReference::trv_2026());
         assert_eq!(series.len(), 2, "t0 omis (sans prix spot antérieur)");
         assert_eq!(series[0].at, t0 + step);
         let energie = series[0]
@@ -597,7 +708,7 @@ mod tests {
             SpotPrice::new(t0 + Duration::hours(2), 55.0).unwrap(),
         ];
 
-        let series = price_series(&measurements, &spots, &TrvReference::trv_2026());
+        let series = price_series(&measurements, &spots, |_| TrvReference::trv_2026());
         assert_eq!(series.len(), 1, "créneaux à prix périmé omis");
         assert_eq!(series[0].at, t0 + Duration::hours(2));
         let energie = series[0]

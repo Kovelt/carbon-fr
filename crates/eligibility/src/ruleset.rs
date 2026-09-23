@@ -206,9 +206,9 @@ impl EligibilityRuleset {
                           2023/1185) → seuil PRODUIT 28,2 gCO₂eq/MJ ≈3384 gCO₂eq/kgH₂. Seuil \
                           ÉLECTRIQUE = ESTIMATION carbon-fr : 3384 ÷ 53 kWh/kg ≈ 64 gCO₂eq/kWh \
                           (condition nécessaire, tout le budget attribué à l'élec). Reconnaissance \
-                          du nucléaire : consultation prévue par considérant (non contraignant, \
-                          échéance 30/06/2026 — lancement non constaté au 2026-07-03) ; évaluation \
-                          contraignante d'ici 07/2028 (art. 3). L'annexe (partie A, pt 6) définit \
+                          du nucléaire : consultation prévue par le considérant 7 (non contraignant ; \
+                          échéance du 30/06/2026 dépassée, lancement non constaté au 2026-09-23) ; \
+                          évaluation contraignante d'ici le 01/07/2028 (art. 3). L'annexe (partie A, pt 6) définit \
                           par ailleurs 4 méthodes de comptabilisation de l'électricité réseau \
                           (moyenne annuelle Table 5 ; mix horaire de bidding zone prévu day-ahead \
                           par le GRT ; heures pleine charge ; marginale horaire publiée par le \
@@ -231,7 +231,11 @@ impl EligibilityRuleset {
             // Conserve la date EN VIGUEUR : aucune date de report n'est figée comme
             // un fait tant que le droit n'est pas adopté.
             hourly_switchover: date(2030, Month::January, 1),
-            legal_basis: "Propositions de révision RFNBO (révision attendue ~juin 2026) : report de \
+            legal_basis: "Propositions de révision ciblée RFNBO (annoncée pour le T2 2026 par la \
+                          communication COM(2026) 370 du 22/04/2026 ; report à l'automne 2026 annoncé \
+                          oralement par la DG ENER en audition ITRE le 14/07/2026, rapporté par la \
+                          presse spécialisée, sans texte officiel ; aucun projet publié au \
+                          2026-09-23) : report de \
                           la bascule horaire (propositions 2031-2033 selon les sources) et phase-in \
                           de l'additionnalité. DROIT NON ADOPTÉ — non servi. [PROPOSITIONS]",
             description: "Réservé. Révision RFNBO attendue (report de l'échéance horaire, NON \

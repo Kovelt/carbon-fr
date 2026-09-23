@@ -1,7 +1,7 @@
 # Roadmap hydrogène — extension carbon-aware (ADR-0025/0026)
 
 - **Statut** : document vivant (mis à jour à chaque jalon ou signal réglementaire)
-- **Dernière mise à jour** : 2026-07-04 (O1 documenté — addendum « méthodes horaires » de l'ADR-0026 ; veille automatisée O2 en place)
+- **Dernière mise à jour** : 2026-09-23 (état des échéances réglementaires reporté dans les `legal_basis` servis ; aucun texte adopté)
 - **ADR liés** : [ADR-0025](adr/0025-extension-hydrogene-carbon-aware.md) (vision, couches A/B), [ADR-0026](adr/0026-methodologie-overlays-eligibilite.md) (méthodologie des overlays)
 
 ## Position
@@ -26,6 +26,8 @@ L'hydrogène est servi comme **extension de la couche carbon-aware** (pas de pro
 **Hors périmètre définitif** (disclaimer d'API) : gCO₂eq/kgH₂, certification, additionnalité PPA niveau site (+ grandfathering), observatoire structurel autonome.
 
 ## Vérité réglementaire au 2026-07-03 (vérifiée sur textes primaires)
+
+> **Mise à jour du 2026-09-23** (contre-vérifiée) : la **consultation nucléaire** du considérant 7 du 2025/2359 n'est **toujours pas lancée** (échéance non contraignante du 30/06/2026 dépassée — sources primaires) ; la **révision ciblée RFNBO** promise pour le T2 2026 (COM(2026) 370, source primaire) est annoncée **pour l'automne 2026** — **déclaration orale** de la DG ENER en audition ITRE du 14/07/2026, **rapportée par la presse** (Argus Media), sans texte officiel — et **aucun projet n'est publié**. H3 reste bloqué ; les `legal_basis` des rulesets `low-carbon:2025-2359` et `rfnbo:2026-revision` ne changent que ces dates et états.
 
 - **Révision ciblée RFNBO** : engagement politique seulement (AccelerateEU, COM(2026) 370 final, 22/04/2026 — « targeted review » promise T2 2026). **Aucun acte modificatif de 2023/1184 adopté/publié.** Les chiffres 2032-2033 (bascule horaire, additionnalité) et ~2040 (grandfathering) = fuites/analystes, non actionnables.
 - **Annexe 2025/2359** (lue intégralement) : pas de seuil électrique explicite → notre proxy `indicative` est la bonne qualification. **Quatre méthodes** de comptabilisation de l'électricité réseau, dont deux **horaires** — (b) moyenne du mix de bidding zone prévue day-ahead par le GRT, (d) technologie marginale horaire — cf. opportunité O1 ci-dessous.

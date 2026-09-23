@@ -2922,7 +2922,7 @@
           },
           "vintage": {
             "type": "string",
-            "description": "Millésime de la construction réglementaire (TRV) appliquée."
+            "description": "Millésime de la construction réglementaire (TRV) **en vigueur à cet\nhorodatage** (`2026` jusqu'au 31/07/2026, `2026-H2` à partir du 1/8/2026…)."
           }
         }
       },

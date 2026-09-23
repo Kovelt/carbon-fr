@@ -6,7 +6,14 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.8.2] - 2026-09-23
+
+Hygiène DX et dépendances légères (itération I2 du [plan](docs/plan-iterations.md)) :
+les abonnements webhook désactivés sont **purgés après 30 jours**, la livraison
+des webhooks est testée de bout en bout, `utoipa` passe en 6.0, la CI quitte
+Node 20 (fin de vie) et le SDK TypeScript rattrape l'API en **0.2.0** (publié
+à part, tag `sdk-v0.2.0`). Aucune migration ; aucun changement de schéma `/v1`
+hors l'ordre, sans effet, de 3 `oneOf`.
 
 ### Ajouté
 

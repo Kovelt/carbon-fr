@@ -6,10 +6,23 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.7.2] - 2026-09-23
+
+Release de maintenance et de sécurité : correctif RustSec `rustls`
+(RUSTSEC-2026-0285), CI durcie (moindre privilège, actions épinglées, alerte
+sur échec du scan planifié), documentation réalignée sur le code et plan de la
+suite ([`docs/plan-iterations.md`](docs/plan-iterations.md)). Aucun changement
+de contrat `/v1`.
 
 ### Modifié
 
+- **Dépendances mises à jour** (PR Dependabot des 2026-09-08/09, sans entrée
+  jusqu'ici) : `rand` 0.9 → **0.10** (API `RngExt` adaptée dans l'auth et le
+  binaire), `quick-xml` 0.41 → **0.42** (parseur ENTSO-E), groupe mineur
+  (`tokio` 1.53, `serde`, `time`, `thiserror`, `anyhow`, `async-trait`,
+  `futures-util`, `tower-http` 0.7.1…), `quinn-proto` 0.11.16 ; SDK
+  TypeScript : `typescript` 7 (développement) ; CI : `actions/checkout` et
+  `actions/setup-node` v7.
 - **Positionnement vis-à-vis des méthodes horaires du Règl. (UE) 2025/2359**
   (chantier O1 de la roadmap hydrogène) : l'[addendum O1 de l'ADR-0026](docs/adr/0026-methodologie-overlays-eligibilite.md)
   documente, méthode par méthode, l'alignement **et les écarts** entre la donnée

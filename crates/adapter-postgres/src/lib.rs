@@ -1173,4 +1173,18 @@ impl SubscriptionRepository for PgIntensityRepository {
         .map_err(|e| backend(format!("record_delivery (échec) : {e}")))?;
         Ok(disabled.unwrap_or(false))
     }
+
+    async fn purge_disabled(
+        &self,
+        disabled_before: OffsetDateTime,
+    ) -> Result<u64, RepositoryError> {
+        let result = sqlx::query(
+            "DELETE FROM webhook_subscription WHERE disabled_at IS NOT NULL AND disabled_at < $1",
+        )
+        .bind(disabled_before)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| backend(format!("purge_disabled : {e}")))?;
+        Ok(result.rows_affected())
+    }
 }

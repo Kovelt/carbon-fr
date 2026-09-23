@@ -68,8 +68,8 @@ pub use update::IntensityUpdate;
 pub use visit::VisitStats;
 pub use weather::WeatherForecast;
 pub use webhook::{
-    DEFAULT_WEBHOOK_MAX_CONSECUTIVE_FAILURES, Subscription, ThresholdDirection, WebhookUrlError,
-    hmac_sha256_hex, is_public_ip, render_webhook_payload, should_fire, validate_webhook_url,
-    webhook_host,
+    DEFAULT_WEBHOOK_MAX_CONSECUTIVE_FAILURES, DEFAULT_WEBHOOK_PURGE_DAYS, Subscription,
+    ThresholdDirection, WebhookUrlError, hmac_sha256_hex, is_public_ip, render_webhook_payload,
+    should_fire, validate_webhook_url, webhook_host,
 };
 pub use window::{GreenWindow, WindowEstimator, greenest_window};

@@ -27,9 +27,8 @@
 - **Endpoints** `POST` / `GET` `/v1/webhooks` + `DELETE /v1/webhooks/{id}`, **clé
   API requise** (le secret n'est affiché qu'à la création).
 
-**Reste ouvert** (non bloquant) : purge des abonnements morts — itération
-derrière les mêmes ports. (Désactivation après N échecs consécutifs : **livrée**,
-cf. addendum 2026-09-23.)
+(Désactivation après N échecs consécutifs et **purge des abonnements
+désactivés** : **livrées**, cf. addendum 2026-09-23.)
 (Quota par clé livré : `MAX_WEBHOOKS_PER_KEY = 50` abonnements, refusé au-delà.)
 
 ## Contexte
@@ -99,7 +98,8 @@ Seuil d'intensité par région (`rte-direct`). Pas de webhook sur la prévision,
 - Politique exacte de retries (nombre, *backoff*) — le seuil de désactivation est fixé par l'addendum 2026-09-23.
 - Re-résolution DNS à la livraison : implémentation (résoudre puis *bind* sur l'IP validée) vs validation best-effort.
 - Quotas chiffrés par clé (nb d'abonnements, livraisons/min).
-- Rétention et purge des abonnements désactivés.
+- Rétention et purge des abonnements désactivés — le délai est fixé par
+  l'addendum 2026-09-23 (« Purge des abonnements désactivés »).
 
 ## Addendum (2026-09-23) — Désactivation automatique après N échecs consécutifs
 
@@ -109,4 +109,13 @@ Point laissé ouvert par l'état d'implémentation initial, **livré** :
 - **Seuil** : `CARBONFR_WEBHOOK_MAX_FAILURES`, défaut **10** (`DEFAULT_WEBHOOK_MAX_CONSECUTIVE_FAILURES`), strictement positif — la désactivation n'est pas débrayable. Les franchissements de seuil étant rares (quelques-uns par jour au plus), 10 échecs d'affilée signalent un endpoint durablement mort, pas un incident passager. Un refus SSRF à la livraison (hôte résolu vers une IP non publique) compte comme un échec.
 - **Désactivé ≠ supprimé** : l'abonnement sort du watcher (`active` filtre `disabled_at IS NULL`) mais reste **listé** pour son propriétaire — `GET /v1/webhooks` expose `status` (`active` | `disabled`) et `disabled_at` — champs **additifs**, non cassants pour le contrat `/v1` (aucun champ existant retiré ni modifié). Un succès tardif (livraison en vol) ne le réactive pas. **Réactivation** : le supprimer puis le recréer (nouveau secret) — pas d'endpoint dédié en v1.
 - **Toujours ouvert** : la purge des abonnements désactivés (ils comptent dans le quota de 50 par clé jusqu'à suppression par leur propriétaire).
+
+## Addendum (2026-09-23) — Purge des abonnements désactivés
+
+Point laissé ouvert par l'addendum précédent, **livré** :
+
+- **Tâche de fond dédiée**, branchée sur `SubscriptionRepository::purge_disabled` : au **démarrage** puis **toutes les 6 h**, supprime les abonnements dont `disabled_at` est antérieur à `CARBONFR_WEBHOOK_PURGE_DAYS` jours (défaut **30**, `DEFAULT_WEBHOOK_PURGE_DAYS`, strictement positif — parsée/validée comme `CARBONFR_WEBHOOK_MAX_FAILURES`). Un abonnement **actif** (`disabled_at IS NULL`), quelle que soit son ancienneté, n'est jamais purgé — seule la désactivation automatique (addendum précédent) ou une future désactivation manuelle y expose.
+- **Pourquoi 30 jours** : `GET /v1/webhooks` expose `status`/`disabled_at` (addendum précédent) — 30 jours laissent le temps à un propriétaire qui ne surveille pas activement son intégration de constater la désactivation (par consultation périodique, ou en retrouvant que ses notifications se sont arrêtées) et de la recréer s'il le souhaite, avant que la ligne ne disparaisse. Plus court risquerait de purger avant que quiconque ait eu l'occasion de regarder ; plus long laisserait des abonnements morts occuper le quota (50/clé) inutilement longtemps.
+- **Supervision** : même patron que le poller et le watcher — tâche `tokio::spawn` surveillée dans le `select!` d'arrêt du serveur (fail-fast : sa mort inattendue arrête le processus, relancé par le superviseur systemd), `abort()` à l'arrêt gracieux. Une erreur de purge est journalisée (`warn`) sans jamais interrompre la boucle ni paniquer ; un succès qui purge au moins une ligne est journalisé (`info`, nombre purgé).
+- **Pas de migration** : la colonne `disabled_at` existe depuis la migration `0014` (addendum précédent) ; la purge est une suppression conditionnelle dessus.
 

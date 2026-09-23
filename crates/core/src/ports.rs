@@ -388,6 +388,16 @@ pub trait SubscriptionRepository: Send + Sync {
         delivered: bool,
         max_consecutive_failures: u32,
     ) -> Result<bool, RepositoryError>;
+
+    /// Supprime les abonnements **désactivés** (`disabled_at` non nul) dont la
+    /// désactivation est antérieure à `disabled_before` (ADR-0016, addendum
+    /// 2026-09-23 « Purge des abonnements désactivés ») — un abonnement
+    /// désactivé compte dans le quota de 50 par clé tant qu'il n'est pas
+    /// supprimé. Un abonnement **actif** (`disabled_at IS NULL`), quelle que
+    /// soit son ancienneté, n'est jamais purgé. Renvoie le nombre de lignes
+    /// supprimées.
+    async fn purge_disabled(&self, disabled_before: OffsetDateTime)
+    -> Result<u64, RepositoryError>;
 }
 
 /// Une livraison de webhook prête à émettre : corps JSON + signature HMAC.

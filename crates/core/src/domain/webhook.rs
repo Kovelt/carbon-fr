@@ -76,6 +76,15 @@ pub struct Subscription {
 /// signalent un endpoint durablement mort, pas un incident passager.
 pub const DEFAULT_WEBHOOK_MAX_CONSECUTIVE_FAILURES: u32 = 10;
 
+/// Délai par défaut, en jours, avant qu'un abonnement **désactivé**
+/// automatiquement (ci-dessus) soit **purgé** — supprimé plutôt que simplement
+/// exclu du watcher (ADR-0016, addendum 2026-09-23 « Purge des abonnements
+/// désactivés »). Un abonnement désactivé continue de compter dans le quota de
+/// 50 par clé tant qu'il n'est pas supprimé ; 30 jours laissent le temps à son
+/// propriétaire de constater la désactivation via `GET /v1/webhooks` (qui
+/// expose `status`/`disabled_at`) avant que la ligne ne disparaisse.
+pub const DEFAULT_WEBHOOK_PURGE_DAYS: u32 = 30;
+
 /// Faut-il notifier ? **Edge-triggered** (ADR-0016 §2) : on ne déclenche qu'au
 /// **franchissement** — la condition devient vraie alors qu'elle était fausse
 /// au pas précédent. Sans état précédent connu (`previous = None`), on **ne

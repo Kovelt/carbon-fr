@@ -66,6 +66,7 @@
 //! | `CARBONFR_KEY_LABEL`         | `` (vide)      | `mint-key` : libellé de la clé      |
 //! | `CARBONFR_REVOKE_KEY`        | — (requis par `revoke-key`) | `revoke-key` : clé `cfr_…` ou son empreinte (64 hex, cf. `list-keys`) |
 //! | `CARBONFR_WEBHOOK_MAX_FAILURES` | `10`        | livraisons webhook échouées **consécutives** avant désactivation de l'abonnement (> 0, ADR-0016) |
+//! | `CARBONFR_WEBHOOK_PURGE_DAYS` | `30`         | délai avant suppression d'un abonnement **désactivé** (> 0, ADR-0016 addendum « purge ») ; purge au démarrage puis toutes les 6 h |
 //! | `CARBONFR_TRUST_PROXY`       | `0` (off)      | faire confiance à `X-Forwarded-For` (derrière un reverse proxy) |
 //! | `CARBONFR_REAL_IP_HEADER`    | (non défini)   | en-tête d'IP réelle dédié (ex. `x-real-ip`) — **uniquement** si le proxy l'écrase systématiquement ; défaut = dernier segment de `X-Forwarded-For` (audit 2026-08) |
 //! | `CARBONFR_DB_MAX_CONNECTIONS` | `20`         | taille du pool PostgreSQL           |
@@ -98,8 +99,9 @@ use carbonfr_core::application::{
 };
 use carbonfr_core::domain::{
     ACV_FORECAST_ID, ACV_FORECAST_VERSION, CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams,
-    DEFAULT_WEBHOOK_MAX_CONSECUTIVE_FAILURES, ErrorMetrics, IntensityUpdate, Region, TimeRange,
-    WeatherForecast, hmac_sha256_hex, render_webhook_payload, should_fire,
+    DEFAULT_WEBHOOK_MAX_CONSECUTIVE_FAILURES, DEFAULT_WEBHOOK_PURGE_DAYS, ErrorMetrics,
+    IntensityUpdate, Region, TimeRange, WeatherForecast, hmac_sha256_hex, render_webhook_payload,
+    should_fire,
 };
 use carbonfr_core::ports::{
     ApiKeyRepository, ApiTier, ConsumptionRepository, ConsumptionSource, CrossBorderRepository,
@@ -202,6 +204,11 @@ async fn run_server() -> anyhow::Result<()> {
         config.webhook_max_failures,
     );
 
+    // Purge des abonnements webhook désactivés (ADR-0016 addendum « purge ») :
+    // même repository, tâche indépendante du watcher (fréquence bien plus
+    // basse — 6 h contre chaque mise à jour du flux).
+    let webhook_purge = spawn_webhook_purge(repo.clone(), config.webhook_purge_days);
+
     // Prévision (ADR-0009) : modèle climatology@1 alimenté par le même
     // repository. Intervalles **calibrés** au démarrage par quantiles de résidus
     // par horizon (ADR-0011), repli sur la dispersion par créneau si l'historique
@@ -286,11 +293,13 @@ async fn run_server() -> anyhow::Result<()> {
     info!(addr = %config.bind, "API à l'écoute");
 
     // Supervision **fail-fast** : le serveur s'arrête sur signal (arrêt gracieux) ;
-    // mais si le poller ou le watcher meurt (panique → boucle infinie terminée),
-    // on sort en erreur plutôt que de continuer en silence (donnée gelée /
-    // webhooks muets). Le superviseur (systemd `Restart=on-failure`) relance.
+    // mais si le poller, le watcher ou la purge meurt (panique → boucle infinie
+    // terminée), on sort en erreur plutôt que de continuer en silence (donnée
+    // gelée / webhooks muets / quota qui ne se libère plus). Le superviseur
+    // (systemd `Restart=on-failure`) relance.
     let mut poller = poller;
     let mut webhook_watcher = webhook_watcher;
+    let mut webhook_purge = webhook_purge;
     let serve = {
         let shutdown = shutdown.clone();
         async move {
@@ -309,6 +318,9 @@ async fn run_server() -> anyhow::Result<()> {
         joined = &mut webhook_watcher => Err(anyhow::anyhow!(
             "le watcher de webhooks s'est arrêté ({joined:?})"
         )),
+        joined = &mut webhook_purge => Err(anyhow::anyhow!(
+            "la purge des abonnements webhook désactivés s'est arrêtée ({joined:?})"
+        )),
         // Filet de sécurité (audit 2026-08) : si une connexion refuse de se
         // drainer malgré la clôture des flux SSE, on force la sortie après le
         // délai de grâce plutôt que d'attendre le SIGKILL du superviseur.
@@ -326,6 +338,7 @@ async fn run_server() -> anyhow::Result<()> {
 
     poller.abort();
     webhook_watcher.abort();
+    webhook_purge.abort();
     serve_result
 }
 
@@ -1273,6 +1286,11 @@ const CALIBRATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// `deploy/carbonfr.service`) pour sortir proprement plutôt que par SIGKILL.
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(8);
 
+/// Période de la purge des abonnements webhook désactivés (ADR-0016 addendum
+/// « purge ») : les désactivations sont rares (quelques-unes par jour au
+/// plus), 6 h suffisent largement sans justifier une planification plus fine.
+const WEBHOOK_PURGE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
 /// Profondeur de la climatologie de part renouvelable `share-clim@1`
 /// (ADR-0028) : 10 semaines, alignée sur `climatology@1` (N calé, ADR-0009).
 const SHARE_LOOKBACK_DAYS: i64 = 70;
@@ -1764,6 +1782,9 @@ struct ServerConfig {
     /// Livraisons webhook échouées consécutives avant désactivation automatique
     /// d'un abonnement (`CARBONFR_WEBHOOK_MAX_FAILURES`, ADR-0016).
     webhook_max_failures: u32,
+    /// Délai (jours) avant suppression d'un abonnement webhook **désactivé**
+    /// (`CARBONFR_WEBHOOK_PURGE_DAYS`, ADR-0016 addendum « purge »).
+    webhook_purge_days: u32,
 }
 
 impl ServerConfig {
@@ -1782,6 +1803,8 @@ impl ServerConfig {
                 .ok()
                 .as_deref(),
         )?;
+        let webhook_purge_days =
+            parse_webhook_purge_days(std::env::var("CARBONFR_WEBHOOK_PURGE_DAYS").ok().as_deref())?;
 
         let trust_proxy = matches!(
             std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
@@ -1814,6 +1837,7 @@ impl ServerConfig {
             trust_proxy,
             real_ip_header: real_ip_header_from_env(),
             webhook_max_failures,
+            webhook_purge_days,
         })
     }
 }
@@ -1845,6 +1869,21 @@ fn parse_webhook_max_failures(raw: Option<&str>) -> anyhow::Result<u32> {
         .unwrap_or(DEFAULT_WEBHOOK_MAX_CONSECUTIVE_FAILURES);
     anyhow::ensure!(max > 0, "CARBONFR_WEBHOOK_MAX_FAILURES doit être > 0");
     Ok(max)
+}
+
+/// Délai de purge des abonnements webhook **désactivés**
+/// (`CARBONFR_WEBHOOK_PURGE_DAYS`, défaut [`DEFAULT_WEBHOOK_PURGE_DAYS`],
+/// ADR-0016 addendum 2026-09-23 « Purge des abonnements désactivés »). Refusé
+/// si nul : « purger après 0 jour » supprimerait un abonnement avant même que
+/// son propriétaire ait pu constater la désactivation via `GET /v1/webhooks`.
+fn parse_webhook_purge_days(raw: Option<&str>) -> anyhow::Result<u32> {
+    let days = raw
+        .map(|raw| raw.trim().parse::<u32>())
+        .transpose()
+        .context("CARBONFR_WEBHOOK_PURGE_DAYS : nombre invalide")?
+        .unwrap_or(DEFAULT_WEBHOOK_PURGE_DAYS);
+    anyhow::ensure!(days > 0, "CARBONFR_WEBHOOK_PURGE_DAYS doit être > 0");
+    Ok(days)
 }
 
 /// Résout l'intervalle et la largeur de tranche du backfill depuis l'environnement.
@@ -2151,6 +2190,39 @@ where
     })
 }
 
+/// Tâche de fond **purge des abonnements webhook désactivés** (ADR-0016
+/// addendum 2026-09-23 « Purge des abonnements désactivés ») : un abonnement
+/// désactivé après `max_failures` échecs consécutifs (cf.
+/// [`spawn_webhook_watcher`]) reste sinon compté dans le quota de 50 par clé
+/// jusqu'à suppression manuelle. Purge **au démarrage puis toutes les
+/// [`WEBHOOK_PURGE_INTERVAL`]** les abonnements désactivés depuis plus de
+/// `purge_days` jours. Best-effort : une erreur est journalisée (`warn`) sans
+/// jamais interrompre la boucle ni paniquer — un cycle manqué est rattrapé au
+/// suivant.
+fn spawn_webhook_purge<R>(repo: R, purge_days: u32) -> JoinHandle<()>
+where
+    R: SubscriptionRepository + 'static,
+{
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(WEBHOOK_PURGE_INTERVAL);
+        // Comme le poller (audit 2026-08) : un tick manqué (machine suspendue…)
+        // ne doit pas déclencher une rafale de purges consécutives.
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            let cutoff = OffsetDateTime::now_utc() - Duration::days(i64::from(purge_days));
+            match repo.purge_disabled(cutoff).await {
+                Ok(n) if n > 0 => info!(purged = n, "abonnements webhook désactivés purgés"),
+                Ok(_) => {}
+                Err(err) => warn!(
+                    error = %err,
+                    "purge des abonnements webhook désactivés impossible"
+                ),
+            }
+        }
+    })
+}
+
 /// Attend **SIGINT (Ctrl-C) ou SIGTERM** pour un arrêt propre. SIGTERM est le
 /// signal envoyé par systemd/Docker à l'arrêt orchestré — sans lui, l'arrêt
 /// gracieux ne s'enclencherait pas en production.
@@ -2195,7 +2267,8 @@ fn init_tracing() {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_poll_secs, parse_webhook_max_failures, revocation_target, spawn_webhook_watcher,
+        parse_poll_secs, parse_webhook_max_failures, parse_webhook_purge_days, revocation_target,
+        spawn_webhook_watcher,
     };
 
     /// Le watcher enregistre l'issue de chaque livraison avec le seuil configuré
@@ -2254,6 +2327,12 @@ mod tests {
                     .push((id.to_string(), delivered, max));
                 Ok(false)
             }
+            async fn purge_disabled(
+                &self,
+                _disabled_before: time::OffsetDateTime,
+            ) -> Result<u64, RepositoryError> {
+                Ok(0)
+            }
         }
 
         #[derive(Clone)]
@@ -2301,6 +2380,19 @@ mod tests {
         assert!(err.to_string().contains("CARBONFR_WEBHOOK_MAX_FAILURES"));
         assert!(parse_webhook_max_failures(Some("-1")).is_err());
         assert!(parse_webhook_max_failures(Some("dix")).is_err());
+    }
+
+    #[test]
+    fn webhook_purge_days_default_explicit_and_invalid() {
+        assert_eq!(
+            parse_webhook_purge_days(None).unwrap(),
+            carbonfr_core::domain::DEFAULT_WEBHOOK_PURGE_DAYS
+        );
+        assert_eq!(parse_webhook_purge_days(Some(" 7 ")).unwrap(), 7);
+        let err = parse_webhook_purge_days(Some("0")).unwrap_err();
+        assert!(err.to_string().contains("CARBONFR_WEBHOOK_PURGE_DAYS"));
+        assert!(parse_webhook_purge_days(Some("-1")).is_err());
+        assert!(parse_webhook_purge_days(Some("trente")).is_err());
     }
 
     /// `revoke-key` accepte la clé en clair (hachée comme à la délivrance) ou son

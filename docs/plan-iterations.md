@@ -65,11 +65,11 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 **Objectif** : rattraper ce que voient les consommateurs (SDK, runtimes) et traiter les dépendances à faible risque.
 
 - [ ] **SDK TypeScript 0.2.0** : 6 fonctionnalités livrées depuis `sdk-v0.1.0` (RFC 9457, `/price`, `/cost-reference`, éligibilité, GATE de neutralité, `share-clim@1`) plus `status` des webhooks, mais npm est toujours en 0.1.0. Relire `client.ts`/`types.ts` contre l'OpenAPI, bump, tag `sdk-v0.2.0`, vérifier le trusted publishing npm en conditions réelles.
-- [ ] **Node 20 → 24** (Node 20 est en fin de vie depuis le 2026-04-30) dans `ci.yml` et `release-sdk.yml` ; aligner `engines.node` du SDK sur ce que teste la CI.
+- [x] **Node 20 → 24** (CI sur Node 22 = plancher `engines`, publication sur Node 24) (Node 20 est en fin de vie depuis le 2026-04-30) dans `ci.yml` et `release-sdk.yml` ; aligner `engines.node` du SDK sur ce que teste la CI.
 - [x] **`utoipa` 5 → 6** (sorti le 2026-09-22 ; l'OpenAPI reste en 3.1 par défaut), PR isolée : régénérer le snapshot et **relire le diff ligne à ligne**. Le champ `servers` de l'OpenAPI fait l'objet d'une **PR séparée**, après (principe 5).
 - [ ] **Purge des webhooks désactivés** (laissée ouverte par l'addendum ADR-0016 : ils comptent dans le quota de 50 par clé).
 - [x] **Tests hermétiques d'`adapter-webhook`** (serveur de test : succès, retry sur 5xx, timeout — aujourd'hui 2 tests seulement) — 8 tests, dont la redirection non suivie vérifiée par mutation.
-- [ ] **`deny.toml`** : documenter en `skip` les doublons de versions connus (`tower-http` 0.6, `webpki-roots` 0.26, `rand` 0.8…), avec la crate qui les tire. Le commentaire sur les crates non maintenues est **exact** (cargo-deny ≥ 0.16 les refuse par défaut) : le rendre explicite (`unmaintained = "all"`) plutôt que le corriger.
+- [x] **`deny.toml`** (origine des doublons documentée, `unmaintained` explicite) : documenter en `skip` les doublons de versions connus (`tower-http` 0.6, `webpki-roots` 0.26, `rand` 0.8…), avec la crate qui les tire. Le commentaire sur les crates non maintenues est **exact** (cargo-deny ≥ 0.16 les refuse par défaut) : le rendre explicite (`unmaintained = "all"`) plutôt que le corriger.
 - [ ] **Dependabot** : relancer la montée `sqlx` 0.9 (PR #25 fermée sans merge le 2026-06-17, donc ignorée depuis) et regarder dans les journaux Dependabot (GitHub → Insights) pourquoi `reqwest` 0.13 n'a jamais été proposé.
 
 **Sortie** : `npm view @carbon-fr/sdk version` = 0.2.0 ; Node 24 en CI ; `utoipa` 6.x dans `Cargo.lock` ; `cargo deny check` sans avertissement non documenté.

@@ -15,3 +15,6 @@ tokio = { workspace = true, features = ["net", "time"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+# Serveur HTTP local pour les tests hermétiques de HttpNotifier (jamais dans le
+# binaire de prod : dev-dependency uniquement).
+axum = { workspace = true }

@@ -6,6 +6,19 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### Tests
+
+- **Livraison des webhooks testée de bout en bout** (`adapter-webhook`, de
+  2 à 8 tests, < 1 s) contre un vrai serveur HTTP local : succès avec
+  signature HMAC et content-type, relance après un 5xx, échec après
+  `MAX_ATTEMPTS` tentatives, timeout, redirection **non suivie** (cible
+  joignable et observable, jamais contactée — vérifié par mutation). Seul le
+  constructeur de test (`#[cfg(test)]`) autorise le loopback en clair et des
+  délais courts ; le chemin de production garde exactement ses garde-fous
+  (test dédié).
+
 ## [0.8.1] - 2026-09-23
 
 Donnée publiée et exploitation (itération I1 du [plan](docs/plan-iterations.md)) :

@@ -181,7 +181,7 @@ L'API est **live** sur un VPS géré par Kovelt (détails et alternatives : **AD
 - **DNS** : sous-domaine Kovelt (`carbon-fr-api.kovelt.fr`).
 - **Contrat d'URL** : l'API est versionnée dans le chemin (`/v1/…`) dès le départ, pour migrer de domaine ou faire évoluer l'API sans casser les intégrations.
 
-> Configuration par variables d'environnement (`DATABASE_URL` requis ; `CARBONFR_BIND`, `CARBONFR_POLL_SECS`, `CARBONFR_TRUST_PROXY`, `CARBONFR_VISIT_SALT`, `CARBONFR_RATELIMIT_ENABLED`, `CARBONFR_ENTSOE_TOKEN` (active `acv-ademe@2` + `/price`), `CARBONFR_*_CALIBRATE_WEEKS`, …) — voir `.env.example`. Sous-commandes : `backfill`, `backtest`/`-sweep`/`-bands`/`-acv`/`-renewable`/`-share`/`-share-meteo`, `analyze-renewable-signal`, `train`, `mint-key`.
+> Configuration par variables d'environnement (`DATABASE_URL` requis ; `CARBONFR_BIND`, `CARBONFR_POLL_SECS`, `CARBONFR_TRUST_PROXY`, `CARBONFR_VISIT_SALT`, `CARBONFR_RATELIMIT_ENABLED`, `CARBONFR_ENTSOE_TOKEN` (active `acv-ademe@2` + `/price`), `CARBONFR_*_CALIBRATE_WEEKS`, …) — voir `.env.example`. Sous-commandes : `backfill`, `backtest`/`-sweep`/`-bands`/`-acv`/`-renewable`/`-share`/`-share-meteo`, `analyze-renewable-signal`, `train`, `mint-key`, `list-keys`, `revoke-key`.
 
 ## 10. Sources de données & références
 

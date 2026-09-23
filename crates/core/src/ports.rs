@@ -295,6 +295,28 @@ pub struct ApiKeyRecord {
     pub label: String,
 }
 
+/// Fiche d'exploitation d'une clé enregistrée (sous-commande `list-keys`). Porte
+/// l'**empreinte** — non secrète : SHA-256 d'un aléa de 256 bits, elle ne permet
+/// pas de s'authentifier — jamais la clé en clair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApiKeySummary {
+    pub key_hash: String,
+    /// `None` : tier inconnu (donnée héritée) — la clé est alors inopérante,
+    /// `resolve` la traite comme absente.
+    pub tier: Option<ApiTier>,
+    pub label: String,
+    pub created_at: OffsetDateTime,
+    /// Abonnements webhook possédés par la clé.
+    pub subscriptions: u64,
+}
+
+/// Effet d'une révocation de clé (ADR-0015, addendum 2026-09).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyRevocation {
+    /// Abonnements webhook de la clé supprimés avec elle.
+    pub subscriptions_removed: u64,
+}
+
 /// Port sortant : **registre des clés API** (tier hébergé, ADR-0015).
 ///
 /// Ne manipule que l'**empreinte** d'une clé (hachée par l'adapter entrant),
@@ -314,6 +336,15 @@ pub trait ApiKeyRepository: Send + Sync {
         tier: ApiTier,
         label: &str,
     ) -> Result<(), RepositoryError>;
+
+    /// Clés enregistrées, de la plus ancienne à la plus récente (exploitation).
+    async fn list_keys(&self) -> Result<Vec<ApiKeySummary>, RepositoryError>;
+
+    /// Révoque une clé : supprime son empreinte **et** ses abonnements webhook,
+    /// **atomiquement** — un abonnement orphelin continuerait d'être livré sans
+    /// qu'aucune clé ne puisse plus le lister ni le supprimer. `None` si
+    /// l'empreinte est inconnue (rien n'est touché).
+    async fn revoke_key(&self, key_hash: &str) -> Result<Option<KeyRevocation>, RepositoryError>;
 }
 
 /// Port sortant : **registre des abonnements webhook** (ADR-0016). Possédés par

@@ -872,6 +872,83 @@ async fn api_key_resolve_and_upsert() {
 }
 
 #[tokio::test]
+async fn api_key_revoke_removes_key_and_only_its_subscriptions() {
+    let Some(repo) = setup("test-pg-apikey-revoke").await else {
+        return;
+    };
+    use carbonfr_core::domain::{Subscription, ThresholdDirection};
+    use carbonfr_core::ports::SubscriptionRepository;
+
+    let revoked = "deadbeefcafe0002";
+    let kept = "deadbeefcafe0003";
+    for hash in [revoked, kept] {
+        sqlx::query("DELETE FROM webhook_subscription WHERE owner_key_hash = $1")
+            .bind(hash)
+            .execute(repo.pool())
+            .await
+            .expect("nettoyage abonnements");
+        sqlx::query("DELETE FROM api_key WHERE key_hash = $1")
+            .bind(hash)
+            .execute(repo.pool())
+            .await
+            .expect("nettoyage api_key");
+    }
+    repo.insert_key(revoked, ApiTier::Free, "a-revoquer")
+        .await
+        .unwrap();
+    repo.insert_key(kept, ApiTier::Free, "a-garder")
+        .await
+        .unwrap();
+    let sub = |id: &str, owner: &str| Subscription {
+        id: id.to_string(),
+        owner_key_hash: owner.to_string(),
+        region: Region::National,
+        threshold: 50.0,
+        direction: ThresholdDirection::Below,
+        callback_url: "https://hooks.example.com/c".to_string(),
+        secret: "s3cr3t".to_string(),
+    };
+    assert!(repo.create(&sub("wh-revoke-1", revoked), 50).await.unwrap());
+    assert!(repo.create(&sub("wh-revoke-2", revoked), 50).await.unwrap());
+    assert!(repo.create(&sub("wh-keep-1", kept), 50).await.unwrap());
+
+    // `list_keys` voit les deux clés avec leur nombre d'abonnements.
+    let keys = repo.list_keys().await.unwrap();
+    let find = |hash: &str| keys.iter().find(|k| k.key_hash == hash).cloned();
+    let summary = find(revoked).expect("clé listée");
+    assert_eq!(summary.tier, Some(ApiTier::Free));
+    assert_eq!(summary.label, "a-revoquer");
+    assert_eq!(summary.subscriptions, 2);
+    assert_eq!(find(kept).expect("clé listée").subscriptions, 1);
+
+    // Révocation : la clé ET ses abonnements disparaissent, l'autre clé est intacte.
+    let revocation = repo
+        .revoke_key(revoked)
+        .await
+        .unwrap()
+        .expect("clé révoquée");
+    assert_eq!(revocation.subscriptions_removed, 2);
+    assert!(repo.resolve(revoked).await.unwrap().is_none());
+    assert!(repo.list_for_owner(revoked).await.unwrap().is_empty());
+    assert!(repo.resolve(kept).await.unwrap().is_some());
+    assert_eq!(repo.list_for_owner(kept).await.unwrap().len(), 1);
+    assert!(
+        !repo
+            .active()
+            .await
+            .unwrap()
+            .iter()
+            .any(|s| s.owner_key_hash == revoked)
+    );
+
+    // Empreinte inconnue (ou déjà révoquée) : `None`, rien n'est touché.
+    assert!(repo.revoke_key(revoked).await.unwrap().is_none());
+    assert_eq!(repo.list_for_owner(kept).await.unwrap().len(), 1);
+
+    repo.revoke_key(kept).await.unwrap();
+}
+
+#[tokio::test]
 async fn webhook_subscription_crud_scoped_to_owner() {
     let Some(repo) = setup("test-pg-webhook").await else {
         return;

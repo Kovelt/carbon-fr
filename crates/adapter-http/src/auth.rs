@@ -204,9 +204,9 @@ impl NegativeKeyCache {
 }
 
 /// TTL du cache positif de résolution de clé (secondes). Borne la **latence de
-/// propagation** d'une révocation ou d'un changement de tier à ≤ 60 s — sans
-/// risque aujourd'hui : aucun chemin de révocation n'existe (`mint-key` ne fait
-/// qu'upserter).
+/// propagation** d'une révocation (`revoke-key`, exécutée dans un autre
+/// processus) ou d'un changement de tier à ≤ 60 s : une instance en cours peut
+/// encore accepter la clé révoquée jusqu'à l'expiration de son entrée en cache.
 const POSITIVE_CACHE_TTL_SECS: i64 = 60;
 
 /// Taille maximale du cache positif (empreintes distinctes mémorisées).

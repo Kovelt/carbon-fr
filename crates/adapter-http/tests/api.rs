@@ -246,6 +246,15 @@ impl carbonfr_core::ports::ApiKeyRepository for FakeRepo {
     ) -> Result<(), RepositoryError> {
         Ok(())
     }
+    async fn list_keys(&self) -> Result<Vec<carbonfr_core::ports::ApiKeySummary>, RepositoryError> {
+        Ok(Vec::new())
+    }
+    async fn revoke_key(
+        &self,
+        _: &str,
+    ) -> Result<Option<carbonfr_core::ports::KeyRevocation>, RepositoryError> {
+        Ok(None)
+    }
 }
 
 #[async_trait]
@@ -2094,7 +2103,7 @@ async fn forecast_consumption_v2_unwired_is_404() {
 // ── Middleware d'auth + quota (ADR-0015) ──────────────────────────────────────
 
 use carbonfr_adapter_http::{AuthConfig, AuthState, enforce, key_fingerprint};
-use carbonfr_core::ports::{ApiKeyRecord, ApiKeyRepository, ApiTier};
+use carbonfr_core::ports::{ApiKeyRecord, ApiKeyRepository, ApiKeySummary, ApiTier, KeyRevocation};
 
 struct FakeKeys {
     valid_hash: String,
@@ -2113,6 +2122,12 @@ impl ApiKeyRepository for FakeKeys {
     }
     async fn insert_key(&self, _: &str, _: ApiTier, _: &str) -> Result<(), RepositoryError> {
         Ok(())
+    }
+    async fn list_keys(&self) -> Result<Vec<ApiKeySummary>, RepositoryError> {
+        Ok(Vec::new())
+    }
+    async fn revoke_key(&self, _: &str) -> Result<Option<KeyRevocation>, RepositoryError> {
+        Ok(None)
     }
 }
 

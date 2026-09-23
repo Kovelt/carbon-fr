@@ -35,6 +35,20 @@ de contrat `/v1`.
   champ, aucun seuil modifié ; passe de neutralité re-jouée sur le wording
   (revue ADR-0026, §7).
 
+### Ajouté
+
+- **Révocation de clé API** ([addendum ADR-0015](docs/adr/0015-tier-heberge-cles-api.md)) —
+  jusqu'ici `mint-key` ne faisait qu'upserter : une clé compromise ne pouvait
+  être invalidée qu'en SQL à la main. Deux sous-commandes d'exploitation :
+  **`list-keys`** (empreinte, tier, création, nombre d'abonnements webhook,
+  libellé — jamais la clé en clair) et **`revoke-key`**
+  (`CARBONFR_REVOKE_KEY` = clé `cfr_…` ou son empreinte) qui supprime la clé
+  **et ses abonnements webhook dans la même transaction** (un abonnement
+  orphelin resterait livré sans plus pouvoir être géré). Empreinte inconnue →
+  échec explicite, rien n'est touché. Propagation ≤ 60 s aux instances en cours
+  (cache positif). Port `ApiKeyRepository` : `list_keys` + `revoke_key` ;
+  aucune migration, aucun changement de contrat `/v1`.
+
 ### Sécurité
 
 - **`rustls` mis à jour sur advisory RustSec** (porte `cargo-deny` de la CI,

@@ -21,9 +21,9 @@ use carbonfr_core::domain::{
     SpotPrice, Subscription, ThresholdDirection, TimeRange, VisitStats, WeatherForecast,
 };
 use carbonfr_core::ports::{
-    ApiKeyRecord, ApiKeyRepository, ApiTier, ConsumptionRepository, CrossBorderRepository,
-    IntensityRepository, RepositoryError, SpotPriceRepository, SubscriptionRepository,
-    VisitCounter, WeatherRepository,
+    ApiKeyRecord, ApiKeyRepository, ApiKeySummary, ApiTier, ConsumptionRepository,
+    CrossBorderRepository, IntensityRepository, KeyRevocation, RepositoryError,
+    SpotPriceRepository, SubscriptionRepository, VisitCounter, WeatherRepository,
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{PgPool, QueryBuilder, Row};
@@ -912,6 +912,68 @@ impl ApiKeyRepository for PgIntensityRepository {
         .await
         .map_err(|e| backend(format!("insert_key : {e}")))?;
         Ok(())
+    }
+
+    async fn list_keys(&self) -> Result<Vec<ApiKeySummary>, RepositoryError> {
+        let rows = sqlx::query(
+            "SELECT k.key_hash, k.tier, k.label, k.created_at, \
+                    (SELECT count(*) FROM webhook_subscription s \
+                      WHERE s.owner_key_hash = k.key_hash) AS subscriptions \
+             FROM api_key k ORDER BY k.created_at, k.key_hash",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| backend(format!("list_keys : {e}")))?;
+        rows.iter()
+            .map(|row| {
+                let tier: String = row.try_get("tier").map_err(|e| backend(e.to_string()))?;
+                let subscriptions: i64 = row
+                    .try_get("subscriptions")
+                    .map_err(|e| backend(e.to_string()))?;
+                Ok(ApiKeySummary {
+                    key_hash: row
+                        .try_get("key_hash")
+                        .map_err(|e| backend(e.to_string()))?,
+                    tier: parse_tier(&tier),
+                    label: row.try_get("label").map_err(|e| backend(e.to_string()))?,
+                    created_at: row
+                        .try_get("created_at")
+                        .map_err(|e| backend(e.to_string()))?,
+                    subscriptions: u64::try_from(subscriptions).unwrap_or(0),
+                })
+            })
+            .collect()
+    }
+
+    async fn revoke_key(&self, key_hash: &str) -> Result<Option<KeyRevocation>, RepositoryError> {
+        // Clé et abonnements dans la MÊME transaction : jamais d'abonnement
+        // orphelin (encore livré, plus gérable) ni de clé à demi révoquée.
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| backend(format!("revoke_key (begin) : {e}")))?;
+        let deleted = sqlx::query("DELETE FROM api_key WHERE key_hash = $1")
+            .bind(key_hash)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| backend(format!("revoke_key (clé) : {e}")))?;
+        if deleted.rows_affected() == 0 {
+            // Empreinte inconnue : rien n'est touché (rollback au drop de `tx`).
+            return Ok(None);
+        }
+        let subscriptions =
+            sqlx::query("DELETE FROM webhook_subscription WHERE owner_key_hash = $1")
+                .bind(key_hash)
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| backend(format!("revoke_key (abonnements) : {e}")))?;
+        tx.commit()
+            .await
+            .map_err(|e| backend(format!("revoke_key (commit) : {e}")))?;
+        Ok(Some(KeyRevocation {
+            subscriptions_removed: subscriptions.rows_affected(),
+        }))
     }
 }
 

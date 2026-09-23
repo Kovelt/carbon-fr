@@ -44,6 +44,7 @@ use crate::ports::{ForecastError, RepositoryError, SourceError};
 /// Erreur d'un cas d'usage : agrège les erreurs des ports et les conditions
 /// métier (donnée absente, série insuffisante).
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ApplicationError {
     #[error(transparent)]
     Source(#[from] SourceError),

@@ -1,11 +1,20 @@
 [package]
 name = "carbonfr-eligibility"
 version.workspace = true
-description = "Couche A « électrolyseur » de carbon-fr : éligibilité réseau RFNBO / bas-carbone (domaine pur, sans IO)."
+# Anglais : audience crates.io/docs.rs internationale (ADR-0030 §7).
+description = "RFNBO / low-carbon hydrogen electrolyzer eligibility for carbon-fr — pure, IO-free domain logic."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
+homepage.workspace = true
+documentation = "https://docs.rs/carbonfr-eligibility"
+readme = "README.md"
+rust-version.workspace = true
+# ≤ 5, minuscules, ≤ 20 caractères (règles crates.io, ADR-0030 §7).
+keywords = ["hydrogen", "rfnbo", "electrolyzer", "eligibility", "low-carbon"]
+# Taxonomie crates.io : aucune catégorie « énergie » ou « climat » n'existe
+# (vérifié via https://crates.io/api/v1/categories le 2026-09-23).
+categories = ["science"]
 
 [dependencies]
 carbonfr-core = { workspace = true }

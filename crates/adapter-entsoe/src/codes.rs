@@ -22,6 +22,12 @@ pub fn neighbor_eic(neighbor: Neighbor) -> &'static str {
         Neighbor::Italy => "10Y1001A1001A73I", // IT-North
         Neighbor::Switzerland => "10YCH-SWISSGRIDZ",
         Neighbor::GreatBritain => "10YGB----------A",
+        // `Neighbor` est `#[non_exhaustive]` (ADR-0030 : nouvelle frontière
+        // électrique possible sans rupture SemVer) ; cette table statique ne
+        // couvre que les six voisins connus. Jamais un code EIC plausible mais
+        // faux (interrogerait silencieusement la mauvaise zone) : sentinelle
+        // invalide, rejetée explicitement par l'API ENTSO-E.
+        _ => "UNKNOWN-EIC-CODE",
     }
 }
 

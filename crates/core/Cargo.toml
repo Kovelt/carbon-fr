@@ -1,11 +1,20 @@
 [package]
 name = "carbonfr-core"
 version.workspace = true
-description = "Cœur métier de carbon-fr : domaine, cas d'usage et ports (architecture hexagonale, sans IO)."
+# Anglais : audience crates.io/docs.rs internationale (ADR-0030 §7).
+description = "Domain, use cases and ports for carbon-fr's carbon-intensity core — pure, IO-free Rust (hexagonal architecture)."
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-publish = false
+homepage.workspace = true
+documentation = "https://docs.rs/carbonfr-core"
+readme = "README.md"
+rust-version.workspace = true
+# ≤ 5, minuscules, ≤ 20 caractères (règles crates.io, ADR-0030 §7).
+keywords = ["carbon-intensity", "electricity", "energy", "emissions", "france"]
+# Taxonomie crates.io : aucune catégorie « énergie » ou « climat » n'existe
+# (vérifié via https://crates.io/api/v1/categories le 2026-09-23).
+categories = ["science"]
 
 [dependencies]
 async-trait = { workspace = true }

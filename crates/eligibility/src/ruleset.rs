@@ -10,22 +10,22 @@ use time::{Date, Month, OffsetDateTime};
 use crate::verdict::{Pillar, basis_of};
 
 /// Comparateur fossile GHG de l'hydrogène (gCO₂eq/MJ) — RED II / actes délégués
-/// UE. Base commune RFNBO (2023/1185) et bas-carbone (2025/2359). **[FAIT]**
+/// UE. Base commune RFNBO (2023/1185) et bas-carbone (2025/2359). **\[FAIT\]**
 pub const FOSSIL_COMPARATOR_G_PER_MJ: f64 = 94.0;
 
-/// Réduction GHG minimale exigée d'un carburant bas-carbone / RFNBO. **[FAIT]**
+/// Réduction GHG minimale exigée d'un carburant bas-carbone / RFNBO. **\[FAIT\]**
 pub const REQUIRED_GHG_REDUCTION: f64 = 0.70;
 
-/// Pouvoir calorifique inférieur (PCI) de l'hydrogène, MJ/kg. **[FAIT]**
+/// Pouvoir calorifique inférieur (PCI) de l'hydrogène, MJ/kg. **\[FAIT\]**
 pub const H2_LHV_MJ_PER_KG: f64 = 120.0;
 
 /// Budget GHG **produit** d'un H₂ bas-carbone, en gCO₂eq/kgH₂ :
-/// `94 × (1 − 0,70) × 120 = 3384`. **[FAIT]** (seuil produit 28,2 gCO₂eq/MJ).
+/// `94 × (1 − 0,70) × 120 = 3384`. **\[FAIT\]** (seuil produit 28,2 gCO₂eq/MJ).
 pub const LOW_CARBON_BUDGET_G_PER_KG: f64 =
     FOSSIL_COMPARATOR_G_PER_MJ * (1.0 - REQUIRED_GHG_REDUCTION) * H2_LHV_MJ_PER_KG;
 
 /// Consommation électrique de référence d'un électrolyseur (kWh/kgH₂), médiane de
-/// la fourchette industrielle 50–55. **[FAIT]** (fourchette). Paramétrable.
+/// la fourchette industrielle 50–55. **\[FAIT\]** (fourchette). Paramétrable.
 pub const DEFAULT_ELECTROLYZER_KWH_PER_KG: f64 = 53.0;
 
 /// Plafond de sûreté du seuil d'intensité bas-carbone (gCO₂eq/kWh). Au-delà, le
@@ -37,7 +37,7 @@ pub const MAX_LOW_CARBON_INTENSITY_THRESHOLD: f64 = 1000.0;
 
 /// Seuil **d'intensité électrique** bas-carbone dérivé, en gCO₂eq/kWh.
 ///
-/// **[ESTIMATION — proxy carbon-fr, NON réglementaire]** : c'est une *condition
+/// **\[ESTIMATION — proxy carbon-fr, NON réglementaire\]** : c'est une *condition
 /// nécessaire* (« drapeau rouge »). Au-delà, l'électricité **à elle seule** crève
 /// déjà le budget GHG produit (`LOW_CARBON_BUDGET_G_PER_KG`) → l'H₂ ne peut pas
 /// être bas-carbone, indépendamment des autres postes (compression, eau,
@@ -51,6 +51,7 @@ pub fn low_carbon_intensity_threshold(kwh_per_kg: f64) -> f64 {
 /// l'éligibilité au regard de chaque cadre ; il ne tranche pas la « couleur » de
 /// l'hydrogène.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum EligibilityFramework {
     /// Renouvelable (Règl. délégués (UE) 2023/1184 & 2023/1185).
     Rfnbo,
@@ -96,6 +97,7 @@ impl TemporalGranularity {
 /// `Planned` = présent au catalogue (transparence) mais **jamais résolu** tant
 /// que le droit n'est pas en vigueur (ADR-0006/0020).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum RulesetStatus {
     Served,
     Planned,
@@ -124,15 +126,15 @@ pub struct EligibilityRuleset {
     pub granularity: TemporalGranularity,
     /// Date de bascule vers la corrélation horaire (pilier RFNBO).
     pub hourly_switchover: Date,
-    /// Seuil de l'exception « Article 4 » (part renouvelable de la zone). **[FAIT]**
+    /// Seuil de l'exception « Article 4 » (part renouvelable de la zone). **\[FAIT\]**
     /// (légalement une moyenne **annuelle** ; utilisé ici comme seuil du signal
     /// `RenewableShare` **instantané** — proxy par créneau, cf. `evaluate`).
     pub article4_renewable_threshold: f64,
     /// Seuil de l'exception « surplus » (prix day-ahead, €/MWh). `None` désactive
-    /// le pilier prix (cas `low-carbon`). **[FAIT]**
+    /// le pilier prix (cas `low-carbon`). **\[FAIT\]**
     pub surplus_price_eur_mwh: Option<f64>,
     /// Seuil d'intensité électrique bas-carbone (gCO₂eq/kWh), dérivé. `None` hors
-    /// `low-carbon`. **[ESTIMATION]** (cf. [`low_carbon_intensity_threshold`]).
+    /// `low-carbon`. **\[ESTIMATION\]** (cf. [`low_carbon_intensity_threshold`]).
     pub low_carbon_intensity_threshold_g_per_kwh: Option<f64>,
     /// `true` : le seuil bas-carbone est un proxy non réglementaire (étiquetage
     /// obligatoire, ADR-0024/0025).

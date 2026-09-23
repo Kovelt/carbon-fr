@@ -8,6 +8,39 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Modifié
+
+- **Préparation de la publication crates.io** de `carbonfr-core` et
+  `carbonfr-eligibility` (itération I4,
+  [ADR-0030](docs/adr/0030-politique-publication-crates-io.md)) — **sans
+  publier** :
+  - **Rupture d'API des deux crates (d'où la version 0.9.0)** :
+    `#[non_exhaustive]` sur les 18 enums « catalogues extensibles » retenus
+    par l'ADR (les 5 enums d'erreur, `ApiTier`, `Filiere`, `Neighbor`,
+    `PriceComponentKind`, les enums de coût, `IndeterminateReason`, `Pillar`,
+    `EligibilityFramework`, `RulesetStatus`, `EligibilitySignal`) ; les 7
+    ensembles finis par construction restent exhaustifs. Les 6 `match` du
+    workspace touchés reçoivent un repli sûr et commenté (palier d'API
+    inconnu → quota le plus restrictif, frontière inconnue → code EIC
+    invalide plutôt que celui d'un autre pays, erreur inconnue → 500).
+  - Métadonnées crates.io (description, `readme`, `documentation`,
+    `keywords`, `categories`), README de chaque crate (types tiers exposés,
+    périmètre, SemVer), `rust-version = "1.88.0"` (plancher imposé par
+    `time`), dépendance interne versionnée, 10 liens rustdoc cassés corrigés.
+    Les 9 autres membres restent `publish = false`.
+  - Aucun changement de comportement de l'API `/v1`.
+
+### CI
+
+- **Trois nouveaux jobs pour les crates publiables** : « MSRV (Rust 1.88) »
+  (toolchain épinglée), « semver (crates publiables) » (`cargo-semver-checks`
+  contre le dernier tag `v*` : une rupture sans relèvement de la version
+  *minor* du workspace fait échouer la PR) et « rustdoc + package »
+  (`cargo doc -D warnings` et empaquetage croisé des deux crates, sans
+  upload). Déclarés dans `.github/ruleset-main-phaseA.json` ; ils ne
+  deviennent bloquants qu'une fois le ruleset GitHub mis à jour. L'alerte du
+  scan planifié les surveille aussi.
+
 ### SDK TypeScript
 
 - **`@carbon-fr/sdk` 0.2.0 publié sur npm** (tag `sdk-v0.2.0`, 2026-09-23) —

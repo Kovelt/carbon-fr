@@ -441,7 +441,10 @@ async fn run_list_keys() -> anyhow::Result<()> {
     for key in keys {
         let tier = match key.tier {
             Some(ApiTier::Free) => "free",
-            None => "inconnu",
+            // `ApiTier` est `#[non_exhaustive]` (ADR-0030) : un palier pas
+            // encore connu de cet outil CLI s'affiche comme un tier absent,
+            // même libellé que `None` — jamais un succès trompeur.
+            None | Some(_) => "inconnu",
         };
         let created = key
             .created_at

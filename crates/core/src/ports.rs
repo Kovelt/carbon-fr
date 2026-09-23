@@ -14,6 +14,7 @@ use crate::domain::{
 
 /// Erreur de récupération depuis une source amont (ODRÉ, ou source de secours).
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum SourceError {
     #[error("aucune donnée disponible pour la région {0}")]
     NoData(Region),
@@ -25,6 +26,7 @@ pub enum SourceError {
 
 /// Erreur de persistance.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RepositoryError {
     #[error("erreur de stockage : {0}")]
     Backend(String),
@@ -32,6 +34,7 @@ pub enum RepositoryError {
 
 /// Erreur du modèle de prévision.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ForecastError {
     #[error("prévision indisponible : {0}")]
     Unavailable(String),
@@ -281,6 +284,7 @@ pub trait SpotPriceRepository: Send + Sync {
 /// un tier : c'est l'**absence** de clé (géré au bord, jamais ici). Le payant
 /// sera un tier additionnel, sans refonte (ADR-0015 §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ApiTier {
     Free,
 }

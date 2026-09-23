@@ -169,6 +169,7 @@ const TRV_2026_H2_FROM_UNIX: i64 = 1_785_535_200;
 
 /// Une composante de la chaîne du prix payé (ADR-0023 §1-3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PriceComponentKind {
     /// « Prix réel de l'énergie » = composante énergie spot (ADR-0023 §3).
     Energie,
@@ -227,6 +228,7 @@ pub struct PriceComponent {
 
 /// Filière de production (contexte explicatif du prix, ADR-0023 §4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Filiere {
     Nucleaire,
     Gaz,
@@ -304,7 +306,7 @@ pub struct MixShare {
 
 /// **Estimation** de la technologie marginale qui fixe le prix spot (ADR-0023
 /// §4). Jamais une mesure : la vraie filière marginale exige la donnée d'appel
-/// par centrale, indisponible ici. Dérivée par ordre de mérite ([`Filiere::merit_order`]).
+/// par centrale, indisponible ici. Dérivée par ordre de mérite (`Filiere::merit_order`, interne).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarginalTechnology {
     pub filiere: Filiere,

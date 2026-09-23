@@ -81,7 +81,7 @@ const MAX_STEPS: i64 = 100_000;
 /// **Intervalle** : si `bands` est fourni (calibré par backtest, ADR-0011 §5),
 /// l'encadrement vient des **quantiles de résidus par horizon** — il s'élargit
 /// avec l'horizon. Sinon (non calibré, démarrage à froid), repli sur la
-/// **dispersion empirique par créneau** (quantiles [`BAND_QUANTILE`]). Dans les
+/// **dispersion empirique par créneau** (quantiles `BAND_QUANTILE`, interne). Dans les
 /// deux cas, *data-driven*, pas gaussien.
 ///
 /// Retourne `None` si l'historique est vide ou si les paramètres/horizon sont

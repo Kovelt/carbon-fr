@@ -42,11 +42,25 @@ son id YAML). Noms réels confirmés sur `main` (tous app `github-actions`,
 | `test` | `tests (avec PostgreSQL)` |
 | `build-release` | `build release (artefact déployable)` |
 | `sdk-typescript` | `SDK TypeScript (typecheck + build)` |
+| `msrv` | `MSRV (Rust 1.88)` |
+| `semver` | `semver (crates publiables)` |
+| `rustdoc-package` | `rustdoc + package (crates publiables)` |
 
-ADR-0027 exige « **tous** les jobs de `ci.yml` » → les **5** contexts sont requis
-(la version initiale de ce brief n'en listait que 4, génériques `fmt/clippy/test/build`,
-explicitement « à confirmer » — corrigé ici). Le `cargo-deny` est essentiel : c'est
-la porte de **pureté de licence**, érigée en invariant par l'ADR.
+ADR-0027 exige « **tous** les jobs de `ci.yml` » → les **5** premiers contexts
+étaient requis jusqu'à l'itération I4 (la version initiale de ce brief n'en
+listait que 4, génériques `fmt/clippy/test/build`, explicitement « à confirmer »
+— corrigé ici). Le `cargo-deny` est essentiel : c'est la porte de **pureté de
+licence**, érigée en invariant par l'ADR.
+
+⚠️ **I4 (2026-09-23, ADR-0030) ajoute 3 contexts** (`msrv`, `semver`,
+`rustdoc-package` ci-dessus — préparation crates.io de `carbonfr-core` et
+`carbonfr-eligibility`, sans publication). Ils sont déjà déclarés dans
+[`.github/ruleset-main-phaseA.json`](../.github/ruleset-main-phaseA.json)
+(8 contexts au total) mais **pas encore appliqués** au ruleset GitHub réel :
+tant que la commande `PUT` ci-dessous n'a pas été rejouée (action de Morgan,
+après que ces 3 jobs ont tourné au moins une fois sur `main`/une PR pour que
+GitHub connaisse le nom du check-run), ils ne sont qu'informatifs et ne
+bloquent pas la fusion.
 
 ## Paramètres
 
@@ -189,3 +203,16 @@ Phase A **appliquée** : le ruleset `protect-main` (id `17745480`) a été **mis
 jour** (PUT) vers l'état déclaratif cible ci-dessus — 5 status checks requis,
 `strict = true`, conversations résolues, dismiss stale, squash/rebase imposés,
 `bypass_actors` vide. Phase B non activée.
+
+## État au 2026-09-23
+
+`.github/ruleset-main-phaseA.json` mis à jour avec les **3 contexts I4**
+(`MSRV (Rust 1.88)`, `semver (crates publiables)`, `rustdoc + package (crates
+publiables)` — cf. tableau ci-dessus et ADR-0030) : **8 status checks** dans
+l'état déclaratif cible du fichier. **Pas encore rejoué côté GitHub** (le `PUT`
+ci-dessus reste à lancer par Morgan) : le ruleset réel `protect-main` sur
+GitHub en est toujours à 5 checks tant que cette commande n'a pas tourné. À
+faire dans cet ordre, une fois la PR d'I4 mergée sur `main` (les check-runs
+doivent avoir tourné au moins une fois pour que GitHub connaisse leur nom
+exact) : rejouer le `PUT` avec le fichier mis à jour, puis vérifier (section
+*Vérification* ci-dessus) que les 8 contexts apparaissent bien côté API.

@@ -32,7 +32,10 @@
           { "context": "cargo-deny (licences + advisories)", "integration_id": 15368 },
           { "context": "tests (avec PostgreSQL)", "integration_id": 15368 },
           { "context": "build release (artefact déployable)", "integration_id": 15368 },
-          { "context": "SDK TypeScript (typecheck + build)", "integration_id": 15368 }
+          { "context": "SDK TypeScript (typecheck + build)", "integration_id": 15368 },
+          { "context": "MSRV (Rust 1.88)", "integration_id": 15368 },
+          { "context": "semver (crates publiables)", "integration_id": 15368 },
+          { "context": "rustdoc + package (crates publiables)", "integration_id": 15368 }
         ]
       }
     }

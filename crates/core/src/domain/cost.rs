@@ -59,6 +59,7 @@
 /// **palier payant** s'appuyant sur la donnée RTE, une confirmation écrite de RTE
 /// est recommandée (ADR-0024 §risques + revue de neutralité).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum CostSource {
     /// ADEME — *Coûts des EnR&R en France* (renouvelables, France).
     Ademe,
@@ -157,6 +158,7 @@ impl CostSource {
 /// nouveau (construction) : deux grandeurs distinctes, jamais fusionnées
 /// (ADR-0024 §2 + GATE Bloc 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum CostTechnology {
     /// Nucléaire **existant amorti** (parc en exploitation).
     NucleaireExistant,
@@ -215,6 +217,7 @@ impl CostTechnology {
 /// n'inclut jamais une dimension de coût (externalités, intermittence…) pour une
 /// filière et pas pour les autres (ADR-0024 GATE, piège prioritaire).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Perimeter {
     Plateau,
 }
@@ -280,6 +283,7 @@ pub struct CostAssumptions {
 /// prospectif** d'un moyen neuf : on les distingue explicitement pour ne pas
 /// créer de fausse comparabilité sous un libellé uniforme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum CostBasis {
     /// Coût comptable d'un parc **existant amorti** (ex. coût courant économique).
     AccountingAmortized,

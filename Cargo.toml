@@ -23,15 +23,34 @@ strip = "debuginfo"
 [workspace.package]
 # Version applicative unique du workspace (ADR-0019). Toutes les crates en
 # héritent (`version.workspace = true`) ; un tag git `vX.Y.Z` doit la refléter
-# et déclenche la publication de l'image Docker taguée (release.yml).
-version = "0.8.2"
+# et déclenche la publication de l'image Docker taguée (release.yml). Depuis
+# ADR-0030 (5ᵉ axe de versionnement), c'est aussi la version crates.io de
+# `carbonfr-core` et `carbonfr-eligibility` (seules crates publiées).
+version = "0.9.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Kovelt/carbon-fr"
+# Même dépôt, pas de site dédié : utilisé par les crates publiées (`core`,
+# `eligibility`) comme `homepage` crates.io (ADR-0030 §7).
+homepage = "https://github.com/Kovelt/carbon-fr"
+# MSRV réelle du workspace (ADR-0030 §5) : plancher fixé par `time` (dépendance
+# directe de `core`/`eligibility`), pas par l'édition 2024 (1.85). Un relèvement
+# de MSRV est un bump *minor* (0.x), jamais patch, et seulement quand une
+# dépendance directe l'impose. Hérité par `core` et `eligibility`
+# (`rust-version.workspace = true`), seules crates publiées ; testé par le job
+# CI « MSRV (Rust 1.88) ».
+rust-version = "1.88.0"
 
 [workspace.dependencies]
 # Crates internes
-carbonfr-core = { path = "crates/core" }
+# `version` requis dès qu'une autre crate publiée en dépend (ADR-0030 §2) :
+# sans lui, `cargo package -p carbonfr-eligibility` échoue faute de contrainte
+# de version sur cette dépendance interne. `"0.9.0"` résout par défaut en
+# caret 0.x (`>=0.9.0, <0.10.0`) : à relever avec la version *minor* du
+# workspace (0.10.0…). Garde-fou : le job CI « rustdoc + package » empaquette
+# `eligibility` contre la version locale de `core` et échoue si les deux
+# divergent.
+carbonfr-core = { path = "crates/core", version = "0.9.0" }
 carbonfr-eligibility = { path = "crates/eligibility" }
 carbonfr-adapter-odre = { path = "crates/adapter-odre" }
 carbonfr-adapter-postgres = { path = "crates/adapter-postgres" }

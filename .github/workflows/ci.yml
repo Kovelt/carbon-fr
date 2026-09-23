@@ -125,12 +125,103 @@ jobs:
       - name: Typecheck + build
         run: npm run build
 
+  # Les trois jobs suivants ne concernent que les deux crates publiables sur
+  # crates.io, carbonfr-core et carbonfr-eligibility (ADR-0030 §1) — les 9
+  # autres membres du workspace (adapters, bin/server) n'y sont pas soumis.
+  msrv:
+    name: MSRV (Rust 1.88)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Plancher réel du workspace (ADR-0030 §5) : imposé par la dépendance
+      # directe `time`, pas par l'édition 2024 (1.85). Toolchain épinglée en
+      # dur à 1.88.0 (pas `stable`, contrairement aux autres jobs) : ce job
+      # doit casser si le code se met à exiger un rustc plus récent sans
+      # relever `rust-version` — relever la MSRV = bump *minor*, jamais un
+      # patch (CONTRIBUTING.md), et seulement quand une dépendance directe
+      # l'impose, pas par anticipation.
+      - name: Toolchain Rust 1.88.0 (MSRV déclarée par le workspace)
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # branche "stable" de l'action, ici épinglée à 1.88.0 via l'input toolchain
+        with:
+          toolchain: 1.88.0
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      # Seules les deux crates publiables : la MSRV ne concerne pas les
+      # adapters ni bin/server (ADR-0030 §5).
+      - name: cargo check (crates publiables uniquement)
+        run: cargo check --locked -p carbonfr-core -p carbonfr-eligibility
+
+  semver:
+    name: semver (crates publiables)
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth 0 : il faut l'historique complet + les tags pour
+      # retrouver le dernier tag de release (baseline ci-dessous) — un
+      # checkout superficiel ne les contiendrait pas forcément.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Baseline = dernier tag de release
+        id: baseline
+        run: echo "rev=$(git describe --tags --abbrev=0 --match 'v*' HEAD)" >> "$GITHUB_OUTPUT"
+
+      # cargo-semver-checks compare l'API publique de carbonfr-core et
+      # carbonfr-eligibility à leur état au dernier tag `vX.Y.Z`. Règle
+      # ADR-0030 §3 (en 0.x, pré-1.0) : toute rupture — retrait/renommage
+      # public, nouvelle variante sur un enum exhaustif, nouveau champ sur
+      # une struct à champs publics hors doctrine §3, etc. — exige de
+      # relever la version *minor* du workspace ([workspace.package].version)
+      # dans la MÊME PR, sinon CE JOB ÉCHOUE : cargo-semver-checks « assume
+      # minor » tant que la version n'a pas bougé (il refuse par exemple un
+      # simple ajout de `#[non_exhaustive]` sans bump). À partir d'I5
+      # (première publication réelle), la baseline redeviendra le registre
+      # crates.io par défaut (ADR-0030 §4) et ce job changera d'entrée.
+      - name: cargo-semver-checks (baseline ${{ steps.baseline.outputs.rev }})
+        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
+        with:
+          package: carbonfr-core,carbonfr-eligibility
+          baseline-rev: ${{ steps.baseline.outputs.rev }}
+
+  rustdoc-package:
+    name: rustdoc + package (crates publiables)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      # docs.rs ne rejette pas un avertissement rustdoc, contrairement à ce
+      # job (ADR-0030 §9) : plus strict ici pour ne jamais publier de lien
+      # mort.
+      - name: rustdoc (liens morts en erreur)
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --locked -p carbonfr-core -p carbonfr-eligibility
+
+      # Les DEUX crates dans le même appel : Cargo superpose un registre local
+      # pour les membres du workspace pas encore publiés, et vérifie donc
+      # `eligibility` contre la version locale de `core` (seule,
+      # `cargo package -p carbonfr-eligibility` échouerait avant la publication
+      # de `core`). Échoue aussi si la dépendance interne versionnée
+      # (`carbonfr-core = { …, version = … }`) diverge de la version du
+      # workspace. Aucun upload, aucun jeton (ADR-0030 §8 : la 1re publication
+      # est manuelle, en I5).
+      - name: Empaquetage (package + vérification croisée, aucun upload)
+        run: cargo package --locked -p carbonfr-core -p carbonfr-eligibility
+
   # Le scan quotidien a échoué 8 jours d'affilée (RUSTSEC-2026-0285, sept.
   # 2026) sans que personne ne le voie : un échec du run PLANIFIÉ ouvre une
   # issue (ou la commente si elle est déjà ouverte) — visible et notifiée.
   alerte-scan-planifie:
     name: Alerte (scan planifié en échec)
-    needs: [lint, deny, test, build-release, sdk-typescript]
+    needs: [lint, deny, test, build-release, sdk-typescript, msrv, semver, rustdoc-package]
     if: ${{ failure() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     permissions:

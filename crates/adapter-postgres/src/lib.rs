@@ -870,6 +870,12 @@ impl SpotPriceRepository for PgIntensityRepository {
 fn tier_label(tier: ApiTier) -> &'static str {
     match tier {
         ApiTier::Free => "free",
+        // `ApiTier` est `#[non_exhaustive]` (ADR-0030 ; ADR-0015 §7 anticipe des
+        // paliers payants) : un palier pas encore connu de cet adapter est
+        // stocké sous un libellé neutre, jamais confondu avec "free". `parse_tier`
+        // ne le reconnaît pas en retour → même repli qu'un tier hérité inconnu
+        // (clé traitée comme absente, cf. `resolve`), jamais un accès élevé.
+        _ => "unknown",
     }
 }
 

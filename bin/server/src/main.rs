@@ -65,6 +65,7 @@
 //! | `CARBONFR_RATELIMIT_FREE_PER_MIN` | `600`     | quota clé gratuite (req/min)        |
 //! | `CARBONFR_KEY_LABEL`         | `` (vide)      | `mint-key` : libellé de la clé      |
 //! | `CARBONFR_REVOKE_KEY`        | — (requis par `revoke-key`) | `revoke-key` : clé `cfr_…` ou son empreinte (64 hex, cf. `list-keys`) |
+//! | `CARBONFR_WEBHOOK_MAX_FAILURES` | `10`        | livraisons webhook échouées **consécutives** avant désactivation de l'abonnement (> 0, ADR-0016) |
 //! | `CARBONFR_TRUST_PROXY`       | `0` (off)      | faire confiance à `X-Forwarded-For` (derrière un reverse proxy) |
 //! | `CARBONFR_REAL_IP_HEADER`    | (non défini)   | en-tête d'IP réelle dédié (ex. `x-real-ip`) — **uniquement** si le proxy l'écrase systématiquement ; défaut = dernier segment de `X-Forwarded-For` (audit 2026-08) |
 //! | `CARBONFR_DB_MAX_CONNECTIONS` | `20`         | taille du pool PostgreSQL           |
@@ -97,8 +98,8 @@ use carbonfr_core::application::{
 };
 use carbonfr_core::domain::{
     ACV_FORECAST_ID, ACV_FORECAST_VERSION, CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams,
-    ErrorMetrics, IntensityUpdate, Region, TimeRange, WeatherForecast, hmac_sha256_hex,
-    render_webhook_payload, should_fire,
+    DEFAULT_WEBHOOK_MAX_CONSECUTIVE_FAILURES, ErrorMetrics, IntensityUpdate, Region, TimeRange,
+    WeatherForecast, hmac_sha256_hex, render_webhook_payload, should_fire,
 };
 use carbonfr_core::ports::{
     ApiKeyRepository, ApiTier, ConsumptionRepository, ConsumptionSource, CrossBorderRepository,
@@ -194,8 +195,12 @@ async fn run_server() -> anyhow::Result<()> {
 
     // Watcher de webhooks (ADR-0016) : s'abonne au même flux que le SSE, détecte
     // les franchissements de seuil et livre des notifications signées.
-    let webhook_watcher =
-        spawn_webhook_watcher(updates_tx.subscribe(), repo.clone(), HttpNotifier::new());
+    let webhook_watcher = spawn_webhook_watcher(
+        updates_tx.subscribe(),
+        repo.clone(),
+        HttpNotifier::new(),
+        config.webhook_max_failures,
+    );
 
     // Prévision (ADR-0009) : modèle climatology@1 alimenté par le même
     // repository. Intervalles **calibrés** au démarrage par quantiles de résidus
@@ -1756,6 +1761,9 @@ struct ServerConfig {
     /// En-tête d'IP réelle dédié (`CARBONFR_REAL_IP_HEADER`, opt-in — cf.
     /// [`real_ip_header_from_env`]).
     real_ip_header: Option<String>,
+    /// Livraisons webhook échouées consécutives avant désactivation automatique
+    /// d'un abonnement (`CARBONFR_WEBHOOK_MAX_FAILURES`, ADR-0016).
+    webhook_max_failures: u32,
 }
 
 impl ServerConfig {
@@ -1769,6 +1777,11 @@ impl ServerConfig {
             .context("CARBONFR_BIND : adresse d'écoute invalide")?;
 
         let poll_secs = parse_poll_secs(std::env::var("CARBONFR_POLL_SECS").ok().as_deref())?;
+        let webhook_max_failures = parse_webhook_max_failures(
+            std::env::var("CARBONFR_WEBHOOK_MAX_FAILURES")
+                .ok()
+                .as_deref(),
+        )?;
 
         let trust_proxy = matches!(
             std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
@@ -1800,6 +1813,7 @@ impl ServerConfig {
             visit_salt,
             trust_proxy,
             real_ip_header: real_ip_header_from_env(),
+            webhook_max_failures,
         })
     }
 }
@@ -1816,6 +1830,21 @@ fn parse_poll_secs(raw: Option<&str>) -> anyhow::Result<u64> {
         .unwrap_or(900);
     anyhow::ensure!(secs > 0, "CARBONFR_POLL_SECS doit être > 0 (secondes)");
     Ok(secs)
+}
+
+/// Seuil de désactivation automatique des webhooks
+/// (`CARBONFR_WEBHOOK_MAX_FAILURES`, défaut
+/// [`DEFAULT_WEBHOOK_MAX_CONSECUTIVE_FAILURES`]). Refusé si nul : « désactiver
+/// après 0 échec » n'a pas de sens, et la désactivation n'est pas débrayable
+/// (un endpoint mort serait martelé indéfiniment).
+fn parse_webhook_max_failures(raw: Option<&str>) -> anyhow::Result<u32> {
+    let max = raw
+        .map(|raw| raw.trim().parse::<u32>())
+        .transpose()
+        .context("CARBONFR_WEBHOOK_MAX_FAILURES : nombre invalide")?
+        .unwrap_or(DEFAULT_WEBHOOK_MAX_CONSECUTIVE_FAILURES);
+    anyhow::ensure!(max > 0, "CARBONFR_WEBHOOK_MAX_FAILURES doit être > 0");
+    Ok(max)
 }
 
 /// Résout l'intervalle et la largeur de tranche du backfill depuis l'environnement.
@@ -2004,14 +2033,17 @@ where
 /// à jour nationales, détecte les **franchissements de seuil** (*edge-triggered*)
 /// des abonnements actifs, et émet une livraison **signée** par abonnement. La
 /// livraison (avec garde SSRF + retries) est déléguée au `Notifier`, hors du
-/// chemin d'évaluation.
+/// chemin d'évaluation ; son issue est enregistrée, et un abonnement dont
+/// `max_failures` livraisons d'affilée ont échoué est **désactivé** (ADR-0016,
+/// addendum 2026-09).
 fn spawn_webhook_watcher<R, N>(
     mut updates: tokio::sync::broadcast::Receiver<IntensityUpdate>,
     repo: R,
     notifier: N,
+    max_failures: u32,
 ) -> JoinHandle<()>
 where
-    R: SubscriptionRepository + 'static,
+    R: SubscriptionRepository + Clone + 'static,
     N: Notifier + Clone + 'static,
 {
     use std::collections::HashMap;
@@ -2080,13 +2112,38 @@ where
                     continue;
                 };
                 let notifier = notifier.clone();
+                let repo = repo.clone();
                 let id = sub.id.clone();
                 tokio::spawn(async move {
-                    let _permit = permit; // relâché à la fin de la livraison
-                    if let Err(err) = notifier.deliver(&delivery).await {
-                        warn!(subscription = %id, error = %err, "livraison webhook échouée");
-                    } else {
-                        info!(subscription = %id, "webhook livré");
+                    let delivered = match notifier.deliver(&delivery).await {
+                        Ok(()) => {
+                            info!(subscription = %id, "webhook livré");
+                            true
+                        }
+                        Err(err) => {
+                            warn!(subscription = %id, error = %err, "livraison webhook échouée");
+                            false
+                        }
+                    };
+                    // Le permis borne les connexions HTTPS sortantes, pas les
+                    // écritures en base : relâché dès la fin de la livraison, pour
+                    // qu'une base lente ne fasse pas sauter d'autres livraisons.
+                    drop(permit);
+                    // Compteur d'échecs consécutifs (remis à zéro par un succès).
+                    // Base indisponible : l'issue est perdue — sans effet sur les
+                    // livraisons, au pire une désactivation retardée.
+                    match repo.record_delivery(&id, delivered, max_failures).await {
+                        Ok(true) => warn!(
+                            subscription = %id,
+                            max_failures,
+                            "abonnement webhook désactivé après des échecs consécutifs"
+                        ),
+                        Ok(false) => {}
+                        Err(err) => warn!(
+                            subscription = %id,
+                            error = %err,
+                            "issue de livraison webhook non enregistrée"
+                        ),
                     }
                 });
             }
@@ -2137,7 +2194,114 @@ fn init_tracing() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_poll_secs, revocation_target};
+    use super::{
+        parse_poll_secs, parse_webhook_max_failures, revocation_target, spawn_webhook_watcher,
+    };
+
+    /// Le watcher enregistre l'issue de chaque livraison avec le seuil configuré
+    /// (ADR-0016, addendum 2026-09) — c'est ce qui alimente la désactivation
+    /// automatique d'un abonnement dont l'endpoint est mort.
+    #[tokio::test]
+    async fn webhook_watcher_records_failed_delivery_with_threshold() {
+        use std::sync::{Arc, Mutex};
+
+        use async_trait::async_trait;
+        use carbonfr_core::domain::{
+            CarbonIntensity, IntensityUpdate, Methodology, Region, Subscription, ThresholdDirection,
+        };
+        use carbonfr_core::ports::{
+            Notifier, RepositoryError, SourceError, SubscriptionRepository, WebhookDelivery,
+        };
+
+        type Recorded = Arc<Mutex<Vec<(String, bool, u32)>>>;
+
+        #[derive(Clone, Default)]
+        struct Repo {
+            recorded: Recorded,
+        }
+        #[async_trait]
+        impl SubscriptionRepository for Repo {
+            async fn create(&self, _: &Subscription, _: usize) -> Result<bool, RepositoryError> {
+                Ok(true)
+            }
+            async fn list_for_owner(&self, _: &str) -> Result<Vec<Subscription>, RepositoryError> {
+                Ok(Vec::new())
+            }
+            async fn delete(&self, _: &str, _: &str) -> Result<bool, RepositoryError> {
+                Ok(false)
+            }
+            async fn active(&self) -> Result<Vec<Subscription>, RepositoryError> {
+                Ok(vec![Subscription {
+                    id: "wh-1".to_string(),
+                    owner_key_hash: "h".to_string(),
+                    region: Region::National,
+                    threshold: 50.0,
+                    direction: ThresholdDirection::Below,
+                    callback_url: "https://hooks.example.com/c".to_string(),
+                    secret: "s".to_string(),
+                    disabled_at: None,
+                }])
+            }
+            async fn record_delivery(
+                &self,
+                id: &str,
+                delivered: bool,
+                max: u32,
+            ) -> Result<bool, RepositoryError> {
+                self.recorded
+                    .lock()
+                    .unwrap()
+                    .push((id.to_string(), delivered, max));
+                Ok(false)
+            }
+        }
+
+        #[derive(Clone)]
+        struct DeadEndpoint;
+        #[async_trait]
+        impl Notifier for DeadEndpoint {
+            async fn deliver(&self, _: &WebhookDelivery) -> Result<(), SourceError> {
+                Err(SourceError::Unavailable("endpoint mort".to_string()))
+            }
+        }
+
+        let (tx, rx) = tokio::sync::broadcast::channel(8);
+        let repo = Repo::default();
+        let watcher = spawn_webhook_watcher(rx, repo.clone(), DeadEndpoint, 7);
+        let update = |g: f64, minutes: i64| IntensityUpdate {
+            region: Region::National,
+            at: time::OffsetDateTime::UNIX_EPOCH + time::Duration::minutes(minutes),
+            intensity: CarbonIntensity::new(g).unwrap(),
+            methodology: Methodology::rte_direct(),
+        };
+        // 60 → 40 : franchissement « sous 50 » → une livraison, qui échoue.
+        tx.send(update(60.0, 0)).unwrap();
+        tx.send(update(40.0, 15)).unwrap();
+        for _ in 0..200 {
+            if !repo.recorded.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        watcher.abort();
+        assert_eq!(
+            *repo.recorded.lock().unwrap(),
+            vec![("wh-1".to_string(), false, 7)]
+        );
+    }
+
+    #[test]
+    fn webhook_max_failures_default_explicit_and_invalid() {
+        assert_eq!(
+            parse_webhook_max_failures(None).unwrap(),
+            carbonfr_core::domain::DEFAULT_WEBHOOK_MAX_CONSECUTIVE_FAILURES
+        );
+        assert_eq!(parse_webhook_max_failures(Some(" 3 ")).unwrap(), 3);
+        let err = parse_webhook_max_failures(Some("0")).unwrap_err();
+        assert!(err.to_string().contains("CARBONFR_WEBHOOK_MAX_FAILURES"));
+        assert!(parse_webhook_max_failures(Some("-1")).is_err());
+        assert!(parse_webhook_max_failures(Some("dix")).is_err());
+    }
 
     /// `revoke-key` accepte la clé en clair (hachée comme à la délivrance) ou son
     /// empreinte (casse normalisée), et refuse tout le reste plutôt que de

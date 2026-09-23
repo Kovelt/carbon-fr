@@ -907,6 +907,7 @@ async fn api_key_revoke_removes_key_and_only_its_subscriptions() {
         direction: ThresholdDirection::Below,
         callback_url: "https://hooks.example.com/c".to_string(),
         secret: "s3cr3t".to_string(),
+        disabled_at: None,
     };
     assert!(repo.create(&sub("wh-revoke-1", revoked), 50).await.unwrap());
     assert!(repo.create(&sub("wh-revoke-2", revoked), 50).await.unwrap());
@@ -952,6 +953,68 @@ async fn api_key_revoke_removes_key_and_only_its_subscriptions() {
     assert_eq!(repo.list_for_owner(kept).await.unwrap().len(), 1);
 
     repo.revoke_key(kept).await.unwrap();
+}
+
+/// Désactivation automatique (ADR-0016, addendum 2026-09) : un succès remet le
+/// compteur à zéro, N échecs **consécutifs** désactivent l'abonnement, qui sort
+/// du watcher (`active`) mais reste listé pour son propriétaire.
+#[tokio::test]
+async fn webhook_disabled_after_consecutive_failures() {
+    let Some(repo) = setup("test-pg-webhook-disable").await else {
+        return;
+    };
+    use carbonfr_core::domain::{Subscription, ThresholdDirection};
+    use carbonfr_core::ports::SubscriptionRepository;
+
+    let owner = "deadbeefcafe0005";
+    let id = "wh-disable-1";
+    sqlx::query("DELETE FROM api_key WHERE key_hash = $1")
+        .bind(owner)
+        .execute(repo.pool())
+        .await
+        .expect("nettoyage api_key");
+    repo.insert_key(owner, ApiTier::Free, "echecs")
+        .await
+        .unwrap();
+    let sub = Subscription {
+        id: id.to_string(),
+        owner_key_hash: owner.to_string(),
+        region: Region::National,
+        threshold: 50.0,
+        direction: ThresholdDirection::Below,
+        callback_url: "https://hooks.example.com/c".to_string(),
+        secret: "s3cr3t".to_string(),
+        disabled_at: None,
+    };
+    assert!(repo.create(&sub, 50).await.unwrap());
+    let is_active = |subs: Vec<Subscription>| subs.iter().any(|s| s.id == id);
+
+    // 2 échecs, puis un succès : le compteur repart de zéro.
+    assert!(!repo.record_delivery(id, false, 3).await.unwrap());
+    assert!(!repo.record_delivery(id, false, 3).await.unwrap());
+    assert!(!repo.record_delivery(id, true, 3).await.unwrap());
+    // 2 nouveaux échecs : toujours actif (le succès a remis le compteur à 0).
+    assert!(!repo.record_delivery(id, false, 3).await.unwrap());
+    assert!(!repo.record_delivery(id, false, 3).await.unwrap());
+    assert!(is_active(repo.active().await.unwrap()));
+
+    // 3ᵉ échec consécutif : désactivation, signalée une seule fois.
+    assert!(repo.record_delivery(id, false, 3).await.unwrap());
+    assert!(!is_active(repo.active().await.unwrap()));
+    assert!(!repo.record_delivery(id, false, 3).await.unwrap());
+    // Un succès tardif (livraison en vol) ne le réactive pas.
+    assert!(!repo.record_delivery(id, true, 3).await.unwrap());
+    assert!(!is_active(repo.active().await.unwrap()));
+
+    // Toujours listé pour son propriétaire, avec l'instant de désactivation.
+    let listed = repo.list_for_owner(owner).await.unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].disabled_at.is_some());
+
+    // Abonnement inconnu : aucune erreur, rien à signaler.
+    assert!(!repo.record_delivery("wh-inconnu", false, 1).await.unwrap());
+
+    repo.revoke_key(owner).await.unwrap();
 }
 
 /// Scénario de la revue adversariale de `revoke-key` : un `POST /v1/webhooks`
@@ -1041,6 +1104,7 @@ async fn webhook_subscription_crud_scoped_to_owner() {
         direction: ThresholdDirection::Below,
         callback_url: "https://hooks.example.com/c".to_string(),
         secret: "s3cr3t".to_string(),
+        disabled_at: None,
     };
     assert!(repo.create(&sub, 50).await.unwrap());
 

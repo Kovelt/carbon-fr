@@ -10,6 +10,8 @@ use std::net::IpAddr;
 use sha2::{Digest, Sha256};
 use url::{Host, Url};
 
+use time::OffsetDateTime;
+
 use crate::domain::Region;
 
 /// Sens du franchissement de seuil d'un abonnement.
@@ -59,7 +61,20 @@ pub struct Subscription {
     pub direction: ThresholdDirection,
     pub callback_url: String,
     pub secret: String,
+    /// Instant de la **désactivation automatique** après
+    /// `max_consecutive_failures` livraisons échouées d'affilée (ADR-0016,
+    /// addendum 2026-09) ; `None` = actif. Un abonnement désactivé n'est plus
+    /// évalué ; il reste listé pour son propriétaire, qui le recrée pour le
+    /// réactiver.
+    pub disabled_at: Option<OffsetDateTime>,
 }
+
+/// Seuil par défaut de la désactivation automatique : nombre de livraisons
+/// échouées **consécutives** (chacune après ses retries) au-delà duquel un
+/// abonnement est désactivé (ADR-0016, addendum 2026-09). Les franchissements
+/// de seuil étant rares (quelques-uns par jour au plus), 10 échecs d'affilée
+/// signalent un endpoint durablement mort, pas un incident passager.
+pub const DEFAULT_WEBHOOK_MAX_CONSECUTIVE_FAILURES: u32 = 10;
 
 /// Faut-il notifier ? **Edge-triggered** (ADR-0016 §2) : on ne déclenche qu'au
 /// **franchissement** — la condition devient vraie alors qu'elle était fausse
@@ -364,6 +379,7 @@ mod tests {
             direction: ThresholdDirection::Below,
             callback_url: "https://x".to_string(),
             secret: "s".to_string(),
+            disabled_at: None,
         };
         let body = render_webhook_payload(&sub, "2024-01-01T00:00:00Z", 42.5);
         assert!(body.contains("\\\"cd")); // guillemet échappé

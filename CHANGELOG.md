@@ -26,6 +26,17 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   une révocation (course relevée en revue adversariale, test de régression à
   deux connexions) ; les orphelins éventuels hérités sont purgés par la
   migration. Aucun changement de contrat `/v1`.
+- **Désactivation automatique des webhooks après N échecs consécutifs**
+  ([addendum ADR-0016](docs/adr/0016-webhooks.md)) — un endpoint mort était
+  martelé à chaque franchissement de seuil, indéfiniment. Chaque livraison
+  (après ses retries) est désormais comptée : un succès remet le compteur à
+  zéro, `CARBONFR_WEBHOOK_MAX_FAILURES` échecs d'affilée (défaut **10**)
+  désactivent l'abonnement, qui n'est plus évalué par le watcher mais reste
+  listé. **Contrat (additif)** : `GET /v1/webhooks` expose `status`
+  (`active` | `disabled`) et `disabled_at` ; réactivation = supprimer puis
+  recréer. Migration `0014` (`consecutive_failures`, `disabled_at`) ; SDK
+  TypeScript : `WebhookSummary` porte les deux champs (prochaine version du
+  SDK).
 
 ## [0.7.2] - 2026-09-23
 

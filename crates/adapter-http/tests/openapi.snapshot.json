@@ -3557,7 +3557,8 @@
           "region",
           "threshold",
           "direction",
-          "callback_url"
+          "callback_url",
+          "status"
         ],
         "properties": {
           "callback_url": {
@@ -3566,11 +3567,23 @@
           "direction": {
             "type": "string"
           },
+          "disabled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Instant de la désactivation (RFC 3339), `null` si actif."
+          },
           "id": {
             "type": "string"
           },
           "region": {
             "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "description": "`active`, ou `disabled` : désactivé automatiquement après une série de\nlivraisons échouées consécutives (ADR-0016) — plus aucune livraison.\nPour le réactiver, le supprimer puis le recréer (nouveau secret).",
+            "example": "active"
           },
           "threshold": {
             "type": "number",

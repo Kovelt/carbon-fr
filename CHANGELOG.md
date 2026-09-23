@@ -6,6 +6,20 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### Sécurité
+
+- **`rustls` mis à jour sur advisory RustSec** (porte `cargo-deny` de la CI,
+  rouge sur le scan quotidien depuis le 2026-09-15) : `rustls` 0.23.40 →
+  **0.23.45** (RUSTSEC-2026-0285 : messages de handshake TLS 1.3 acceptés
+  au-delà d'un changement de clé, en violation de la RFC 8446 §5.1 — le
+  transcript reste authentifié, pas d'altération possible du handshake), et
+  `rustls-webpki` 0.103.13 → 0.103.15 entraîné par la même mise à jour.
+  Dépendance transitive (`reqwest` des adapters ODRÉ/ENTSO-E/météo/webhook,
+  `sqlx`) : *lock only*, aucune contrainte de `Cargo.toml` touchée, aucun
+  changement d'API.
+
 ## [0.7.1] - 2026-08-16
 
 Solde des mineures de l'audit 2026-08 (vérifiées adversarialement) : cohérence

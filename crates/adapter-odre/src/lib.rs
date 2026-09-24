@@ -40,6 +40,29 @@ const API_WINDOW: u64 = 10_000;
 /// Taille de page (maximum autorisé par l'API `records`).
 const PAGE_SIZE: u64 = 100;
 
+/// Installe le provider crypto `ring` de rustls comme provider par défaut du
+/// **processus**, si aucun n'est déjà en place.
+///
+/// reqwest 0.13 (feature `rustls-no-provider`, cf. Cargo.toml racine) ne tire
+/// plus `aws-lc-rs` : sans provider installé, `reqwest::Client::builder().build()`
+/// **panique**, y compris pour un usage HTTP en clair (la pile TLS est montée
+/// dès `.build()`). Un seul provider dans tout le workspace (ADR-0031 décision
+/// 3 : pas de double provider) → `ring`, déjà celui de sqlx (`tls-rustls-ring`).
+/// Appelé défensivement ici (pas seulement au bootstrap de `bin/server`, cf.
+/// `main.rs`) pour que cette crate reste utilisable seule — tests de ce crate,
+/// ou toute autre intégration qui ne passerait pas par `carbonfr-server`.
+/// `install_default()` renvoie `Err` si un provider est déjà installé (par le
+/// bootstrap du binaire, ou par un appel concurrent depuis un autre adapter) :
+/// sans conséquence, on l'ignore — c'est forcément le même `ring`, seul
+/// provider présent dans le graphe de dépendances du workspace. Le `Once`
+/// évite juste de reconstruire un `CryptoProvider` (allocation) à chaque appel.
+fn ensure_crypto_provider() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 /// Client de la source éCO2mix d'ODRÉ.
 ///
 /// Sans état métier : un seul client peut être partagé (`reqwest::Client` gère
@@ -53,6 +76,7 @@ pub struct OdreClient {
 impl OdreClient {
     /// Construit un client visant l'API publique d'ODRÉ.
     pub fn new() -> Result<Self, SourceError> {
+        ensure_crypto_provider();
         let http = reqwest::Client::builder()
             .user_agent(concat!("carbon-fr/", env!("CARGO_PKG_VERSION")))
             // Bornes de temps : sans elles, une source amont qui *pend* bloquerait

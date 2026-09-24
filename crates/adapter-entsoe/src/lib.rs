@@ -18,6 +18,12 @@
 //! **Rejoué le 2026-09-23** (après le correctif du signe A03 de 0.7.0 et
 //! `quick-xml` 0.42) : 5 frontières, signes cohérents (export FR vers BE/DE/IT/CH,
 //! import depuis ES à la pointe solaire), prix A44 au pas 15 min.
+//! **Rejoué le 2026-09-24** (après la montée reqwest 0.12 → 0.13, plan I5 —
+//! `rustls-no-provider` + provider `ring`, cf. Cargo.toml racine) : TLS réel
+//! via `rustls-platform-verifier`, mêmes 5 frontières (BE/DE/ES/IT/CH), export
+//! net de la France sur les cinq à l'heure du test (nuit, creux de demande),
+//! intensités voisines et prix A44 plausibles — chemins XML, codes EIC et
+//! sérialisation `quick-xml` inchangés par la migration TLS.
 //! La frontière GB est indisponible côté ENTSO-E depuis le Brexit — dégradation
 //! propre (frontière simplement absente des snapshots, pas d'erreur).
 //!
@@ -85,15 +91,40 @@ impl From<EntsoeError> for SourceError {
     }
 }
 
+/// Installe le provider crypto `ring` de rustls comme provider par défaut du
+/// **processus**, si aucun n'est déjà en place.
+///
+/// reqwest 0.13 (feature `rustls-no-provider`, cf. Cargo.toml racine) ne tire
+/// plus `aws-lc-rs` : sans provider installé, `reqwest::Client::builder().build()`
+/// **panique**, y compris pour un usage HTTP en clair (la pile TLS est montée
+/// dès `.build()`). Un seul provider dans tout le workspace (ADR-0031 décision
+/// 3 : pas de double provider) → `ring`, déjà celui de sqlx (`tls-rustls-ring`).
+/// Appelé défensivement ici (pas seulement au bootstrap de `bin/server`, cf.
+/// `main.rs`) pour que cette crate reste utilisable seule — tests de ce crate,
+/// ou toute autre intégration qui ne passerait pas par `carbonfr-server`.
+/// `install_default()` renvoie `Err` si un provider est déjà installé (par le
+/// bootstrap du binaire, ou par un appel concurrent depuis un autre adapter) :
+/// sans conséquence, on l'ignore — c'est forcément le même `ring`, seul
+/// provider présent dans le graphe de dépendances du workspace. Le `Once`
+/// évite juste de reconstruire un `CryptoProvider` (allocation) à chaque appel.
+fn ensure_crypto_provider() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 /// Client HTTP **borné en temps** : sans timeouts, une réponse qui pend
-/// bloquerait l'ingestion ENTSO-E du poller indéfiniment. Repli sur le défaut si
-/// la construction échoue (improbable).
-fn build_http() -> reqwest::Client {
+/// bloquerait l'ingestion ENTSO-E du poller indéfiniment. Un échec de
+/// construction (ex. magasin de certificats système illisible) est remonté :
+/// **jamais** de repli sur un client par défaut, qui perdrait ces timeouts.
+fn build_http() -> Result<reqwest::Client, EntsoeError> {
+    ensure_crypto_provider();
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(30))
         .build()
-        .unwrap_or_default()
+        .map_err(|e| EntsoeError::Http(format!("construction du client HTTP impossible : {e}")))
 }
 
 /// Client ENTSO-E (Transparency Platform RESTful API).
@@ -139,7 +170,7 @@ impl EntsoeClient {
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_WINDOW_HOURS);
         Ok(Self {
-            http: build_http(),
+            http: build_http()?,
             base_url,
             token,
             window_hours,
@@ -147,13 +178,13 @@ impl EntsoeClient {
     }
 
     /// Client explicite (tests / composition root alternative).
-    pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Self {
-        Self {
-            http: build_http(),
+    pub fn new(base_url: impl Into<String>, token: impl Into<String>) -> Result<Self, EntsoeError> {
+        Ok(Self {
+            http: build_http()?,
             base_url: base_url.into(),
             token: token.into(),
             window_hours: DEFAULT_WINDOW_HOURS,
-        }
+        })
     }
 
     /// Récupère et désérialise un document XML pour des paramètres donnés.

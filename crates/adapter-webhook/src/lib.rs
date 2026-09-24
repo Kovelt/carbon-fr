@@ -56,6 +56,30 @@ impl reqwest::dns::Resolve for PublicOnlyResolver {
     }
 }
 
+/// Installe le provider crypto `ring` de rustls comme provider par défaut du
+/// **processus**, si aucun n'est déjà en place.
+///
+/// reqwest 0.13 (feature `rustls-no-provider`, cf. Cargo.toml racine) ne tire
+/// plus `aws-lc-rs` : sans provider installé, `reqwest::Client::builder().build()`
+/// **panique**, y compris pour un usage HTTP en clair (la pile TLS est montée
+/// dès `.build()`). Un seul provider dans tout le workspace (ADR-0031 décision
+/// 3 : pas de double provider) → `ring`, déjà celui de sqlx (`tls-rustls-ring`).
+/// Appelé défensivement ici (pas seulement au bootstrap de `bin/server`, cf.
+/// `main.rs`) pour que cette crate reste utilisable seule — les 8 tests de ce
+/// crate construisent chacun un `HttpNotifier` (`new`/`new_for_test`), donc un
+/// `reqwest::Client`, sans jamais passer par `main()`. `install_default()`
+/// renvoie `Err` si un provider est déjà installé (par le bootstrap du
+/// binaire, ou par un appel concurrent depuis un autre adapter) : sans
+/// conséquence, on l'ignore — c'est forcément le même `ring`, seul provider
+/// présent dans le graphe de dépendances du workspace. Le `Once` évite juste
+/// de reconstruire un `CryptoProvider` (allocation) à chaque appel.
+fn ensure_crypto_provider() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+}
+
 /// Garde SSRF de **production** : identique à l'ancien corps de
 /// `HttpNotifier::guard_ssrf` avant factorisation — schéma HTTPS, pas
 /// d'userinfo, et — pour un hôte **littéral IP** — refus des plages non
@@ -100,7 +124,11 @@ pub struct HttpNotifier {
 }
 
 impl HttpNotifier {
-    pub fn new() -> Self {
+    /// Échoue si le client HTTP ne peut pas être construit (ex. magasin de
+    /// certificats système illisible) : **jamais** de repli sur un
+    /// `reqwest::Client` par défaut, qui perdrait le resolver anti-SSRF, le
+    /// refus des redirections et `no_proxy` (ADR-0016).
+    pub fn new() -> Result<Self, reqwest::Error> {
         Self::build(REQUEST_TIMEOUT, CONNECT_TIMEOUT, BACKOFF_BASE, guard_prod)
     }
 
@@ -113,7 +141,8 @@ impl HttpNotifier {
         connect_timeout: Duration,
         backoff_base: Duration,
         guard: fn(&str) -> Result<(), SourceError>,
-    ) -> Self {
+    ) -> Result<Self, reqwest::Error> {
+        ensure_crypto_provider();
         let client = reqwest::Client::builder()
             .timeout(request_timeout)
             .connect_timeout(connect_timeout)
@@ -125,13 +154,12 @@ impl HttpNotifier {
             .no_proxy()
             // Filtre d'IP publiques appliqué **dans** la pile de résolution reqwest.
             .dns_resolver(std::sync::Arc::new(PublicOnlyResolver))
-            .build()
-            .unwrap_or_default();
-        Self {
+            .build()?;
+        Ok(Self {
             client,
             guard,
             backoff_base,
-        }
+        })
     }
 
     /// Constructeur de **test uniquement** (`#[cfg(test)]` : jamais compilé
@@ -145,7 +173,7 @@ impl HttpNotifier {
         request_timeout: Duration,
         connect_timeout: Duration,
         backoff_base: Duration,
-    ) -> Self {
+    ) -> Result<Self, reqwest::Error> {
         Self::build(
             request_timeout,
             connect_timeout,
@@ -156,12 +184,6 @@ impl HttpNotifier {
 
     fn guard_ssrf(&self, url: &str) -> Result<(), SourceError> {
         (self.guard)(url)
-    }
-}
-
-impl Default for HttpNotifier {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -210,7 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_forbidden_url_before_any_request() {
-        let notifier = HttpNotifier::new();
+        let notifier = HttpNotifier::new().expect("client webhook de test");
         let delivery = WebhookDelivery {
             url: "https://127.0.0.1/hook".to_string(),
             body: "{}".to_string(),
@@ -222,7 +244,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_non_https() {
-        let notifier = HttpNotifier::new();
+        let notifier = HttpNotifier::new().expect("client webhook de test");
         let delivery = WebhookDelivery {
             url: "http://example.com/hook".to_string(),
             body: "{}".to_string(),
@@ -241,7 +263,7 @@ mod tests {
     /// `rejects_forbidden_url_before_any_request`).
     #[tokio::test]
     async fn prod_rejects_plain_http_to_loopback() {
-        let notifier = HttpNotifier::new();
+        let notifier = HttpNotifier::new().expect("client webhook de test");
         let delivery = WebhookDelivery {
             url: "http://127.0.0.1/hook".to_string(),
             body: "{}".to_string(),
@@ -271,6 +293,7 @@ mod tests {
             TEST_CONNECT_TIMEOUT,
             TEST_BACKOFF_BASE,
         )
+        .expect("client webhook de test")
     }
 
     /// Démarre `app` sur `127.0.0.1:<port éphémère>` et rend l'URL de base

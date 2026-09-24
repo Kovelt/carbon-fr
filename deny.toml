@@ -46,10 +46,27 @@ confidence-threshold = 0.8
 [bans]
 # Plusieurs versions d'une même caisse = avertissement, pas erreur : c'est
 # courant et hors de notre contrôle dans l'arbre transitif. On le voit sans
-# bloquer la CI. Origine des doublons connus (relevé du 2026-09-23) — plutôt
-# que des `skip` qui deviendraient faux aux prochaines migrations :
-#   - `tower-http` 0.6            ← reqwest 0.12        → disparaît avec reqwest 0.13 (plan I5)
-#   - `webpki-roots` 0.26, `hashbrown` 0.15 ← sqlx 0.8 → disparaissent avec sqlx 0.9 (plan I7)
+# bloquer la CI. Origine des doublons connus (relevé du 2026-09-24, après la
+# montée reqwest 0.12 → 0.13, plan I5 — `cargo tree -i <crate>@<version>`)
+# — plutôt que des `skip` qui deviendraient faux aux prochaines migrations :
+#   - `tower-http` 0.6 / 0.7      ← NE disparaît PAS avec reqwest 0.13, contrairement à ce que
+#                                    prévoyait ce commentaire avant le 2026-09-24 : reqwest épingle
+#                                    lui-même `tower-http = "0.6.8"` en dépendance directe (features
+#                                    `decompression-gzip`/`follow-redirect`, cf. son Cargo.toml), sur
+#                                    ses DEUX branches majeures 0.12 et 0.13 — c'est `carbonfr-adapter-http`
+#                                    qui veut du 0.7 (cors + trace). Ne se résorbera qu'à une future
+#                                    montée de reqwest qui relève sa propre borne (hors de notre main).
+#   - `base64` 0.22 / 0.23        ← NOUVEAU depuis reqwest 0.13 (`base64 = "0.23"` dans son
+#                                    Cargo.toml, contre 0.22 tiré par `hyper-util`) — même nature que
+#                                    `tower-http` ci-dessus, pas d'action possible côté carbon-fr.
+#   - `hashbrown` 0.15/0.17       ← sqlx 0.8 (via `hashlink`) et `indexmap` (sqlx + utoipa) →
+#                                    devrait converger avec sqlx 0.9 (plan I7). `webpki-roots` n'est
+#                                    plus dans cette liste : jamais recompté en doublon par cargo-deny
+#                                    (0.26.11 dépend lui-même en interne de 1.0.7, une seule entrée
+#                                    « active » pour notre usage) — sqlx est aujourd'hui la SEULE
+#                                    source de `webpki-roots` dans l'arbre (`cargo tree -i webpki-roots@0.26.11`) ;
+#                                    reqwest 0.13 ne le tire plus du tout (vérifie via `rustls-platform-verifier`
+#                                    → magasin système, cf. Dockerfile).
 #   - `rand`/`rand_core`/`getrandom` 0.8/0.6/0.2 ← gbdt 0.1 et sqlx-postgres 0.8
 #   - `syn` 2 et 3                ← macros procédurales tierces (transition de l'écosystème)
 #   - `cpufeatures`, `windows-*`, `redox_syscall` ← dépendances de plateforme (non compilées sous Linux)

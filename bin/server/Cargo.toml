@@ -25,6 +25,11 @@ carbonfr-adapter-webhook = { workspace = true }
 carbonfr-adapter-gbdt = { workspace = true }
 carbonfr-eligibility = { workspace = true }
 axum = { workspace = true }
+# Bootstrap : installe le provider crypto `ring` de rustls une seule fois, au
+# tout début de `main()`, avant que le moindre adapter ne construise un
+# `reqwest::Client` (cf. commentaire du bloc `rustls` dans le Cargo.toml
+# racine).
+rustls = { workspace = true }
 tokio = { workspace = true, features = [
     "rt-multi-thread",
     "macros",

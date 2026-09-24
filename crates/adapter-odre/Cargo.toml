@@ -12,6 +12,10 @@ carbonfr-core = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 reqwest = { workspace = true }
+# Installation défensive du provider crypto `ring` avant tout `reqwest::Client`
+# (reqwest 0.13 sans provider panique au build) — cf. commentaire du bloc
+# `rustls` dans le Cargo.toml racine.
+rustls = { workspace = true }
 serde = { workspace = true }
 time = { workspace = true, features = ["parsing", "formatting"] }
 

@@ -10,7 +10,11 @@ publish = false
 [dependencies]
 carbonfr-core = { workspace = true }
 async-trait = { workspace = true }
+# Installation défensive du provider crypto `ring` avant tout `reqwest::Client`
+# (reqwest 0.13 sans provider panique au build) — cf. commentaire du bloc
+# `rustls` dans le Cargo.toml racine.
 reqwest = { workspace = true }
+rustls = { workspace = true }
 tokio = { workspace = true, features = ["net", "time"] }
 
 [dev-dependencies]

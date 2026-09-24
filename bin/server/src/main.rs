@@ -80,7 +80,7 @@ mod metrics;
 use std::net::SocketAddr;
 
 use anyhow::Context;
-use carbonfr_adapter_entsoe::EntsoeClient;
+use carbonfr_adapter_entsoe::{EntsoeClient, EntsoeError};
 use carbonfr_adapter_forecast::{AcvAdemeForecaster, CachedForecaster, ClimatologyForecaster};
 use carbonfr_adapter_gbdt::{
     GbdtForecaster, GbdtHyperParams, build_training_examples, train_model,
@@ -119,6 +119,25 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Bootstrap : provider crypto `ring` de rustls installé comme provider par
+    // défaut du **processus**, avant tout `reqwest::Client` (adapters ODRÉ,
+    // ENTSO-E, météo, webhook) — reqwest 0.13 (feature `rustls-no-provider`,
+    // cf. Cargo.toml racine) ne tire plus `aws-lc-rs` : sans provider installé,
+    // la construction du moindre client PANIQUE, même pour un usage HTTP en
+    // clair (la pile TLS est montée dès `.build()`). Un seul provider dans tout
+    // le workspace (ADR-0031 décision 3 : pas de double provider) → `ring`,
+    // déjà celui de sqlx (`tls-rustls-ring`). C'est le tout premier appel de
+    // `main()`, avant tout autre code : `.expect()` est du bootstrap légitime
+    // (CONTRIBUTING.md) — un échec ici ne peut signifier qu'un provider a déjà
+    // été installé plus tôt dans le process, ce qui ne devrait jamais arriver.
+    // Chaque adapter réinstalle aussi, défensivement et silencieusement, le
+    // même provider avant son propre premier client (utile hors de ce binaire :
+    // tests d'un adapter en isolation, usage de la crate sans passer par
+    // `main()`) — cf. `ensure_crypto_provider` dans chacun d'eux.
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("provider crypto rustls déjà installé avant même le début de main()");
+
     let arg = std::env::args().nth(1);
 
     // `--version` : répond et sort, sans bruit de logs (ADR-0019 — traçabilité du
@@ -173,10 +192,13 @@ async fn run_server() -> anyhow::Result<()> {
             info!("source d'import ENTSO-E configurée (acv-ademe@2 alimentée)");
             Some(client)
         }
-        Err(err) => {
+        // Seule l'absence de configuration est tolérée : un client qui ne peut
+        // pas se construire (TLS, certificats) arrête le démarrage.
+        Err(err @ EntsoeError::Config(_)) => {
             info!(raison = %err, "ENTSO-E non configuré : acv-ademe@2 sans contexte d'import");
             None
         }
+        Err(err) => return Err(anyhow::Error::new(err).context("initialisation du client ENTSO-E")),
     };
     // Canal de diffusion live (ADR-0014 §2) : le poller publie chaque mise à jour
     // nationale, les connexions SSE s'y abonnent. Canal mémoire (poller intégré) ;
@@ -200,7 +222,7 @@ async fn run_server() -> anyhow::Result<()> {
     let webhook_watcher = spawn_webhook_watcher(
         updates_tx.subscribe(),
         repo.clone(),
-        HttpNotifier::new(),
+        HttpNotifier::new().context("initialisation du client webhook (anti-SSRF, ADR-0016)")?,
         config.webhook_max_failures,
     );
 

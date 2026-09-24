@@ -20,8 +20,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 
 # ─── Runtime ─────────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
-# Magasin CA système : les clients TLS du binaire (reqwest, sqlx) embarquent
-# webpki-roots et ne le lisent pas ; conservé pour tout outil qui s'y fierait.
+# Magasin CA système INDISPENSABLE : depuis la migration reqwest 0.13
+# (`rustls-no-provider`, cf. Cargo.toml racine), la vérification TLS des
+# clients sortants (ODRÉ, ENTSO-E, Open-Meteo, webhooks) passe par
+# `rustls-platform-verifier`, qui lit le magasin **système** — `/etc/ssl/certs`
+# ici — au lieu d'un magasin embarqué (`webpki-roots`). sqlx (`tls-rustls-ring`)
+# continue, lui, d'utiliser `webpki-roots` (embarqué) ; sans effet sur ce
+# paquet, qui reste requis pour les clients reqwest.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*

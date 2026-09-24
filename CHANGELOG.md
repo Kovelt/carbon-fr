@@ -6,7 +6,35 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.9.2] - 2026-09-24
+
+Montée **`reqwest` 0.12 → 0.13** (itération I5, dernier item) et premier essai
+de la publication crates.io automatique (*Trusted Publishing*). Aucun
+changement de l'API `/v1`, aucune migration ; les crates publiées
+`carbonfr-core` / `carbonfr-eligibility` sont inchangées (republiées en 0.9.2
+par le workflow, versions couplées au workspace, ADR-0030).
+
+### Modifié
+
+- **`reqwest` 0.13.5** en `rustls-no-provider` + feature `query` : un seul
+  provider crypto dans tout le workspace, **`ring`** (déjà celui de `sqlx`),
+  installé au démarrage du serveur et, de façon idempotente, par chaque
+  adapter qui construit un client — reqwest 0.13 panique sinon.
+  `aws-lc-rs`/`aws-lc-sys` absents du graphe (ADR-0031 décision 3). La
+  vérification des certificats passe désormais par le **magasin système**
+  (`rustls-platform-verifier`) : le paquet `ca-certificates` de l'image
+  devient indispensable (commentaire du `Dockerfile` corrigé).
+- **Plus aucun repli silencieux** sur un client HTTP par défaut : si le client
+  des webhooks ou d'ENTSO-E ne peut pas être construit, le serveur refuse de
+  démarrer au lieu de continuer sans ses garde-fous (anti-SSRF, refus des
+  redirections et `no_proxy` pour les webhooks — ADR-0016 ; timeouts pour
+  ENTSO-E). Défaut préexistant, que la dépendance au magasin système rendait
+  plus probable ; relevé par la relecture de sécurité.
+- Rejeu live **ENTSO-E** (A11/A44), **ODRÉ** et **Open-Meteo** vert après la
+  montée ; démarrage réel du binaire contre un PostgreSQL 17 jetable (TLS
+  réel, `/health` 200, aucun panic). `deny.toml` : origine des doublons
+  mise à jour (`tower-http` 0.6/0.7 persiste — épinglé par reqwest lui-même —,
+  nouveau `base64` 0.22/0.23).
 
 ### Ajouté
 

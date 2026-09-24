@@ -26,7 +26,7 @@ strip = "debuginfo"
 # et déclenche la publication de l'image Docker taguée (release.yml). Depuis
 # ADR-0030 (5ᵉ axe de versionnement), c'est aussi la version crates.io de
 # `carbonfr-core` et `carbonfr-eligibility` (seules crates publiées).
-version = "0.9.1"
+version = "0.9.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Kovelt/carbon-fr"
@@ -75,10 +75,38 @@ thiserror = "2.0.18"
 time = "0.3.49"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
-reqwest = { version = "0.12.24", default-features = false, features = [
+# reqwest 0.13 restructure son backend TLS : la feature globale « rustls-tls »
+# disparaît au profit de « rustls » (qui tire `aws-lc-rs`) ou
+# « rustls-no-provider » (qui ne tire AUCUN provider crypto — choisie ici, cf.
+# le bloc `rustls` juste en dessous et ADR-0031 décision 3 : un seul provider
+# dans le workspace, `ring`, pas de double provider avec `aws-lc-rs`). `query`
+# est désormais une feature opt-in (utilisée par les adapters ODRÉ/ENTSO-E/
+# météo, `.query(...)` sur `RequestBuilder`) — `form` ne l'est pas (inutilisé
+# dans ce workspace). Sur Linux (seule cible de déploiement, cf. Dockerfile),
+# la feature par défaut `system-proxy` ne couvre que les réglages système
+# Windows/macOS ; la détection par variables d'environnement (`HTTPS_PROXY`…)
+# reste, elle, toujours active — pas besoin de l'activer pour un comportement
+# inchangé.
+reqwest = { version = "0.13.5", default-features = false, features = [
     "json",
-    "rustls-tls",
     "gzip",
+    "query",
+    "rustls-no-provider",
+] }
+# Dépendance directe (pas seulement transitive via reqwest) : chaque site qui
+# construit un `reqwest::Client` doit pouvoir installer explicitement le
+# provider crypto `ring` avant le premier `.build()` — reqwest 0.13 sans
+# provider installé PANIQUE dès la construction du client, y compris pour un
+# usage 100 % HTTP en clair (la pile TLS est montée à `.build()`), cf.
+# `default_rustls_crypto_provider()` dans `reqwest::async_impl::client`. Même
+# version que celle déjà résolue par `sqlx` (`tls-rustls-ring`, ci-dessous) :
+# un seul `rustls` dans l'arbre. `default-features = false` + seule feature
+# `ring` : **aucun `aws-lc-rs`** (ADR-0031 décision 3). `std` : requis par les
+# types que nous manipulons (`CryptoProvider`, `Arc`) ; sans lui la crate est
+# `no_std`-only.
+rustls = { version = "0.23.45", default-features = false, features = [
+    "ring",
+    "std",
 ] }
 tokio = { version = "1.52.3", features = ["macros", "rt"] }
 tokio-stream = { version = "0.1.17", features = ["sync"] }

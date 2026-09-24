@@ -56,11 +56,10 @@ licence**, érigée en invariant par l'ADR.
 `rustdoc-package` ci-dessus — préparation crates.io de `carbonfr-core` et
 `carbonfr-eligibility`, sans publication). Ils sont déjà déclarés dans
 [`.github/ruleset-main-phaseA.json`](../.github/ruleset-main-phaseA.json)
-(8 contexts au total) mais **pas encore appliqués** au ruleset GitHub réel :
-tant que la commande `PUT` ci-dessous n'a pas été rejouée (action de Morgan,
-après que ces 3 jobs ont tourné au moins une fois sur `main`/une PR pour que
-GitHub connaisse le nom du check-run), ils ne sont qu'informatifs et ne
-bloquent pas la fusion.
+(8 contexts au total) et **appliqués au ruleset GitHub réel le 2026-09-24**
+(par Morgan, via l'interface *Settings → Rules*, après une première exécution
+des 3 jobs sur `main`) ; vérifié par `GET /repos/Kovelt/carbon-fr/rules/branches/main`
+→ 8 checks requis, identiques au fichier.
 
 ## Paramètres
 
@@ -204,15 +203,11 @@ jour** (PUT) vers l'état déclaratif cible ci-dessus — 5 status checks requis
 `strict = true`, conversations résolues, dismiss stale, squash/rebase imposés,
 `bypass_actors` vide. Phase B non activée.
 
-## État au 2026-09-23
+## État au 2026-09-24
 
-`.github/ruleset-main-phaseA.json` mis à jour avec les **3 contexts I4**
-(`MSRV (Rust 1.88)`, `semver (crates publiables)`, `rustdoc + package (crates
-publiables)` — cf. tableau ci-dessus et ADR-0030) : **8 status checks** dans
-l'état déclaratif cible du fichier. **Pas encore rejoué côté GitHub** (le `PUT`
-ci-dessus reste à lancer par Morgan) : le ruleset réel `protect-main` sur
-GitHub en est toujours à 5 checks tant que cette commande n'a pas tourné. À
-faire dans cet ordre, une fois la PR d'I4 mergée sur `main` (les check-runs
-doivent avoir tourné au moins une fois pour que GitHub connaisse leur nom
-exact) : rejouer le `PUT` avec le fichier mis à jour, puis vérifier (section
-*Vérification* ci-dessus) que les 8 contexts apparaissent bien côté API.
+`.github/ruleset-main-phaseA.json` et le ruleset réel `protect-main` sont
+**alignés à 8 status checks** (les 5 historiques + `MSRV (Rust 1.88)`,
+`semver (crates publiables)`, `rustdoc + package (crates publiables)`, ajoutés
+par l'itération I4 / ADR-0030). Appliqué par l'interface GitHub (pas de `gh`
+sur le poste) puis vérifié via l'API publique
+(`GET /repos/Kovelt/carbon-fr/rules/branches/main`).

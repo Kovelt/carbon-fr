@@ -6,7 +6,16 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.9.0] - 2026-09-24
+
+Préparation de la publication crates.io (itérations I3 et I4 du
+[plan](docs/plan-iterations.md)) : décisions actées (ADR-0030 publication,
+ADR-0031 SDK Rust), puis `carbonfr-core` et `carbonfr-eligibility` rendues
+publiables — **rupture d'API de ces deux crates** (`#[non_exhaustive]` sur 18
+enums, d'où la version *minor*), sans publication à ce stade. Trois nouveaux
+contrôles de CI, requis sur `main`. Aussi : `@carbon-fr/sdk` 0.2.0 publié sur
+npm, revue complète de la doc. **Aucun changement de comportement de l'API
+`/v1`**, aucune migration.
 
 ### Modifié
 

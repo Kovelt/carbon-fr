@@ -6,6 +6,21 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [0.9.1] - 2026-09-24
+
+Version de la **première publication crates.io** de `carbonfr-core` et
+`carbonfr-eligibility` (itération I5,
+[ADR-0030](docs/adr/0030-politique-publication-crates-io.md)). Une version
+publiée est immuable : la 0.9.0 embarquait dans ses README la mention « Not yet
+published to crates.io », qui se serait affichée pour toujours sur crates.io.
+Aucun changement de code ni de l'API `/v1`.
+
+### Documentation
+
+- README des deux crates : mention « non publiée » remplacée par les badges
+  crates.io, docs.rs et MSRV.
+- ADR-0030 : propriétaire des crates tranché — l'organisation `Kovelt`.
+
 ## [0.9.0] - 2026-09-24
 
 Préparation de la publication crates.io (itérations I3 et I4 du

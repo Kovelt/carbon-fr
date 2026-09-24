@@ -4,9 +4,9 @@ Domain, use cases and ports for [carbon-fr](https://github.com/Kovelt/carbon-fr)
 open API for the carbon intensity of French electricity (gCO₂eq/kWh, based on
 RTE/éCO2mix open data via [ODRÉ](https://odre.opendatasoft.com/)).
 
-> Not yet published to crates.io. This README documents the crate as prepared
-> for publication (see [ADR-0030](https://github.com/Kovelt/carbon-fr/blob/main/docs/adr/0030-politique-publication-crates-io.md)).
-> No `crates.io`/`docs.rs` badge until the first version actually ships.
+[![crates.io](https://img.shields.io/crates/v/carbonfr-core.svg)](https://crates.io/crates/carbonfr-core)
+[![docs.rs](https://docs.rs/carbonfr-core/badge.svg)](https://docs.rs/carbonfr-core)
+[![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-blue.svg)](https://github.com/Kovelt/carbon-fr/blob/main/docs/adr/0030-politique-publication-crates-io.md)
 
 ## What this crate is
 

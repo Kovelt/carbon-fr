@@ -6,9 +6,9 @@ methodology ADR-0026): grid-level eligibility signals, evaluated per time
 slot, under two explicitly labeled and neutral frameworks — `rfnbo`
 (renewable) and `low-carbon` (nuclear/CCS-inclusive low-carbon).
 
-> Not yet published to crates.io. This README documents the crate as prepared
-> for publication (see [ADR-0030](https://github.com/Kovelt/carbon-fr/blob/main/docs/adr/0030-politique-publication-crates-io.md)).
-> No `crates.io`/`docs.rs` badge until the first version actually ships.
+[![crates.io](https://img.shields.io/crates/v/carbonfr-eligibility.svg)](https://crates.io/crates/carbonfr-eligibility)
+[![docs.rs](https://docs.rs/carbonfr-eligibility/badge.svg)](https://docs.rs/carbonfr-eligibility)
+[![MSRV 1.88](https://img.shields.io/badge/MSRV-1.88-blue.svg)](https://github.com/Kovelt/carbon-fr/blob/main/docs/adr/0030-politique-publication-crates-io.md)
 
 ## What this crate is
 

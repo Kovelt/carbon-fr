@@ -26,7 +26,7 @@ strip = "debuginfo"
 # et déclenche la publication de l'image Docker taguée (release.yml). Depuis
 # ADR-0030 (5ᵉ axe de versionnement), c'est aussi la version crates.io de
 # `carbonfr-core` et `carbonfr-eligibility` (seules crates publiées).
-version = "0.9.0"
+version = "0.9.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Kovelt/carbon-fr"

@@ -1,7 +1,7 @@
 # Plan de la suite — itérations I0 → I7 (à partir du 2026-09-23)
 
 - **Statut** : document vivant — cocher les cases au fil des PR, dater chaque révision en tête.
-- **Dernière mise à jour** : 2026-09-23 (I0 terminée hors fermeture des issues #76/#81 ; I1 livrée en v0.8.1, reste la notification Uptime Kuma ; I2 livrée (v0.8.2 déployée, `@carbon-fr/sdk` 0.2.0 sur npm) ; I3 livrée (ADR-0030/0031) ; I4 en PR (version 0.9.0, rien de publié)).
+- **Dernière mise à jour** : 2026-09-24 (I0 terminée hors fermeture des issues #76/#81 ; I1 livrée en v0.8.1, reste la notification Uptime Kuma ; I2 livrée (v0.8.2 déployée, `@carbon-fr/sdk` 0.2.0 sur npm) ; I3 livrée (ADR-0030/0031) ; I4 livrée en v0.9.0 (8 checks requis sur `main`, rien de publié sur crates.io) ; prochaine : I5).
 - **Sources** : état des lieux multi-agents du 2026-09-23 (constats revérifiés contre le code), recherche en 4 volets (préparation crates.io, backlog consolidé des ADR/roadmaps, montées majeures des dépendances, échéances datées), 3 plans concurrents (« fiabilité d'abord », « adoption d'abord », « valeur métier d'abord ») départagés par un juge. Base retenue : **valeur métier d'abord**, avec les greffes des deux autres.
 - **Horizon** : 13 à 17 semaines selon les itérations, soit vers mi-janvier 2027 au rythme d'un mainteneur seul assisté de Claude Code. Les durées sont des ordres de grandeur, pas des engagements.
 - **Liens** : feuille de route produit dans le [README](../README.md#feuille-de-route), [roadmap hydrogène](roadmap-hydrogene.md), [index des ADR](adr/README.md), [CHANGELOG](../CHANGELOG.md).
@@ -96,7 +96,7 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 - [x] Feature flags : aucun aujourd'hui. Acter dans l'ADR-0030 si une feature optionnelle (ex. `serde` sur les types du domaine) est prévue avant une 1.0, pour ne pas l'ajouter plus tard de façon cassante.
 - [x] **CI** : job MSRV (valeur fixée par l'ADR-0030, plancher de fait ≈ 1.85 avec l'édition 2024), job `cargo-semver-checks` (référence posée), job `RUSTDOCFLAGS="-D warnings" cargo doc` sur les deux crates.
 
-**Sortie** (atteinte le 2026-09-23 en local ; à confirmer par la CI de la PR, dont le job MSRV 1.88) : `cargo package -p carbonfr-core -p carbonfr-eligibility` passe (les deux ensemble : `eligibility` seule ne peut pas être vérifiée avant la publication de `core`) ; `cargo doc -D warnings` passe sur les deux ; jobs MSRV, semver-checks et rustdoc verts ; workspace complet toujours vert.
+**Sortie** (atteinte : CI de `main` verte sur les 8 jobs le 2026-09-23, dont la 1re exécution du job MSRV 1.88 ; checks requis par le ruleset le 2026-09-24) : `cargo package -p carbonfr-core -p carbonfr-eligibility` passe (les deux ensemble : `eligibility` seule ne peut pas être vérifiée avant la publication de `core`) ; `cargo doc -D warnings` passe sur les deux ; jobs MSRV, semver-checks et rustdoc verts ; workspace complet toujours vert.
 
 ## I5 — Publication crates.io et `reqwest` 0.13 (~2 semaines → v0.9.1)
 
@@ -202,7 +202,7 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 
 - [ ] Comparer l'empreinte SSH du VPS vue depuis le fixe avec celle enregistrée sur le portable (valeurs dans la mémoire locale d'exploitation, jamais dans ce dépôt public).
 - [x] Journaux Dependabot : pourquoi `reqwest` 0.13 n'a jamais été proposé — feature `rustls-tls` supprimée en 0.13, montée non résoluble automatiquement (cf. I2).
-- [x] Activer « Automatically delete head branches » (Settings → General → Pull Requests) — actif (constaté au merge de #115).
+- [ ] Activer « Automatically delete head branches » (Settings → General → Pull Requests) — **pas actif** : les branches de #116 et #117 sont restées après merge (supprimées à la main).
 - [ ] Envoyer la demande de licence à cdo@ademe.fr (débloque H6 v2).
 - [ ] Avant I5 : créer ou vérifier le compte crates.io ; générer un jeton ponctuel pour la première publication (le révoquer juste après), puis déclarer `Kovelt/carbon-fr` comme *trusted publisher* sur `carbonfr-core` et `carbonfr-eligibility`.
 - [ ] En I6 : même chose pour `carbonfr-sdk` (déclaration distincte, possible seulement après sa première publication).

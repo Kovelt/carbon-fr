@@ -66,23 +66,22 @@ fusion touchant ces deux crates :
 | `semver (crates publiables)` | `cargo-semver-checks` contre le dernier tag `v*` (ADR-0030 §4) |
 | `rustdoc + package (crates publiables)` | `cargo doc -D warnings` (liens morts) puis empaquetage croisé des deux crates (`cargo package`, aucun upload) |
 
-Ces trois checks doivent encore être ajoutés au *ruleset* GitHub de `main`
-pour devenir **bloquants** (action de Morgan, hors CI) — procédure décrite
-dans [`docs/brief-claude-code-ruleset-main.md`](docs/brief-claude-code-ruleset-main.md).
+Ces trois checks sont **requis** par le *ruleset* de `main` depuis le
+2026-09-24 (procédure : [`docs/brief-claude-code-ruleset-main.md`](docs/brief-claude-code-ruleset-main.md)).
 
 ## Processus de contribution
 
 1. Fork + branche dédiée (`feat/…`, `fix/…`, `docs/…`).
 2. Commits clairs et articulés (un commit = une intention). Les [Conventional Commits](https://www.conventionalcommits.org/) sont appréciés mais non obligatoires. Les commits **signés** (GPG/SSH) sont **recommandés**, sans être exigés.
 3. Ouvre une Pull Request en décrivant le **quoi** et le **pourquoi**, en liant l'issue / l'ADR concerné (un gabarit de PR est proposé automatiquement).
-4. La CI doit être **verte sur les cinq contrôles** : `fmt + clippy`, `cargo-deny (licences + advisories)`, `tests (avec PostgreSQL)`, `build release` et `SDK TypeScript` — plus les trois contrôles des crates publiées (§ ci-dessus), à garder verts eux aussi (bloquants dès leur ajout au ruleset).
+4. La CI doit être **verte sur les huit contrôles** : `fmt + clippy`, `cargo-deny (licences + advisories)`, `tests (avec PostgreSQL)`, `build release`, `SDK TypeScript` et les trois contrôles des crates publiées (§ ci-dessus : MSRV, semver, rustdoc + package).
 
 ## Revue & fusion — `main` est protégée
 
 La branche `main` est verrouillée par un *ruleset* GitHub (voir [ADR-0027](docs/adr/0027-politique-contribution-verrouillage-branche.md)). Concrètement :
 
 - **aucun push direct** sur `main` : tout passe par une Pull Request ;
-- **CI verte obligatoire** (les cinq contrôles ci-dessus) et **branche à jour** avec `main` (un rebase peut être nécessaire avant fusion) ;
+- **CI verte obligatoire** (les huit contrôles ci-dessus) et **branche à jour** avec `main` (un rebase peut être nécessaire avant fusion) ;
 - **conversations résolues** avant fusion ;
 - **historique linéaire** : fusion en **squash** ou **rebase** (pas de *merge commit*) ;
 - force-push et suppression de `main` interdits ; la règle s'applique **sans exception**, mainteneur compris.

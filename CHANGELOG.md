@@ -6,6 +6,22 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### Ajouté
+
+- **`carbonfr-core` et `carbonfr-eligibility` publiées sur crates.io**
+  (0.9.1, 2026-09-24) — première publication, manuelle, depuis le tag
+  `v0.9.1` ; documentation sur docs.rs. Section « En Rust » dans le README.
+
+### CI
+
+- **Workflow `release-crates.yml`** : sur un tag `vX.Y.Z`, publie les deux
+  crates par *Trusted Publishing* (OIDC via `rust-lang/crates-io-auth-action`,
+  aucun jeton stocké), après le garde-fou tag = version du workspace et une
+  répétition `cargo publish --dry-run`. Prérequis : déclarer le trusted
+  publisher sur crates.io pour chaque crate (en tête du workflow).
+
 ## [0.9.1] - 2026-09-24
 
 Version de la **première publication crates.io** de `carbonfr-core` et

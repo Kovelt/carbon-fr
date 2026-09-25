@@ -153,3 +153,58 @@ Le principe « critiquable par les deux camps » est transformé ici en **procé
 ## Suite
 
 Sous réserve de ratification et de la levée des points ouverts (licences + GATE de neutralité), préparation d'un brief d'implémentation Claude Code : modèle `source × méthodologie × périmètre × millésime`, schéma `/cost-reference`, agrégat de dispersion, note explicative neutre, étiquetage estimation. **Tant que le GATE de neutralité n'est pas intégralement au vert, l'implémentation ne démarre pas.**
+
+---
+
+## Addendum (2026-09-25) — Cadence de revue, prochaine échéance et versionnement des mises à jour
+
+**Objet.** Cet ADR (§2, §5) ancre chaque estimation à un `source × technologie × périmètre × millésime` mais ne fixait **aucune cadence** de revue de ces millésimes — un point resté ouvert, listé dans [`docs/plan-iterations.md` §I7](../plan-iterations.md). Itération **décisionnelle** (aucune ligne de code) : cet addendum fixe la cadence, la prochaine date et la règle de versionnement. Il ne touche ni le GATE ni son verdict (`0024-revue-neutralite.md`, non modifié).
+
+### État constaté — millésimes actuellement servis (`crates/core/src/domain/cost.rs`, lu le 2026-09-25)
+
+| Source | Technologie(s) | Millésime servi | Ligne(s) |
+|---|---|---|---|
+| Cour des comptes | Nucléaire existant | **2021** | `cost.rs:411` |
+| RTE | Nucléaire nouveau | **2021** | `cost.rs:427` |
+| ADEME | Solaire PV, éolien terrestre, éolien mer, hydraulique, biomasse | **2024** | `cost.rs:443,458,473,488,503` |
+| CRE | Nucléaire existant (2ᵉ source) | **2023** | `cost.rs:528` |
+| IRENA | Les 5 renouvelables (2ᵉ source) | **2024** | `cost.rs:539,550,561,575,586` |
+
+### Recherche — prochaines éditions (consultée le 2026-09-25)
+
+| Source | Cadence observée | Dernière édition **déjà publiée** | Prochaine édition |
+|---|---|---|---|
+| **IRENA** — *Renewable Power Generation Costs* | **Annuelle, chaque juillet** (édition « in 2024 » parue juillet 2025 ; c'est celle actuellement ré-encodée) | ⚠️ **« Renewable Power Generation Costs in 2025 »**, parue **juillet 2026** — [PDF IRENA](https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2026/Jul/IRENA_TEC_RPGC_2025_Executive_summary_2026.pdf), pas encore ré-encodée | « in 2026 », attendue juillet 2027 |
+| **CRE** — coût complet du nucléaire existant | **Légale depuis la LF 2025** (fin de l'ARENH au 31/12/2025) : publication **« au moins tous les trois ans »** | ⚠️ Évaluation **2026-2028**, publiée **30/09/2025**, coût retenu 60,3 €₂₀₂₆/MWh (≈61,5 €courants/MWh) — [communiqué CRE](https://www.cre.fr/actualites/toute-lactualite/la-commission-de-regulation-de-lenergie-publie-son-evaluation-des-couts-complets-de-production-de-lelectricite-au-moyen-des-centrales-electronucleaires-historiques-pour-la-periode-2026-2028.html), pas encore ré-encodée | Prochaine échéance légale : au plus tard 2028 |
+| **RTE** — *Futurs énergétiques 2050* | Pas annuelle — grande réactualisation ponctuelle (~5 ans après l'édition 2021) | Travaux de réactualisation lancés début 2025 ; consultation publique 03/04–15/05/2026 ([synthèse RTE](https://assets.rte-france.com/prod/public/2026-04/RTE-Reactualisation-FE-2050-consultation-publique-2026-synthese.pdf)) | Résultats attendus **fin 2026** (date précise non publiée) |
+| **ADEME** — *Coûts des EnR&R en France* | ~Tous les 2-3 ans depuis 2016 (éditions ≈2016, ≈2019, 2022, 2025) | 4ᵉ édition (« Évolution … entre 2012 et 2022 »), publiée **30/01/2025** — [CIBE, copie du rapport ADEME](https://cibe.fr/documents/2025-01-30-ademe-evolution-cout-energies-renouvelables-et-recuperation-entre-2012-2022-rapport-final/) | ~2027 (aucune date officielle annoncée) |
+| **Cour des comptes** — coûts du nucléaire | Irrégulière, aucune cadence légale identifiée (éditions 2012, 2014, 2018, **2021**) | Dernière édition = celle déjà servie (**« L'analyse des coûts du système électrique en France »**, publiée **13/12/2021** — [PDF Cour des comptes](https://www.ccomptes.fr/sites/default/files/2022-01/20211213-S2021-2052-analyse-couts-systeme-production-electrique-France-rep-MTE.pdf)) ; aucune édition plus récente trouvée au 2026-09-25 | Aucune date annoncée |
+
+**Constat central : le déclencheur « nouvelle édition » est déjà actif pour 2 des 5 sources** (IRENA, CRE) sans qu'aucune revue n'ait encore eu lieu pour les traiter.
+
+### Décision 1 — Cadence de revue : double déclenchement
+
+1. **Calendaire** : une revue au moins une fois par an.
+2. **Événementiel, prioritaire sur le calendaire** : dès qu'une des 5 sources retenues (§5) publie une nouvelle édition, la revue est **due immédiatement** — sans attendre l'échéance annuelle suivante. C'est le cas ci-dessus décrit.
+
+### Décision 2 — Prochaine revue : **2026-12-15**
+
+Choisie pour traiter en une seule passe les deux déclencheurs événementiels déjà actifs (IRENA « in 2025 », CRE 2026-2028) et pour tomber après la fenêtre où RTE annonce ses résultats (« fin 2026 ») — si RTE publie à temps, sa mise à jour est incluse dans la même revue ; sinon, elle déclenche sa **propre** revue dès sa parution (Décision 1, point 2), indépendamment de cette date. ADEME et Cour des comptes n'ont pas de nouvelle édition connue à ce jour : pas de déclencheur événementiel pour elles, elles sont simplement vérifiées à cette même échéance. **La revue suivante après celle-ci a lieu 12 mois après la date où elle est effectivement menée** (cadence glissante, pas une date calendaire fixe d'une année sur l'autre), sauf déclenchement événementiel anticipé par une nouvelle édition d'une source.
+
+### Décision 3 — Règle de versionnement d'une mise à jour
+
+- Une mise à jour de source **ajoute une nouvelle entrée** `CostReferenceKey` avec un **nouveau `vintage`** ; elle ne mute **jamais** en place les chiffres d'une entrée déjà servie — même logique que le reste de la donnée carbon-fr (millésime porté par la donnée, ADR-0006), appliquée ici à un catalogue constant plutôt qu'à une table Postgres.
+- **Jamais de mutation silencieuse** : toute mise à jour de valeur passe par une PR dédiée qui cite la nouvelle source (URL + date de consultation), le nouveau millésime, et référence le nouveau re-jeu du GATE (point suivant). Un bump de millésime **est** une « modification de source » au sens de la règle déjà posée par cet ADR (§ GATE, « Enregistrement ») et par `0024-revue-neutralite.md` — cette règle n'était pas ambiguë, cet addendum la rappelle explicitement pour le cas récurrent « cadence », pas seulement pour un changement structurel (ajout/retrait de source).
+- **Re-jeu du GATE de neutralité obligatoire** (`0024-revue-neutralite.md`, non modifié par cet addendum) dès que la présentation change : nouvelles valeurs, nouveau millésime, nouvelle source, formulation du disclaimer ou de l'agrégation. Le re-jeu est numéroté à la suite des re-jeux n°3/n°4 existants (`0024-revue-neutralite.md`). **Chaque nouvelle édition d'une source doit aussi revérifier sa licence** (une nouvelle édition peut changer ses conditions de réutilisation par rapport au vetting du 2026-06-20, §5/§licences) avant tout ré-encodage.
+- Une entrée dont la source cesse de publier une nouvelle édition **n'est pas retirée** du catalogue tant qu'elle reste la meilleure donnée disponible ; elle est seulement signalée comme datée si son millésime dépasse significativement les autres (`COST_REFERENCE_DISCLAIMER`, déjà chargé de signaler l'hétérogénéité des millésimes).
+
+---
+
+> ### Points à confirmer par Morgan
+>
+> 1. **Date du 2026-12-15** proposée pour la prochaine revue : elle tombe pendant l'itération I7/I8 (sqlx 0.9, autres addenda) — à recaler si la charge réelle ne le permet pas. Recommandation : la garder, car elle rattrape déjà 2 sources en retard (IRENA, CRE) plutôt que de laisser le retard grossir.
+> 2. **Ancrage « cadence glissante » (12 mois après la dernière revue effective)** plutôt qu'une date calendaire fixe (ex. 20 juin, anniversaire du GATE) : recommandation = garder le glissant, plus robuste si une revue est décalée, mais c'est un choix de gouvernance discutable.
+> 3. **Portée du re-jeu à chaque bump de millésime** : cet addendum exige le GATE complet (4 blocs, tests adverses des deux bords) à **toute** mise à jour de valeur, y compris un simple bump sans changement de structure — cohérent avec la règle déjà écrite dans l'ADR, mais c'est une charge de gouvernance réelle (déjà notée en « Coûts / charges » de cet ADR). Une alternative plus légère (rejouer seulement Blocs 1+3 si la structure et la licence de la source n'ont pas changé) a été **écartée** ici par prudence — à trancher explicitement si la charge s'avère trop lourde en pratique.
+> 4. **Écart de millésime ADEME** (catalogue : `vintage: 2024` ; édition la plus proche identifiée par cette recherche publiée le 30/01/2025) : peut être un simple effet du délai de publication habituel « fin d'année → janvier suivant » (comme pour le TRV, ADR-0023 addendum 2026-09-23) et non une erreur — **hors périmètre décisionnel de cet addendum** (aucun code touché ici), remonté pour que la revue du 2026-12-15 le vérifie sur pièce.
+>
+> Recherche best-effort (WebSearch/WebFetch, sources primaires citées ci-dessus), **pas un avis juridique ni une garantie d'exhaustivité** — dans le même esprit que le vetting licences du 2026-06-20 (§5).

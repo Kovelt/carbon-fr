@@ -127,11 +127,11 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 **Objectif** : solder la montée la plus risquée (toute la persistance), puis trancher les chantiers de fond laissés ouverts par les ADR.
 
 - [ ] **`sqlx` 0.8 → 0.9** (PR isolée) : d'après le CHANGELOG de `sqlx`, les requêtes construites dynamiquement doivent passer par `AssertSqlSafe` (≥ 4 appels `sqlx::query(&sql)` et 5 `QueryBuilder` dans `adapter-postgres`) ; suite d'intégration Postgres complète **en PG17** ; `cargo tree -d` : doublons `webpki-roots`/`hashbrown`/`rand` réduits.
-- [ ] **Partitionnement de `measurement`** (ADR-0004 : « à reconsidérer maintenant que l'historique est ingéré ») : mesurer d'abord (taille, `EXPLAIN ANALYZE` des requêtes `/date` et `/stats` sur de larges intervalles), puis trancher dans un addendum ; si oui, migration testée sur une copie de prod avec fenêtre de maintenance.
-- [ ] **Facteurs ADEME** : l'ADR-0008 promettait la Base Empreinte V23.6 sous le nom `acv-ademe@2`, mais ce numéro a servi à la vue consommation (ADR-0010). Addendum ADR-0008 : calendrier d'un **`acv-ademe@3`** (nouvelle table de facteurs + revalidation des backtests). Effort estimé important : décider ici, implémenter plus tard.
-- [ ] **Cadence de revue LCOE** (ADR-0024 : aucune fréquence fixée ; millésimes 2021–2024) : addendum avec la date de la prochaine revue.
-- [ ] **Critère de déclenchement d'un `acv-ademe` régional** (ADR-0010 : « dérivation sur dérivation » reportée) : addendum.
-- [ ] **Types du SDK TS générés depuis l'OpenAPI** : décider (outiller ou écarter explicitement, avec justification) ; même question pour publier la doc rustdoc des crates non publiées.
+- [x] **Partitionnement de `measurement`** (mesuré en prod le 2026-09-25 : 148 Mo, `/date` ≤ 8,5 ms, `/stats` 10 ans 45 ms → **non retenu**, seuils de déclenchement dans l'addendum ADR-0004) (ADR-0004 : « à reconsidérer maintenant que l'historique est ingéré ») : mesurer d'abord (taille, `EXPLAIN ANALYZE` des requêtes `/date` et `/stats` sur de larges intervalles), puis trancher dans un addendum ; si oui, migration testée sur une copie de prod avec fenêtre de maintenance.
+- [x] **Facteurs ADEME** (addendum ADR-0008 : nom `acv-ademe@3` acté, déclencheurs et travaux listés, 3 points à confirmer) : l'ADR-0008 promettait la Base Empreinte V23.6 sous le nom `acv-ademe@2`, mais ce numéro a servi à la vue consommation (ADR-0010). Addendum ADR-0008 : calendrier d'un **`acv-ademe@3`** (nouvelle table de facteurs + revalidation des backtests). Effort estimé important : décider ici, implémenter plus tard.
+- [x] **Cadence de revue LCOE** (addendum ADR-0024 : revue annuelle + à chaque nouvelle édition d'une source ; prochaine le **2026-12-15**) (ADR-0024 : aucune fréquence fixée ; millésimes 2021–2024) : addendum avec la date de la prochaine revue.
+- [x] **Critère de déclenchement d'un `acv-ademe` régional** (addendum ADR-0010) (ADR-0010 : « dérivation sur dérivation » reportée) : addendum.
+- [x] **Types du SDK TS générés depuis l'OpenAPI** (ADR-0032 : génération écartée pour la v1, test de parité TS recommandé ; doc des crates internes non publiée, déclencheur Phase B) : décider (outiller ou écarter explicitement, avec justification) ; même question pour publier la doc rustdoc des crates non publiées.
 
 **Sortie** : `sqlx` 0.9 en prod ; 4 addenda mergés (ADR-0004, 0008, 0010, 0024) ; décision codegen actée.
 
@@ -181,6 +181,7 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 | **Fin 2026** | Proposition RED IV annoncée | Veille (quota RFNBO 42 %, ouverture au bas-carbone) |
 | **1er février 2027** (habituellement annuel) | Nouveau barème TRVE / accise (délibération CRE de janvier) | Nouveau millésime TRV, addendum ADR-0023 |
 | **1er août** (habituellement annuel) | Revalorisation du TURPE | Millésime TRV de mi-année |
+| **2026-12-15**, puis annuellement | Revue des sources LCOE de `/v1/cost-reference` (addendum ADR-0024) | Nouveau millésime porté par la donnée si une source a changé ; GATE de neutralité si la présentation change |
 | Tous les ~6 mois | Nouvel instantané European Hydrogen Observatory (dernier : Dec2025, toujours le plus récent au 2026-09-23) | Vérifier puis rafraîchir `/hydrogene` (ADR-0029) |
 | Annuel (à fixer en I7) | Sources LCOE | Revue des millésimes (ADR-0024) |
 | **01/07/2028** | Évaluation contraignante du nucléaire (art. 3 du 2025/2359) | Revoir le caveat nucléaire (`legal_basis`/`disclaimer`) |
@@ -195,6 +196,10 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 | **H5** — branche EUA ; **H7** — bascule horaire | Flux de prix EUA utile à un autre usage (H5) ; 2030-01-01 ou texte révisé (H7) |
 | **H6 v2** — sites ADEME `hyd01-sites` sur la carte | Réponse écrite de cdo@ademe.fr sur la licence (**demande à envoyer**) |
 | `UsageMeter` persistant | Premier consommateur commercial qui sature le quota (addendum ADR-0015) |
+| Partitionnement de `measurement` | L'un des seuils de l'addendum ADR-0004 (taille, volume, latence p95, rythme de croissance) franchi |
+| `acv-ademe@3` (facteurs Base Empreinte à jour) | Déclencheurs de l'addendum ADR-0008 (nouvelle édition exploitable, licence confirmée) |
+| `acv-ademe@2` régional (vue consommation) | Critère de l'addendum ADR-0010 (flux inter-régionaux publiés et exploitables) |
+| Test de parité du SDK TS contre l'OpenAPI | Recommandé par l'ADR-0032, à faire dans une PR de code |
 | Délivrance de clés en libre-service (e-mail, lien magique, rotation, `/v1/keys`) | Besoin réel de clés hors opérateur |
 | Site statique o2switch | Décision produit de Morgan (ou clore l'item de l'ADR-0007) |
 | Servir `gbdt@1` / `share-meteo@2` | Nouveau backtest qui franchit la GATE (ADR-0012 / ADR-0028) |

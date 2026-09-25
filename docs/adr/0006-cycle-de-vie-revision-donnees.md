@@ -36,3 +36,7 @@ Conséquence : notre stockage **n'est pas purement append-only**. Une même `(r�
 ## Addendum (2026-06-20) — rollups en tables incrémentales
 
 Le point 5 est conservé dans son intention (toute révision touchant une période agrégée recalcule les rollups concernés), mais l'implémentation est passée des **vues matérialisées** (migration `0002`) à des **tables de rollup incrémentales** rafraîchies par seau (migration `0010`). L'invariant fonctionnel est inchangé. L'index `BRIN` évoqué en Conséquences a été livré le 2026-08-15 (migration `0012`) — cf. addendum ADR-0004 ; seul le partitionnement reste reporté.
+
+## Addendum (2026-09-25) — partitionnement de `measurement` (ADR-0004) : renvoi
+
+Le partitionnement déclaratif de `measurement`, reconsidéré dans l'itération I7 du plan, **n'est pas retenu pour l'instant** — mesures, seuils de déclenchement et procédure de ré-évaluation dans l'addendum du 2026-09-25 de l'[ADR-0004](0004-stockage-postgresql-natif.md). Point de vigilance pour le jour où il sera adopté : le partitionnement par plage temporelle **ne remet pas en cause** l'upsert conditionnel au millésime (décision 3 ci-dessus). La clé de partition serait `at`, qui est **immuable** pour une ligne donnée : une révision `tr → consolidated → definitive` ne change que l'intensité, le millésime et le mix, jamais `at`. L'upsert d'une révision cible donc **structurellement** la même partition que la ligne d'origine, quel que soit le délai de révision (définitive en A+1 comprise) — aucun upsert inter-partitions n'est possible.

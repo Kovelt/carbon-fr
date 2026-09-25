@@ -167,3 +167,152 @@ Un **nouveau port sortant** `CrossBorderSource` (flux par frontière **+** inten
 - **Taux de pertes T&D** : instantané (si donnée disponible) *vs* constante documentée versionnée.
 - **Forme du store d'import** : table dédiée *vs* extension du modèle de mesure existant.
 - **Cold-start ENTSO-E** : backfill historique des intensités voisines, requis pour entraîner la prévision `acv-ademe` (cohérence avec la phase 3).
+
+## Addendum (2026-09-25) — Critère de déclenchement du régional *consumption-based*
+
+### Contexte
+
+Le §8 a reporté l'extension géographique d'`acv-ademe@2` *consumption-based* aux 12
+régions, la qualifiant de « dérivation sur dérivation » : contrairement au
+national, l'intensité régionale n'est déjà elle-même qu'une valeur **dérivée**
+par modèle (`acv-ademe@1`, ADR-0008 — pas de `taux_co2` régional publié,
+addendum ADR-0003). Au 2026-09-25, `acv-ademe@2` reste **national uniquement**
+et `acv-ademe@1` (basé production) est la seule méthode ACV servie au régional —
+confirmé par le catalogue `/v1/methodologies` (`crates/sdk/tests/fixtures/methodologies.json:1` :
+`acv-ademe@1` → `"scope":"national + 12 régions"`, `acv-ademe@2` →
+`"scope":"national"`). L'itération I7 (`docs/plan-iterations.md`, ligne I7,
+« Critère de déclenchement d'un `acv-ademe` régional ») demande un critère
+explicite et vérifiable. Cet addendum le fixe ; il ne change **rien** à ce qui
+est servi aujourd'hui.
+
+### Fait vérifié : la donnée bilatérale manque aujourd'hui
+
+Un régional *consumption-based* demanderait, par analogie avec le national
+(§5 : port `CrossBorderSource`, value object `CrossBorderFlow` — flux **signé
+par voisin nommé** + intensité de ce voisin, `crates/core/src/domain/cross_border.rs:57-66`),
+un flux **bilatéral** entre chaque région française et chacune de ses régions
+limitrophes (+ l'étranger), et pas seulement un solde agrégé. Cette donnée
+**n'existe dans aucune source actuellement branchée ou recensée** :
+
+1. **ODRÉ `eco2mix-regional-tr`** ne publie qu'un solde net agrégé,
+   `ech_physiques`, sans détail par région voisine. Confirmé par la
+   documentation du jeu (« the balance of physical exchanges with neighboring
+   regions », <https://odre.opendatasoft.com/explore/dataset/eco2mix-regional-tr/>,
+   consulté le 2026-09-25) et par le code déjà en place : `RegionalRecord`
+   (`crates/adapter-odre/src/dto.rs:159-169`) ne décode qu'**un seul** champ
+   `ech_physiques: Option<f64>` (ligne 168), mappé tel quel sur
+   `GenerationMix.echanges` (ligne 195) — un scalaire, jamais une liste par
+   voisin.
+2. La page RTE dédiée à ce jeu (« Eco2mix – Consumption, Generation and
+   Inter-Regional Flows », <https://www.rte-france.com/en/data-publications/eco2mix/regional-data>,
+   consulté le 2026-09-25) confirme la même granularité : « the balance of
+   power flows between regions » — un solde par région, pas une matrice
+   région↔région.
+3. L'API dédiée de RTE aux flux physiques (« Physical Flow »,
+   `data.rte-france.com`) est **explicitement limitée aux frontières
+   internationales** : « expose physical cross-border schedules detailing
+   electricity flows actually transiting across the interconnection lines
+   directly linking countries » (<https://data.rte-france.com/catalog/-/api/doc/user-guide/Physical+Flow/1.0>,
+   consulté le 2026-09-25) — le même périmètre que l'adapter ENTSO-E déjà
+   branché (§5), pas les régions françaises.
+4. En interne, `GET /v1/exchanges` (ADR-0017) — le seul endpoint qui expose
+   aujourd'hui un détail **par voisin nommé** plutôt qu'un solde — est
+   explicitement borné aux « 6 frontières de la France » ; une éventuelle
+   extension **internationale** (matrice pays↔pays) y est déjà traitée comme
+   un chantier distinct non entamé, et une matrice **inter-régionale
+   française** n'y est même pas évoquée (`docs/adr/0017-endpoint-echanges-transfrontaliers.md:27`).
+
+Recherche faite par **documentation** (pages ODRÉ/RTE + code du dépôt), sans
+appel à l'API ODRÉ/RTE/ENTSO-E (contrainte de session, cf. CLAUDE.md carbon-fr
+§« À NE PAS faire »).
+
+### Décision : critère de déclenchement
+
+Rouvrir un `acv-ademe` régional *consumption-based* seulement si les **quatre
+conditions** suivantes sont réunies :
+
+1. **Donnée disponible** — RTE ou ODRÉ (ou une source tierce fiable, cohérente
+   avec la contrainte de souveraineté FR/EU) publie un flux **bilatéral nommé**
+   région↔région (et région↔international) analogue à `CrossBorderFlow` (§5),
+   et pas seulement le solde `ech_physiques` actuel. Vérification : reproduire
+   cette même recherche documentaire (catalogue ODRÉ + `data.rte-france.com/catalog`)
+   — jamais par appel API — lors d'une revue de veille datée, ou dès qu'une
+   annonce RTE la mentionne.
+2. **Précision atteignable** — le flux, une fois trouvé, est publié à un pas
+   compatible avec le mix régional existant et couvre les **12 régions sans
+   trou** (sinon la méthode ne pourrait pas tenir la promesse de périmètre
+   qu'elle afficherait dans `/v1/methodologies`).
+3. **Cohérence vérifiable** — la somme des flux bilatéraux d'une région avec
+   ses voisines + l'international doit pouvoir se recouper avec son solde
+   `ech_physiques` publié : la méthode doit rester **auditable**, pas une boîte
+   noire (même exigence de vérifiabilité que le levier §7 pour le national).
+4. **Demande utilisateur documentée** — un besoin produit concret (comme la
+   carte du dashboard qui a motivé `GET /v1/exchanges`, ADR-0017) plutôt
+   qu'une extension spéculative ; à défaut, le chantier reste dans la table
+   « En attente d'un déclencheur » de `docs/plan-iterations.md`, non priorisé.
+
+### Ce qui serait requis si le critère se déclenche
+
+- **Domaine** : un voisinage **régional français** distinct de `Neighbor`
+  (`crates/core/src/domain/cross_border.rs`, aujourd'hui 6 pays fixes,
+  périmètre **national**) — probablement un nouveau type plutôt qu'une
+  extension de cet enum, pour ne pas mélanger les deux échelles.
+- **Ingestion** : un nouveau port sortant (ou une extension du port ODRÉ) — à
+  **recompter le quota avant tout branchement** : le poller régional consomme
+  déjà **~80 %** du quota ODRÉ de 50 000 appels/mois avec le seul `acv-ademe@1`
+  (addendum ADR-0003, 2026-09-23) ; une ingestion bilatérale par région
+  rapprocherait la marge de zéro, voire la dépasserait selon la source retenue.
+- **Gouvernance** : le précédent posé par l'ADR-0008 (extension du national au
+  régional pour `acv-ademe@1`, **même version**, simple addendum du
+  2026-06-20 — pas de bump pour une extension de **périmètre géographique** à
+  formule inchangée) suggère qu'étendre `acv-ademe@2` au régional ne
+  nécessiterait **pas** forcément une nouvelle version (`@3`) si la formule et
+  les facteurs restent identiques — mais **au minimum un addendum** à cet ADR
+  (un ADR dédié si le modèle de voisinage régional diverge substantiellement
+  du national, p. ex. gestion des régions frontalières multi-pays) ; jamais
+  une modification silencieuse (gouvernance ADR-0005).
+- **Backtest** : revalider la plausibilité de la méthode au régional (comme
+  §5/§ État d'implémentation l'a fait au national contre l'API ENTSO-E live le
+  2026-06-16) avant de servir, en particulier pour les régions cumulant import
+  inter-régional **et** international (ex. Grand Est, Hauts-de-France,
+  Nouvelle-Aquitaine).
+
+### Pourquoi le régional actuel reste correct entre-temps
+
+`acv-ademe@1` **basé production** continue d'être servi et reste une méthode
+**correcte et documentée** pour son périmètre déclaré :
+
+- C'est une méthode **acceptée et versionnée à part entière** (ADR-0008), pas
+  un pis-aller informel : elle répond à une promesse de périmètre (national
+  **+ régional**, ADR-0003) que `rte-direct` ne peut pas tenir faute de
+  `taux_co2` régional publié.
+- Sa limite est **documentée, pas cachée** : « Basée production : pour une
+  région importatrice, reflète la production locale, pas la conso (imports =
+  `acv-ademe@2`) » (`CLAUDE.md:67`) ; le catalogue `GET /v1/methodologies`
+  (§7) expose le `scope` exact par version, donc un client sait précisément
+  ce qu'il lit.
+- Le national sert **les deux** versions (`acv-ademe@1` *et* `acv-ademe@2`,
+  `crates/sdk/tests/fixtures/methodologies.json:1`), ce qui donne un repère de
+  l'écart production/consommation qu'un client peut appliquer avec prudence au
+  régional en attendant.
+- Gouvernance ADR-0005 : une méthode publiée ne se modifie jamais
+  silencieusement — le statu quo régional n'est donc pas une improvisation à
+  corriger en urgence, c'est l'état stable attendu tant que le critère
+  ci-dessus n'est pas rempli.
+
+> **Points à confirmer par Morgan** (aucune urgence — le régional actuel reste
+> correct, cf. ci-dessus) :
+> 1. **Veille RTE/ODRÉ** — ajouter ce critère à une revue périodique (comme la
+>    veille hydrogène mensuelle, `docs/plan-iterations.md` §Échéances) ou le
+>    laisser purement réactif (revérifié seulement si Morgan tombe sur une
+>    annonce) ? *Recommandation : réactif* — le quota est déjà tendu (~80 %,
+>    ADR-0003) et rien n'indique un chantier RTE en cours sur une matrice
+>    inter-régionale ; une veille dédiée ajouterait du travail récurrent pour
+>    un signal qui n'est pas attendu à court terme.
+> 2. **Versionnement** — si la donnée apparaît un jour, confirmer le choix
+>    « même version `@2`, addendum » (précédent ADR-0008) plutôt qu'une
+>    version régionale dédiée (`acv-ademe-regional@1` ou similaire) ?
+>    *Recommandation : suivre le précédent ADR-0008* (formule et facteurs
+>    inchangés, seul le périmètre géographique s'étend) — cohérent avec la
+>    gouvernance ADR-0005/ADR-0019 (versionner un **changement de méthode**,
+>    pas une extension de couverture).

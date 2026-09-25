@@ -1,7 +1,7 @@
 # Plan de la suite — itérations I0 → I7 (à partir du 2026-09-23)
 
 - **Statut** : document vivant — cocher les cases au fil des PR, dater chaque révision en tête.
-- **Dernière mise à jour** : 2026-09-25 (I0–I5 livrées : `carbonfr-core`/`carbonfr-eligibility` sur crates.io, publiées automatiquement à chaque tag `v*` ; I6 : `carbonfr-sdk` 0.1.0 publié, 0.1.1 corrective en attente du trusted publisher ; prochaine : I7 ; I1 : reste la notification Uptime Kuma).
+- **Dernière mise à jour** : 2026-09-25 — **I0 à I7 livrées** (v0.9.3 : `sqlx` 0.9, décisions I7 ; `carbonfr-core`/`carbonfr-eligibility`/`carbonfr-sdk` sur crates.io, publiés automatiquement). Restent : actions hors code de Morgan (Uptime Kuma, issues #76/#81, licence ADEME, équipe `Kovelt/maintainers`), échéances datées et chantiers « en attente d'un déclencheur ». Note : l'I7 visait v0.10.0, mais sans rupture d'API des crates publiées, la version est un *patch* (0.9.3, ADR-0030).
 - **Sources** : état des lieux multi-agents du 2026-09-23 (constats revérifiés contre le code), recherche en 4 volets (préparation crates.io, backlog consolidé des ADR/roadmaps, montées majeures des dépendances, échéances datées), 3 plans concurrents (« fiabilité d'abord », « adoption d'abord », « valeur métier d'abord ») départagés par un juge. Base retenue : **valeur métier d'abord**, avec les greffes des deux autres.
 - **Horizon** : 13 à 17 semaines selon les itérations, soit vers mi-janvier 2027 au rythme d'un mainteneur seul assisté de Claude Code. Les durées sont des ordres de grandeur, pas des engagements.
 - **Liens** : feuille de route produit dans le [README](../README.md#feuille-de-route), [roadmap hydrogène](roadmap-hydrogene.md), [index des ADR](adr/README.md), [CHANGELOG](../CHANGELOG.md).
@@ -133,7 +133,7 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 - [x] **Critère de déclenchement d'un `acv-ademe` régional** (addendum ADR-0010) (ADR-0010 : « dérivation sur dérivation » reportée) : addendum.
 - [x] **Types du SDK TS générés depuis l'OpenAPI** (ADR-0032 : génération écartée pour la v1, test de parité TS recommandé ; doc des crates internes non publiée, déclencheur Phase B) : décider (outiller ou écarter explicitement, avec justification) ; même question pour publier la doc rustdoc des crates non publiées.
 
-**Sortie** : `sqlx` 0.9 en prod ; 4 addenda mergés (ADR-0004, 0008, 0010, 0024) ; décision codegen actée.
+**Sortie** : `sqlx` 0.9 en prod ; 4 addenda mergés (ADR-0004, 0008, 0010, 0024) ; décision codegen actée. → atteinte avec la v0.9.3.
 
 ---
 

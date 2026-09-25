@@ -8,6 +8,22 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Documentation
+
+- Plan à jour : alertes e-mail Uptime Kuma actives (canal par défaut sur les
+  sondes `/health` et fraîcheur), Trusted Publishing validé sur les trois
+  crates, suppression automatique des branches active, issues de veille #76
+  et #81 fermées.
+- Section `[0.9.5]` ci-dessous : ses notes étaient restées sous
+  « Non publié » au moment du tag `v0.9.5` (rectifié ici).
+
+## [0.9.5] - 2026-09-25
+
+Collecte fiabilisée après le diagnostic de la panne ODRÉ d'août : fenêtre
+glissante de 3 h à chaque cycle et auto-réparation quotidienne sur 7 jours.
+Aucune migration, aucun changement de `/v1` ; `carbonfr-core` gagne un cas
+d'usage (`IngestRecent`, ajout compatible) et est republiée en 0.9.5.
+
 ### Corrigé
 
 - **Fenêtre glissante d'ingestion (`IngestRecent`)** : le poller n'ingérait

@@ -11,6 +11,7 @@ members = [
     "crates/adapter-entsoe",
     "crates/adapter-webhook",
     "crates/adapter-gbdt",
+    "crates/sdk",
     "bin/server",
 ]
 

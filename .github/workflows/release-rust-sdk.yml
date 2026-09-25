@@ -1,0 +1,81 @@
+name: Publier le SDK Rust (crates.io)
+
+# Publie carbonfr-sdk sur crates.io quand un tag `rust-sdk-v*` est poussé
+# (ADR-0031 décision 12) — axe de version PROPRE au SDK Rust, découplé de la
+# version du workspace (tag `vX.Y.Z`, publie carbonfr-core/carbonfr-eligibility
+# via release-crates.yml) et du tag `sdk-v*` du SDK TypeScript (release-sdk.yml).
+# Cf. addendum ADR-0019 (5ᵉ axe de versionnement).
+#
+# Authentification = Trusted Publishing (OIDC), même modèle que
+# release-crates.yml : AUCUN jeton stocké. `rust-lang/crates-io-auth-action`
+# échange l'identité OIDC de ce workflow (id-token: write) contre un jeton
+# crates.io de courte durée, révoqué par son post-step en fin de job.
+#
+# ⚠️ Prérequis Trusted Publishing (une fois, côté crates.io) — déclaré
+# SEULEMENT APRÈS la toute première publication de carbonfr-sdk : le Trusted
+# Publishing de crates.io ne peut être configuré que sur une crate DÉJÀ
+# publiée (même contrainte que core/eligibility en I5). La toute première
+# publication de carbonfr-sdk se fait donc à la main, avec un jeton crates.io
+# ponctuel révoqué aussitôt (procédure identique à
+# `docs/plan-iterations.md` I5, adaptée à `-p carbonfr-sdk`) — CE WORKFLOW
+# échouera à l'étape d'authentification tant que cette première publication
+# manuelle et la déclaration ci-dessous n'ont pas eu lieu, c'est attendu.
+# Une fois la crate publiée au moins une fois :
+#   Page de la crate carbonfr-sdk → Settings → Trusted Publishing → Add → GitHub :
+#     - Repository owner  : Kovelt
+#     - Repository name   : carbon-fr
+#     - Workflow filename : release-rust-sdk.yml
+#     - Environment       : (laisser vide)
+#
+# Une version publiée est immuable : en cas de problème, publier une version
+# suivante ; `cargo yank` seulement dans les cas de l'ADR-0030 §8 (même
+# politique, étendue à `carbonfr-sdk`).
+
+on:
+  push:
+    tags:
+      - "rust-sdk-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publier carbonfr-sdk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # OIDC : trusted publishing crates.io
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Garde-fou : le tag doit être la version de crates/sdk/Cargo.toml —
+      # axe de version PROPRE au SDK (ADR-0031 décision 12), distinct de la
+      # version du workspace vérifiée par release-crates.yml/release.yml.
+      - name: Vérifier que le tag == version de crates/sdk/Cargo.toml
+        run: |
+          PKG_VERSION="$(grep -m1 '^version' crates/sdk/Cargo.toml | sed -E 's/^version *= *"(.*)".*/\1/')"
+          TAG_VERSION="${GITHUB_REF_NAME#rust-sdk-v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME (=$TAG_VERSION) ≠ version crates/sdk/Cargo.toml ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      # Répétition à blanc d'abord (ADR-0030 §8, même prudence pour le SDK) :
+      # empaquetage + vérification, sans jeton ni upload. Features par défaut
+      # uniquement (comme un `cargo add carbonfr-sdk` sans `--features`) :
+      # la feature `stream` reste optionnelle, cf. `cargo package` en CI
+      # (`ci.yml`, job « rustdoc + package »).
+      - name: Répétition (cargo publish --dry-run)
+        run: cargo publish --dry-run --locked -p carbonfr-sdk
+
+      - name: Jeton crates.io de courte durée (OIDC)
+        id: auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
+      - name: Publication
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --locked -p carbonfr-sdk

@@ -66,7 +66,7 @@ const now = await cf.intensityNow();
 console.log(now.intensity.value, now.intensity.unit); // 20 gCO2eq/kWh
 ```
 
-🦀 **En Rust** — le cœur métier est publié sur crates.io (bibliothèques pures, sans IO : calculs d'intensité, méthodologies, prévision, éligibilité électrolyseur) : [`carbonfr-core`](https://crates.io/crates/carbonfr-core) ([docs.rs](https://docs.rs/carbonfr-core)) et [`carbonfr-eligibility`](https://crates.io/crates/carbonfr-eligibility) ([docs.rs](https://docs.rs/carbonfr-eligibility)), MSRV 1.88, politique de publication dans l'[ADR-0030](docs/adr/0030-politique-publication-crates-io.md). Un client HTTP Rust (`carbonfr-sdk`, [ADR-0031](docs/adr/0031-conception-sdk-rust.md)) est à venir.
+🦀 **En Rust** — le cœur métier est publié sur crates.io (bibliothèques pures, sans IO : calculs d'intensité, méthodologies, prévision, éligibilité électrolyseur) : [`carbonfr-core`](https://crates.io/crates/carbonfr-core) ([docs.rs](https://docs.rs/carbonfr-core)) et [`carbonfr-eligibility`](https://crates.io/crates/carbonfr-eligibility) ([docs.rs](https://docs.rs/carbonfr-eligibility)), MSRV 1.88, politique de publication dans l'[ADR-0030](docs/adr/0030-politique-publication-crates-io.md). Un client HTTP Rust typé et asynchrone, avec flux SSE ([`carbonfr-sdk`](crates/sdk/), [ADR-0031](docs/adr/0031-conception-sdk-rust.md)) est en développement (itération I6) : **pas encore publié**, il sera disponible sur crates.io au tag `rust-sdk-v0.1.0`.
 
 ```bash
 cargo add carbonfr-core
@@ -146,7 +146,8 @@ carbon-fr/
 │   ├── adapter-meteo/          # ✅ impl WeatherForecastSource (Open-Meteo)
 │   ├── adapter-entsoe/         # ✅ impl CrossBorderSource + SpotPriceSource (ENTSO-E)
 │   ├── adapter-webhook/        # ✅ impl Notifier (livraison signée, anti-SSRF)
-│   └── adapter-gbdt/           # ✅ impl ForecastModel ML (GBDT, exploré — non servi)
+│   ├── adapter-gbdt/           # ✅ impl ForecastModel ML (GBDT, exploré — non servi)
+│   └── sdk/                    # 🚧 carbonfr-sdk : client HTTP Rust (hors hexagone, ne dépend pas de core), pas encore publié
 ├── bin/
 │   └── server/                 # ✅ composition root : adapters + poller
 ├── bruno/                      # collection Bruno (requêtes .bru versionnées)

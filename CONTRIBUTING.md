@@ -33,12 +33,16 @@ Si une contribution fait fuiter de l'infrastructure dans le domaine, elle sera r
 - Unité canonique : **gCO₂eq/kWh**. L'horodatage est porté explicitement par chaque mesure.
 - **Méthodologie carbone** : c'est un attribut **versionné** porté par chaque mesure (voir ADR-0005). On ne modifie **jamais** silencieusement une méthode publiée ; toute nouvelle méthode = nouvelle version + nouvel ADR.
 
-## Crates publiées (`carbonfr-core`, `carbonfr-eligibility`)
+## Crates publiées / publiables (`carbonfr-core`, `carbonfr-eligibility`, `carbonfr-sdk`)
 
-Ces deux crates — et elles seules, les autres membres du workspace restent
-`publish = false` — sont préparées pour crates.io ([ADR-0030](docs/adr/0030-politique-publication-crates-io.md)).
-Toute contribution qui les touche doit respecter ces règles supplémentaires,
-vérifiées en CI :
+Ces trois crates — et elles seules, les autres membres du workspace restent
+`publish = false` — sont préparées pour crates.io ([ADR-0030](docs/adr/0030-politique-publication-crates-io.md),
+[ADR-0031](docs/adr/0031-conception-sdk-rust.md)). `carbonfr-core` et
+`carbonfr-eligibility` y sont publiées depuis I5 ; `carbonfr-sdk` (depuis I6)
+ne l'est **pas encore** — sa 1ʳᵉ publication se fera au tag `rust-sdk-v0.1.0`
+(axe de version propre, addendum ADR-0019) — mais suit déjà les mêmes règles
+de contribution. Toute contribution qui les touche doit respecter ces règles
+supplémentaires, vérifiées en CI :
 
 - **MSRV `1.88.0`** (`rust-version` du workspace) : plancher imposé par une
   dépendance directe (`time`), pas par l'édition 2024. Ne la relever qu'en
@@ -58,16 +62,19 @@ vérifiées en CI :
   sinon : l'outil « assume minor » tant que la version n'a pas bougé.
 
 Trois jobs CI dédiés (`.github/workflows/ci.yml`), à garder verts avant toute
-fusion touchant ces deux crates :
+fusion touchant ces trois crates :
 
 | Job (`name:`) | Vérifie |
 |---|---|
-| `MSRV (Rust 1.88)` | `cargo check` sur les deux crates, toolchain épinglée `1.88.0` (pas `stable`) |
-| `semver (crates publiables)` | `cargo-semver-checks` contre le dernier tag `v*` (ADR-0030 §4) |
-| `rustdoc + package (crates publiables)` | `cargo doc -D warnings` (liens morts) puis empaquetage croisé des deux crates (`cargo package`, aucun upload) |
+| `MSRV (Rust 1.88)` | `cargo check` sur les trois crates (`--all-features` pour `carbonfr-sdk`, sans effet sur core/eligibility qui n'ont aucune feature), toolchain épinglée `1.88.0` (pas `stable`) |
+| `semver (crates publiables)` | `cargo-semver-checks` contre le dernier tag `v*` (ADR-0030 §4) — **`carbonfr-sdk` pas encore couvert** : aucun tag `rust-sdk-v*` avant sa 1ʳᵉ publication (ADR-0031 décision 12), à ajouter ensuite (TODO daté dans `ci.yml`) |
+| `rustdoc + package (crates publiables)` | `cargo doc -D warnings` (liens morts) puis empaquetage (`cargo package`, aucun upload) sur les trois crates, `carbonfr-sdk` avec `--all-features` en doc |
 
 Ces trois checks sont **requis** par le *ruleset* de `main` depuis le
 2026-09-24 (procédure : [`docs/brief-claude-code-ruleset-main.md`](docs/brief-claude-code-ruleset-main.md)).
+Le job `tests (avec PostgreSQL)` compile aussi les `examples/` de
+`carbonfr-sdk` (`cargo build -p carbonfr-sdk --examples --all-features`,
+depuis I6) — pas de job requis supplémentaire pour ça.
 
 ## Processus de contribution
 

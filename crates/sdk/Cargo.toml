@@ -1,0 +1,93 @@
+[package]
+name = "carbonfr-sdk"
+# Axe de version PROPRE (pas `version.workspace = true`) : le SDK suit le
+# contrat d'API `/v1`, pas la version du serveur (ADR-0019 5e axe, ADR-0031
+# décision 12). Tag de release : `rust-sdk-v*`.
+version = "0.1.0"
+# Anglais : audience crates.io/docs.rs internationale, comme core/eligibility
+# (ADR-0030 §7).
+description = "Async Rust client for the carbon-fr API — real-time and historical carbon intensity of French electricity."
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation = "https://docs.rs/carbonfr-sdk"
+readme = "README.md"
+rust-version.workspace = true
+# ≤ 5, minuscules, ≤ 20 caractères (règles crates.io, ADR-0030 §7).
+keywords = ["carbon-intensity", "electricity", "france", "sdk", "client"]
+# Taxonomie crates.io vérifiée via `GET /api/v1/categories` (comme
+# core/eligibility, ADR-0030 §7) : "api-bindings" convient à un client HTTP
+# d'API tierce, en plus de "science" (déjà retenu par core/eligibility).
+categories = ["api-bindings", "science"]
+
+[dependencies]
+# `json` (désérialisation des réponses), `query` (paramètres de requête),
+# `rustls-no-provider` : le SDK ne dépend JAMAIS du provider crypto par défaut
+# du processus (ADR-0031 décision 3) — il construit et passe son propre
+# `rustls::ClientConfig` (provider `ring` explicite) via
+# `ClientBuilder::tls_backend_preconfigured`, à l'opposé du bootstrap process-
+# wide de `bin/server`/des adapters (`install_default()`). `gzip` hérité du
+# workspace, sans effet ici mais sans coût à le garder aligné.
+reqwest = { workspace = true }
+rustls = { workspace = true }
+# Vérificateur de certificats du magasin système (pas de `webpki-roots`
+# embarqué) : sur Linux, `rustls-native-certs` (dépendance transitive, aucun
+# provider crypto propre — le nôtre, `ring`, lui est passé explicitement via
+# `Verifier::new`, jamais `CryptoProvider::get_default()`). Version fixée par
+# le Cargo.lock déjà résolu pour `carbonfr-adapter-entsoe` (même 0.7.0).
+rustls-platform-verifier = "0.7.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+# `serde-well-known` (⇒ `serde` + `formatting` + `parsing`) : donne
+# `time::serde::rfc3339`, utilisé sur les champs `OffsetDateTime` typés des
+# DTO de réponse (ADR-0031 décision 5 : horodatages typés, contrairement au
+# `String` RFC 3339 manuel de `crates/adapter-http/src/dto.rs`).
+time = { workspace = true, features = ["serde-well-known"] }
+thiserror = { workspace = true }
+# Validation de l'URL de base à la construction du client (schéma http(s),
+# URL exploitable comme base) et résolution des chemins de requête — même
+# analyseur WHATWG que `reqwest` (déjà dans l'arbre).
+url = { workspace = true }
+
+# --- Feature `stream` (SSE, ADR-0031 décision 7/9) uniquement -------------
+# Analyseur SSE posé sur `Response::bytes_stream()` (dépendances normales
+# `futures-core`/`nom`/`pin-project-lite`, `reqwest` seulement en dev-dep :
+# aucun couplage à une version majeure de `reqwest`, vérifié dans l'ADR).
+eventsource-stream = { version = "0.2.3", optional = true }
+futures-core = { version = "0.3", default-features = false, optional = true }
+futures-util = { workspace = true, features = ["std"], optional = true }
+# Strict nécessaire pour le délai de lecture entre messages et le backoff de
+# reconnexion (`tokio::time::sleep`/`Sleep::reset`) — le SDK est async-only
+# sur tokio (ADR-0031 décision 4), donc pas une dépendance ajoutée « en plus » :
+# `reqwest` tire déjà tokio en transitif pour son propre runtime, on ne fait
+# ici que la déclarer explicitement pour l'usage direct qu'on en fait.
+tokio = { workspace = true, features = ["time"], optional = true }
+
+[features]
+default = []
+stream = [
+    "dep:eventsource-stream",
+    "dep:futures-core",
+    "dep:futures-util",
+    "dep:tokio",
+    "reqwest/stream",
+]
+
+[dev-dependencies]
+# Serveur HTTP local pour les tests hermétiques (patron `adapter-webhook`,
+# `crates/adapter-webhook/src/lib.rs`) — jamais dans le binaire publié.
+axum = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net"] }
+
+# --- Exemples exécutables (ADR-0031 décision 11) --------------------------
+# `intensity_now`, `mix_region`, `api_error` : découverts automatiquement
+# (pas de dépendance de feature). `stream` a besoin de la feature Cargo
+# `stream` (`futures_util::StreamExt`) — sans `required-features`,
+# `cargo build --examples` (sans `--all-features`) échouerait à le compiler ;
+# avec, il est simplement ignoré (`error: target … requires the features`
+# devient un skip propre, pas un échec).
+[[example]]
+name = "stream"
+path = "examples/stream.rs"
+required-features = ["stream"]

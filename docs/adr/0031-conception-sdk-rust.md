@@ -157,16 +157,13 @@ aujourd'hui. Le SDK TS ne se reconnecte d'ailleurs pas automatiquement (`client.
 
 ---
 
-> **Points à confirmer par Morgan** (choix sans réponse objectivement meilleure, ou dépendant d'une décision produit distincte)
+> **Points tranchés par Morgan le 2026-09-25** (au lancement de l'itération I6, sur recommandation) :
 >
-> 1. **Contrat exposé par le flux** : type nommé concret (ex. `pub struct IntensityStream`, plus explicite pour docs.rs et plus
->    stable comme engagement SemVer) ou `impl Stream<Item = Result<Evenement, Erreur>>` opaque (plus simple, évolution interne libre)
->    ?
-> 2. **Timeout par défaut** : le SDK TS n'en a aucun (`CarbonFrOptions`, `client.ts:38-45`) — ajouter un timeout Rust par défaut
->    (hors parité stricte) ou reproduire l'absence à l'identique ?
-> 3. **Mode bloquant** : rester strictement async-only en 0.1 (décision 4) ou l'ouvrir dès maintenant pour des consommateurs
->    hors-tokio (scripts, CLI) ?
-> 4. **`eventsource-stream` vs `sse-stream`** (0.3.0, publiée le 2026-09-18, activement maintenue mais popularité tirée surtout par
->    l'écosystème MCP/`rmcp`) : valider `eventsource-stream` comme choix par défaut malgré son âge (décision 7), avec `sse-stream`
->    documentée comme repli ?
-
+> 1. **Contrat du flux** : type nommé **`IntensityStream`** (implémente `futures_core::Stream<Item = Result<…, CarbonFrError>>`),
+>    plus lisible sur docs.rs et plus stable comme engagement SemVer qu'un `impl Stream` opaque.
+> 2. **Timeout par défaut : 30 s par requête REST** (configurable, désactivable), écart assumé à la parité stricte avec le SDK TS
+>    (qui n'en a aucun). Le flux SSE n'a **pas** de timeout total — il durerait 30 s — mais un délai de connexion et un délai de
+>    lecture entre deux messages.
+> 3. **Async uniquement en 0.1** (décision 4 confirmée) ; un mode bloquant reste ajoutable sans rupture.
+> 4. **`eventsource-stream`** retenu (décision 7 confirmée), `sse-stream` documenté comme repli s'il était un jour classé
+>    non maintenu par RustSec.

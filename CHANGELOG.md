@@ -6,6 +6,33 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### Ajouté
+
+- **SDK Rust `carbonfr-sdk` 0.1.0** (`crates/sdk`, itération I6,
+  [ADR-0031](docs/adr/0031-conception-sdk-rust.md)) — client asynchrone de
+  l'API, en **parité avec les 26 opérations** du SDK TypeScript 0.2.0 :
+  25 méthodes REST et le flux temps réel `intensity_stream` (feature `stream`,
+  type `IntensityStream`, reconnexion automatique, délai de lecture de 45 s
+  calé sur le keep-alive serveur, sans reprise d'événements perdus). Timeout
+  REST de 30 s par défaut, erreurs typées RFC 9457 (`CarbonFrError`,
+  `#[non_exhaustive]`), crypto `ring` passée explicitement sans toucher au
+  provider par défaut du process de l'application, clé API jamais affichée
+  (`Debug` masqué, test dédié). Écrit à la main ; chaque méthode est testée
+  contre un serveur local avec des réponses réelles capturées sur la prod, et
+  un test de parité échoue si une opération de l'OpenAPI n'est pas couverte.
+  4 exemples exécutables. **Pas encore publié** : tag `rust-sdk-v0.1.0` après
+  la première publication manuelle.
+
+### CI
+
+- Les checks MSRV et « rustdoc + package » couvrent aussi `carbonfr-sdk`
+  (noms de jobs inchangés) ; compilation des exemples ; `cargo-deny` vérifie
+  désormais toutes les features. Nouveau workflow `release-rust-sdk.yml`
+  (tags `rust-sdk-v*`, Trusted Publishing une fois la première publication
+  faite).
+
 ## [0.9.2] - 2026-09-24
 
 Montée **`reqwest` 0.12 → 0.13** (itération I5, dernier item) et premier essai

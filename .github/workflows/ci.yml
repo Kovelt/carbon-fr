@@ -208,6 +208,13 @@ jobs:
           package: carbonfr-core,carbonfr-eligibility
           baseline-rev: ${{ steps.baseline.outputs.rev }}
 
+      # L'étape précédente laisse sa copie de référence (checkout du dernier tag
+      # v*) dans ./semver-checks ; depuis v0.9.3, elle contient aussi
+      # crates/sdk, que cargo-semver-checks trouverait alors en double
+      # (« failed to retrieve local crate data … defined in: » deux Cargo.toml).
+      - name: Nettoyer la copie de référence de l'étape précédente
+        run: rm -rf semver-checks
+
       # carbonfr-sdk : axe de version propre (crates/sdk/Cargo.toml), tags
       # `rust-sdk-v*` (ADR-0031 décision 12) ; toutes les features, pour
       # couvrir aussi `IntensityStream` (feature `stream`).

@@ -45,6 +45,7 @@
 //! | `CARBONFR_BACKFILL_FROM`     | `2012-01-01T00:00:00Z` | début du backfill (RFC 3339) |
 //! | `CARBONFR_BACKFILL_TO`       | maintenant     | fin du backfill (RFC 3339)        |
 //! | `CARBONFR_BACKFILL_WINDOW_DAYS` | `90`        | largeur de tranche d'export       |
+//! | `CARBONFR_BACKFILL_SOURCE`   | `consolidated` | jeu exporté : `consolidated` (consolidé/définitif) ou `realtime` (temps réel, pour un trou récent pas encore consolidé) |
 //! | `CARBONFR_BACKTEST_FROM`/`_TO` | 30 derniers jours | fenêtre de test (RFC 3339)   |
 //! | `CARBONFR_BACKTEST_REGION`   | `national`     | région évaluée (slug)             |
 //! | `CARBONFR_BACKTEST_METHODOLOGY` | `rte-direct` | méthodologie évaluée             |
@@ -90,7 +91,7 @@ use carbonfr_adapter_http::{
     StreamState, key_fingerprint, router,
 };
 use carbonfr_adapter_meteo::OpenMeteoClient;
-use carbonfr_adapter_odre::OdreClient;
+use carbonfr_adapter_odre::{ArchiveSource, OdreClient};
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_adapter_webhook::HttpNotifier;
 use carbonfr_core::application::{
@@ -540,12 +541,15 @@ async fn run_backfill() -> anyhow::Result<()> {
     let database_url =
         std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
     let repo = connect_repo(&database_url).await?;
-    let archive = OdreClient::new().context("initialisation du client ODRÉ")?;
+    let source = backfill_source()?;
+    let archive = OdreClient::new()
+        .context("initialisation du client ODRÉ")?
+        .with_archive_source(source);
 
     let (range, window) = backfill_params()?;
     let backfill = BackfillHistory::new(archive.clone(), repo.clone(), window);
 
-    info!(from = %range.start(), to = %range.end(), window_days = window.whole_days(), "backfill historique national démarré");
+    info!(from = %range.start(), to = %range.end(), window_days = window.whole_days(), source = ?source, "backfill historique national démarré");
     let report = backfill
         .execute(range)
         .await
@@ -1911,6 +1915,23 @@ fn parse_webhook_purge_days(raw: Option<&str>) -> anyhow::Result<u32> {
     Ok(days)
 }
 
+/// Jeu exporté par le backfill (`CARBONFR_BACKFILL_SOURCE`) : consolidé par
+/// défaut ; `realtime` pour combler un trou récent que RTE n'a pas encore
+/// consolidé (ses mesures `tr` seront remplacées par un backfill ultérieur).
+fn backfill_source() -> anyhow::Result<ArchiveSource> {
+    parse_backfill_source(std::env::var("CARBONFR_BACKFILL_SOURCE").ok().as_deref())
+}
+
+fn parse_backfill_source(value: Option<&str>) -> anyhow::Result<ArchiveSource> {
+    match value.map(str::trim) {
+        None | Some("") | Some("consolidated") => Ok(ArchiveSource::Consolidated),
+        Some("realtime") => Ok(ArchiveSource::Realtime),
+        Some(other) => anyhow::bail!(
+            "CARBONFR_BACKFILL_SOURCE : « {other} » invalide (attendu : consolidated ou realtime)"
+        ),
+    }
+}
+
 /// Résout l'intervalle et la largeur de tranche du backfill depuis l'environnement.
 fn backfill_params() -> anyhow::Result<(TimeRange, Duration)> {
     let default_start = Date::from_calendar_date(2012, Month::January, 1)
@@ -2291,9 +2312,31 @@ fn init_tracing() {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn backfill_source_defaults_to_consolidated() {
+        assert_eq!(
+            parse_backfill_source(None).unwrap(),
+            ArchiveSource::Consolidated
+        );
+        assert_eq!(
+            parse_backfill_source(Some("")).unwrap(),
+            ArchiveSource::Consolidated
+        );
+        assert_eq!(
+            parse_backfill_source(Some("consolidated")).unwrap(),
+            ArchiveSource::Consolidated
+        );
+        assert_eq!(
+            parse_backfill_source(Some("realtime")).unwrap(),
+            ArchiveSource::Realtime
+        );
+        assert!(parse_backfill_source(Some("tr")).is_err());
+    }
+
     use super::{
-        parse_poll_secs, parse_webhook_max_failures, parse_webhook_purge_days, revocation_target,
-        spawn_webhook_watcher,
+        ArchiveSource, parse_backfill_source, parse_poll_secs, parse_webhook_max_failures,
+        parse_webhook_purge_days, revocation_target, spawn_webhook_watcher,
     };
 
     /// Le watcher enregistre l'issue de chaque livraison avec le seuil configuré

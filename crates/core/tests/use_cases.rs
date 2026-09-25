@@ -11,7 +11,7 @@ use time::{Duration, OffsetDateTime};
 
 use carbonfr_core::application::{
     BackfillHistory, BacktestConsumptionForecast, FindGreenestWindow, GetCurrentIntensity,
-    GetIntensityHistory, GetIntensityStats, IngestLatest,
+    GetIntensityHistory, GetIntensityStats, IngestLatest, IngestRecent,
 };
 use carbonfr_core::domain::{
     CarbonIntensity, ForecastPoint, GenerationMix, Granularity, IntensityStats, Measurement,
@@ -338,6 +338,277 @@ async fn upsert_respects_vintage_quality() {
             .intensity
             .value(),
         40.0
+    );
+}
+
+/// Source *fake* pour [`IngestRecent`] : `range()` rend un résultat préconfiguré
+/// (mesures ou erreur), et trace si elle a été appelée — pour prouver qu'une
+/// fenêtre vide/négative court-circuite l'appel réseau (ADR-0003 addendum).
+struct RangeFakeSource {
+    measurements: Vec<Measurement>,
+    fail: bool,
+    called: Arc<std::sync::atomic::AtomicBool>,
+    /// Dernière plage demandée à la source (preuve du calcul de fenêtre).
+    received: Arc<std::sync::Mutex<Option<TimeRange>>>,
+}
+
+impl RangeFakeSource {
+    fn ok(measurements: Vec<Measurement>) -> Self {
+        Self {
+            measurements,
+            fail: false,
+            called: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            received: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    fn erroring() -> Self {
+        Self {
+            measurements: Vec::new(),
+            fail: true,
+            called: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            received: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Sonde partagée : à lire *après* que la source a (ou non) été consommée
+    /// par le cas d'usage sous test.
+    fn call_flag(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        self.called.clone()
+    }
+}
+
+#[async_trait]
+impl Eco2mixSource for RangeFakeSource {
+    async fn latest(&self, _region: Region) -> Result<Measurement, SourceError> {
+        unimplemented!("IngestRecent n'appelle jamais latest()")
+    }
+
+    async fn range(
+        &self,
+        _region: Region,
+        range: TimeRange,
+    ) -> Result<Vec<Measurement>, SourceError> {
+        self.called.store(true, std::sync::atomic::Ordering::SeqCst);
+        *self.received.lock().expect("verrou de test") = Some(range);
+        if self.fail {
+            Err(SourceError::Unavailable("source en panne (test)".into()))
+        } else {
+            Ok(self.measurements.clone())
+        }
+    }
+}
+
+#[tokio::test]
+async fn ingest_recent_upserts_all_measurements_and_returns_the_latest() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let repo = InMemoryRepo::default();
+    let source = RangeFakeSource::ok(vec![
+        measurement(t0, Region::National, 40.0, Vintage::Tr),
+        measurement(
+            t0 + Duration::minutes(15),
+            Region::National,
+            42.0,
+            Vintage::Tr,
+        ),
+        measurement(
+            t0 + Duration::minutes(30),
+            Region::National,
+            38.0,
+            Vintage::Tr,
+        ),
+    ]);
+
+    let ingest = IngestRecent::new(source, repo.clone(), Duration::hours(3));
+    let report = ingest
+        .execute(Region::National, t0 + Duration::hours(1))
+        .await
+        .unwrap();
+
+    assert_eq!(report.written, 3);
+    let latest = report.latest.expect("mesure la plus récente présente");
+    assert_eq!(latest.at, t0 + Duration::minutes(30));
+    assert_eq!(latest.intensity.value(), 38.0);
+
+    // Les trois points sont bien en base (pas seulement le dernier).
+    let range = TimeRange::new(t0, t0 + Duration::hours(1)).unwrap();
+    let stored = repo
+        .range(Region::National, "rte-direct", range)
+        .await
+        .unwrap();
+    assert_eq!(stored.len(), 3);
+}
+
+#[tokio::test]
+async fn ingest_recent_fills_a_gap_left_by_a_previous_latest_only_cycle() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let repo = InMemoryRepo::default();
+
+    // Cycle précédent : seul t0 avait été ingéré (comportement d'IngestLatest).
+    repo.upsert_many(&[measurement(t0, Region::National, 40.0, Vintage::Tr)])
+        .await
+        .unwrap();
+    let t1 = t0 + Duration::minutes(15);
+    let before = repo
+        .range(
+            Region::National,
+            "rte-direct",
+            TimeRange::new(t0, t1 + Duration::minutes(1)).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(before.len(), 1, "t1 pas encore ingéré (trou)");
+
+    // Ce cycle : ODRÉ a publié en retard — la fenêtre glissante voit t0 ET t1.
+    let source = RangeFakeSource::ok(vec![
+        measurement(t0, Region::National, 40.0, Vintage::Tr),
+        measurement(t1, Region::National, 41.0, Vintage::Tr),
+    ]);
+    let ingest = IngestRecent::new(source, repo.clone(), Duration::hours(3));
+    let report = ingest
+        .execute(Region::National, t1 + Duration::minutes(1))
+        .await
+        .unwrap();
+    assert!(report.written > 0);
+    assert_eq!(report.latest.unwrap().at, t1);
+
+    let after = repo
+        .range(
+            Region::National,
+            "rte-direct",
+            TimeRange::new(t0, t1 + Duration::minutes(1)).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(after.len(), 2, "le trou (t1) est comblé");
+}
+
+#[tokio::test]
+async fn ingest_recent_empty_window_is_not_an_error() {
+    let repo = InMemoryRepo::default();
+    // La source ne renvoie rien : retard de publication ODRÉ supérieur à la
+    // largeur de la fenêtre.
+    let source = RangeFakeSource::ok(Vec::new());
+    let ingest = IngestRecent::new(source, repo, Duration::hours(3));
+
+    let report = ingest
+        .execute(Region::National, OffsetDateTime::UNIX_EPOCH)
+        .await
+        .expect("une fenêtre vide n'est pas une erreur");
+    assert_eq!(report.written, 0);
+    assert!(report.latest.is_none());
+}
+
+#[tokio::test]
+async fn ingest_recent_requests_exactly_the_window_ending_now() {
+    // Le cœur du correctif : la plage demandée à la source est `[now − fenêtre, now)`
+    // (un signe inversé passerait sinon inaperçu, la fake ignorant la plage).
+    let repo = InMemoryRepo::default();
+    let source = RangeFakeSource::ok(Vec::new());
+    let received = source.received.clone();
+    let now = OffsetDateTime::UNIX_EPOCH + Duration::days(10);
+    let ingest = IngestRecent::new(source, repo, Duration::hours(3));
+
+    ingest
+        .execute(Region::National, now)
+        .await
+        .expect("fenêtre vide acceptée");
+    let expected = TimeRange::new(now - Duration::hours(3), now).expect("plage valide");
+    assert_eq!(*received.lock().expect("verrou de test"), Some(expected));
+}
+
+#[tokio::test]
+async fn ingest_recent_non_positive_window_short_circuits_without_calling_the_source() {
+    let repo = InMemoryRepo::default();
+    let source = RangeFakeSource::erroring();
+    let called = source.call_flag();
+    let ingest = IngestRecent::new(source, repo, Duration::ZERO);
+
+    let report = ingest
+        .execute(Region::National, OffsetDateTime::UNIX_EPOCH)
+        .await
+        .expect("fenêtre nulle : bilan vide, pas d'erreur");
+    assert_eq!(report.written, 0);
+    assert!(report.latest.is_none());
+    assert!(
+        !called.load(std::sync::atomic::Ordering::SeqCst),
+        "la source n'est jamais interrogée pour une fenêtre non positive"
+    );
+}
+
+#[tokio::test]
+async fn ingest_recent_propagates_source_error() {
+    let repo = InMemoryRepo::default();
+    let source = RangeFakeSource::erroring();
+    let ingest = IngestRecent::new(source, repo, Duration::hours(3));
+
+    let err = ingest
+        .execute(Region::National, OffsetDateTime::UNIX_EPOCH)
+        .await
+        .expect_err("l'erreur de la source doit remonter");
+    assert!(matches!(
+        err,
+        carbonfr_core::application::ApplicationError::Source(_)
+    ));
+}
+
+#[tokio::test]
+async fn ingest_recent_derives_acv_ademe_only_for_measurements_without_one() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let repo = InMemoryRepo::default();
+    let mix = GenerationMix {
+        nucleaire: 38815.0,
+        gaz: 666.0,
+        charbon: 0.0,
+        fioul: 34.0,
+        hydraulique: 8893.0,
+        eolien: 2555.0,
+        solaire: 1050.0,
+        bioenergies: 1006.0,
+        pompage: -76.0,
+        echanges: -11574.0,
+        thermique: None,
+    };
+    // Une mesure `rte-direct` (à dériver) et une mesure déjà `acv-ademe` (à ne
+    // PAS re-dériver), dans la même fenêtre.
+    let rte = Measurement {
+        at: t0,
+        region: Region::National,
+        intensity: CarbonIntensity::new(15.0).unwrap(),
+        methodology: Methodology::rte_direct(),
+        vintage: Vintage::Tr,
+        mix: Some(mix),
+    };
+    let already_acv = Measurement {
+        at: t0 + Duration::minutes(15),
+        region: Region::National,
+        intensity: CarbonIntensity::new(20.0).unwrap(),
+        methodology: Methodology::acv_ademe(),
+        vintage: Vintage::Tr,
+        mix: Some(mix),
+    };
+    let source = RangeFakeSource::ok(vec![rte, already_acv]);
+    let ingest = IngestRecent::new(source, repo.clone(), Duration::hours(3));
+
+    let report = ingest
+        .execute(Region::National, t0 + Duration::hours(1))
+        .await
+        .unwrap();
+    // 2 mesures source + 1 seule dérivée (celle qui n'était pas déjà acv-ademe).
+    assert_eq!(report.written, 3);
+
+    let acv_series = repo
+        .range(
+            Region::National,
+            "acv-ademe",
+            TimeRange::new(t0, t0 + Duration::hours(1)).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        acv_series.len(),
+        2,
+        "la dérivée de rte-direct + la mesure déjà acv-ademe"
     );
 }
 

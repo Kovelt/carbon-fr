@@ -26,7 +26,7 @@ API d'intensité carbone de l'électricité française (gCO₂eq/kWh), souverain
 ## À NE PAS faire
 
 - Mettre `serde` / `sqlx` / `axum` dans `core`.
-- Faire taper RTE directement à chaque requête utilisateur : un **poller unique** (singleton) alimente la base, l'API sert depuis la base (~1 350 appels ODRÉ/jour avec le régional ≈ 80 % du quota de 50 000/mois — **marge fine**, ne pas densifier le poll sans recompter).
+- Faire taper RTE directement à chaque requête utilisateur : un **poller unique** (singleton) alimente la base, l'API sert depuis la base (~1 350 appels ODRÉ/jour avec le régional ≈ 80 % du quota de 50 000/mois — **marge fine**, ne pas densifier le poll sans recompter). Depuis l'ADR-0003 addendum 2026-09-25, le poller ingère par cycle une **fenêtre glissante** (`IngestRecent`, `CARBONFR_POLL_WINDOW_HOURS`, défaut 3 h) plutôt que le seul dernier point (`IngestLatest`, conservé pour compat SemVer mais plus appelé) — un appel `range()` par zone et par cycle comme avant, **même budget de quota** ; plus une **auto-réparation quotidienne** (`CARBONFR_SELF_HEAL_DAYS`, défaut 7) = 1 export de masse du jeu temps réel par jour (+1 appel/jour). Quota ODRÉ = 50 000 appels/mois **par jeu** (en-têtes `x-ratelimit-dataset-*`).
 - **Backfiller l'historique via l'API paginée** : utiliser l'**export en masse** d'ODRÉ (un téléchargement), sinon on brûle le quota.
 - Traiter la donnée comme **append-only** : elle est révisée → upsert conditionnel au millésime (ADR-0006).
 - **Exposer l'API sans préfixe de version** : tout endpoint public est sous `/v1` (l'URL est un contrat — ADR-0007).

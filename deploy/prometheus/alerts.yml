@@ -36,3 +36,17 @@ groups:
         annotations:
           summary: "Erreurs d'ingestion carbon-fr fréquentes"
           description: "Plus de 10 échecs d'ingestion sur les 15 dernières minutes."
+
+      # Donnée figée : la dernière mesure nationale connue vieillit alors que le
+      # poller peut « réussir » (même point réécrit) ou échouer en boucle (source
+      # ODRÉ en panne). ODRÉ publie avec ~30 min de retard → alerte au-delà de 2 h.
+      # Panne du 2026-08-25 au 2026-09-03 : donnée âgée de 207 h, sans que
+      # personne ne soit prévenu (aucun routage de notification).
+      - alert: CarbonfrDataStale
+        expr: time() - carbonfr_poller_last_measurement_timestamp_seconds > 7200
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Donnée carbon-fr figée (dernière mesure nationale de plus de 2 h)"
+          description: "La source ODRÉ ne publie plus, ou la collecte ne récupère plus rien de neuf : l'API sert une donnée de plus de 2 h."

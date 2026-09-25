@@ -43,6 +43,7 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0029](0029-carte-electrolyseurs-carbone-live.md) | Carte « électrolyseurs × carbone live » (couche B-light : page auto-contenue `/hydrogene`, sources EHO/IGN/Natural Earth, licences vérifiées) | Accepté |
 | [0030](0030-politique-publication-crates-io.md) | Politique de publication crates.io : `carbonfr-core` + `carbonfr-eligibility` (versions couplées au workspace, `#[non_exhaustive]` enum par enum, MSRV 1.88, 1re publication manuelle puis Trusted Publishing) — amende ADR-0019 | Accepté |
 | [0031](0031-conception-sdk-rust.md) | Conception du SDK Rust `carbonfr-sdk` (écriture manuelle + test de parité OpenAPI, `reqwest` 0.13 + `ring`, SSE `eventsource-stream`, axe `rust-sdk-v*`) | Accepté |
+| [0032](0032-generation-types-sdk-et-doc.md) | Types du SDK TypeScript : pas de génération depuis l'OpenAPI, test de parité à la place ; doc rustdoc des crates internes non publiée (déclencheur : Phase B) | Accepté |
 
 ## Gabarit
 

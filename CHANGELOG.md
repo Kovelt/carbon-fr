@@ -37,6 +37,19 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   (tags `rust-sdk-v*`, Trusted Publishing une fois la première publication
   faite).
 
+### Documentation
+
+- **Décisions de l'itération I7** (sans code) : **partitionnement** de
+  `measurement` mesuré en prod (148 Mo, `/date` ≤ 8,5 ms, `/stats` sur 10 ans
+  45 ms) et **non retenu**, avec des seuils de déclenchement (addendum
+  ADR-0004, renvoi ADR-0006) ; nom **`acv-ademe@3`** acté pour de futurs
+  facteurs Base Empreinte (addendum ADR-0008) ; critère pour rouvrir une vue
+  consommation **régionale** (addendum ADR-0010) ; **cadence de revue LCOE**,
+  prochaine le 2026-12-15 (addendum ADR-0024) ; nouvel
+  [ADR-0032](docs/adr/0032-generation-types-sdk-et-doc.md) : pas de génération
+  des types du SDK TS (test de parité recommandé), pas de publication de la doc
+  des crates internes pour l'instant.
+
 ## [0.9.2] - 2026-09-24
 
 Montée **`reqwest` 0.12 → 0.13** (itération I5, dernier item) et premier essai

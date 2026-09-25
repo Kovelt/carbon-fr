@@ -30,6 +30,12 @@ changement de `/v1` ; `carbonfr-core`/`carbonfr-eligibility` inchangées
   reconstruites. Reste le trou du 25 août au 1er septembre, comblé par cette
   version via `CARBONFR_BACKFILL_SOURCE=realtime`.
 
+### CI
+
+- Job « semver (crates publiables) » : la copie de référence laissée par la
+  vérification de `core`/`eligibility` est supprimée avant celle du SDK
+  (depuis v0.9.3, elle contient `crates/sdk`, trouvé en double → échec).
+
 ### Documentation
 
 - `deploy/README.md` §5 : procédure de rattrapage d'un trou de données.

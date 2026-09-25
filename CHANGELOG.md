@@ -6,6 +6,34 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [0.9.4] - 2026-09-25
+
+Rattrapage des trous de l'historique national. Aucune migration, aucun
+changement de `/v1` ; `carbonfr-core`/`carbonfr-eligibility` inchangées
+(republiées en 0.9.4 par le workflow).
+
+### Ajouté
+
+- **`CARBONFR_BACKFILL_SOURCE`** (`consolidated` par défaut, ou `realtime`) :
+  la sous-commande `backfill` peut exporter le jeu **temps réel** d'ODRÉ
+  (`eco2mix-national-tr`) pour combler un trou récent que RTE n'a pas encore
+  consolidé (~3 mois de retard). Même export de masse, même upsert
+  conditionnel au millésime : les valeurs `tr` seront remplacées par les
+  consolidées lors d'un rattrapage ultérieur. Client ODRÉ :
+  `OdreClient::with_archive_source(ArchiveSource)`.
+
+### Données
+
+- **Trou du 1er février au 15 juin 2026 comblé en production** (2026-09-25)
+  depuis le jeu consolidé : 150 jours, 7 196 mesures consolidées (+ leur
+  `acv-ademe` dérivé), conso et météo archivée de la période, séries agrégées
+  reconstruites. Reste le trou du 25 août au 1er septembre, comblé par cette
+  version via `CARBONFR_BACKFILL_SOURCE=realtime`.
+
+### Documentation
+
+- `deploy/README.md` §5 : procédure de rattrapage d'un trou de données.
+
 ## [0.9.3] - 2026-09-25
 
 Clôture des itérations I6 et I7 du [plan](docs/plan-iterations.md) : **SDK

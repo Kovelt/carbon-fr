@@ -127,3 +127,31 @@ Deux couches complémentaires, **à relier à un canal de notification** (sans l
 
 **Mesures du test** (~536 000 mesures, dump SQL de 128 Mo) : téléchargement de l'archive ~4 min, restauration **5 s**, sans aucune erreur ; **RPO = 24 h** (dump quotidien), **RTO ≈ 5 min** pour la base, hors redéploiement. **Refaire le test une fois par trimestre** : une sauvegarde jamais restaurée n'est pas une sauvegarde (celles de l'instance Kovelt ont échoué en silence du 2026-06-21 au 2026-09-23 ; le script alerte désormais aussi en cas d'échec).
 
+## 5. Rattraper un trou de données
+
+Un trou dans l'historique (panne de la collecte, retard d'un import) se comble par la
+sous-commande `backfill`, qui télécharge l'**export de masse** d'ODRÉ par tranches (jamais
+l'API paginée, qui consommerait le quota — ADR-0003), réécrit les mesures avec l'upsert
+conditionnel au millésime (ADR-0006, sans effet sur une valeur de meilleur millésime),
+reconstruit les séries agrégées, puis rattrape la charge et la météo archivée de la
+période.
+
+1. **Mesurer le trou** (lecture seule) : jours sans mesure nationale `rte-direct` sur la
+   période suspecte.
+2. **Choisir la source** : le jeu **consolidé** (`CARBONFR_BACKFILL_SOURCE=consolidated`,
+   défaut) s'il couvre déjà la période — RTE le publie avec environ trois mois de retard ;
+   sinon le jeu **temps réel** (`realtime`), dont les valeurs seront remplacées d'elles-mêmes
+   par les consolidées lors d'un rattrapage ultérieur.
+3. **Répéter en local** sur une base PostgreSQL 17 jetable, avec les mêmes paramètres, et
+   contrôler le nombre de mesures par jour (48 au pas de 30 min pour le consolidé, 96 au pas
+   de 15 min pour le temps réel) et le millésime.
+4. **En production** : dump de la base juste avant (droits `600`), puis
+   `docker exec -e CARBONFR_BACKFILL_FROM=… -e CARBONFR_BACKFILL_TO=… -e CARBONFR_BACKFILL_WINDOW_DAYS=30 [-e CARBONFR_BACKFILL_SOURCE=realtime] <conteneur> carbonfr-server backfill`
+   (le binaire reprend `DATABASE_URL` du conteneur ; le service continue de tourner).
+5. **Vérifier** : plus aucun jour vide sur la période, puis `/v1/intensity/date` et
+   `/v1/intensity/stats` sur ces dates.
+
+Mesure du 2026-09-25 : 150 jours rattrapés depuis le consolidé en ~1 min 15 s (5 exports),
+8 jours depuis le temps réel en quelques secondes. La reconstruction complète des séries
+horaires (~280 000 seaux) prend ~4 s et journalise un avertissement « slow statement »
+attendu.

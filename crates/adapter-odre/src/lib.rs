@@ -71,6 +71,34 @@ fn ensure_crypto_provider() {
 pub struct OdreClient {
     http: reqwest::Client,
     base_url: String,
+    /// Jeu exporté par [`Eco2mixArchive`] (backfill) : consolidé par défaut.
+    archive_dataset: &'static str,
+}
+
+/// Jeu de données éCO2mix national exporté par le backfill ([`Eco2mixArchive`]).
+///
+/// Le jeu **consolidé + définitif** est la référence (ADR-0003), mais RTE le
+/// publie avec environ trois mois de retard. Pour combler un trou plus récent
+/// (panne de la collecte), le jeu **temps réel** s'exporte de la même façon ;
+/// ses mesures portent le millésime `tr` et seront remplacées d'elles-mêmes par
+/// les consolidées lors d'un backfill ultérieur (upsert conditionnel au
+/// millésime, ADR-0006).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ArchiveSource {
+    /// `eco2mix-national-cons-def` (défaut).
+    #[default]
+    Consolidated,
+    /// `eco2mix-national-tr`.
+    Realtime,
+}
+
+impl ArchiveSource {
+    fn dataset(self) -> &'static str {
+        match self {
+            Self::Consolidated => NATIONAL_ARCHIVE_DATASET,
+            Self::Realtime => NATIONAL_DATASET,
+        }
+    }
 }
 
 impl OdreClient {
@@ -94,7 +122,15 @@ impl OdreClient {
         Self {
             http,
             base_url: base_url.into(),
+            archive_dataset: ArchiveSource::default().dataset(),
         }
+    }
+
+    /// Choisit le jeu exporté par le backfill (consolidé par défaut, cf.
+    /// [`ArchiveSource`]).
+    pub fn with_archive_source(mut self, source: ArchiveSource) -> Self {
+        self.archive_dataset = source.dataset();
+        self
     }
 
     fn records_url(&self, dataset: &str) -> String {
@@ -369,7 +405,7 @@ impl ConsumptionSource for OdreClient {
 impl Eco2mixArchive for OdreClient {
     async fn export_national(&self, range: TimeRange) -> Result<Vec<Measurement>, SourceError> {
         let filter = Self::time_filter(range)?;
-        let records = self.fetch_export(NATIONAL_ARCHIVE_DATASET, &filter).await?;
+        let records = self.fetch_export(self.archive_dataset, &filter).await?;
         // L'export n'est pas trié ; le tri est garanti à la lecture (repository).
         records
             .into_iter()
@@ -392,7 +428,7 @@ impl Eco2mixArchive for OdreClient {
         let filter = format!(
             "date_heure >= '{start}' and date_heure < '{end}' and consommation is not null"
         );
-        let records = self.fetch_export(NATIONAL_ARCHIVE_DATASET, &filter).await?;
+        let records = self.fetch_export(self.archive_dataset, &filter).await?;
         let mut loads = Vec::with_capacity(records.len());
         for record in records {
             if let Some(load) = record.into_realized_load()? {
@@ -406,6 +442,16 @@ impl Eco2mixArchive for OdreClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn archive_source_selects_dataset() {
+        let client = OdreClient::new().expect("client");
+        assert_eq!(client.archive_dataset, "eco2mix-national-cons-def");
+        let client = client.with_archive_source(ArchiveSource::Realtime);
+        assert_eq!(client.archive_dataset, "eco2mix-national-tr");
+        let client = client.with_archive_source(ArchiveSource::Consolidated);
+        assert_eq!(client.archive_dataset, "eco2mix-national-cons-def");
+    }
 
     #[test]
     fn records_url_is_well_formed() {

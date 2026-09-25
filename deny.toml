@@ -59,15 +59,50 @@ confidence-threshold = 0.8
 #   - `base64` 0.22 / 0.23        ← NOUVEAU depuis reqwest 0.13 (`base64 = "0.23"` dans son
 #                                    Cargo.toml, contre 0.22 tiré par `hyper-util`) — même nature que
 #                                    `tower-http` ci-dessus, pas d'action possible côté carbon-fr.
-#   - `hashbrown` 0.15/0.17       ← sqlx 0.8 (via `hashlink`) et `indexmap` (sqlx + utoipa) →
-#                                    devrait converger avec sqlx 0.9 (plan I7). `webpki-roots` n'est
-#                                    plus dans cette liste : jamais recompté en doublon par cargo-deny
-#                                    (0.26.11 dépend lui-même en interne de 1.0.7, une seule entrée
-#                                    « active » pour notre usage) — sqlx est aujourd'hui la SEULE
-#                                    source de `webpki-roots` dans l'arbre (`cargo tree -i webpki-roots@0.26.11`) ;
-#                                    reqwest 0.13 ne le tire plus du tout (vérifie via `rustls-platform-verifier`
-#                                    → magasin système, cf. Dockerfile).
-#   - `rand`/`rand_core`/`getrandom` 0.8/0.6/0.2 ← gbdt 0.1 et sqlx-postgres 0.8
+#   - `hashbrown` 0.16/0.17       ← RE-VÉRIFIÉ le 2026-09-25 après la montée sqlx 0.8 → 0.9 (plan
+#                                    I7, `cargo tree -d` + `cargo tree -i hashbrown@<version>`) :
+#                                    NE CONVERGE PAS, contrairement à ce que prévoyait ce commentaire
+#                                    avant le 2026-09-25 — `hashlink` (0.9 → 0.11, tiré par
+#                                    `sqlx-core`) a juste bougé de `hashbrown` 0.15 à **0.16**, tandis
+#                                    qu'`indexmap` (sqlx + utoipa) reste sur 0.17 : toujours 2 lignes
+#                                    majeures distinctes, sans action possible côté carbon-fr.
+#                                    `webpki-roots` n'est toujours pas dans cette liste (single
+#                                    version, jamais recompté en doublon par cargo-deny) : sqlx 0.9 a
+#                                    lui-même relevé sa propre dépendance transitive de 0.26.11 à
+#                                    **1.0.7** (vérifié `cargo tree -i webpki-roots@1.0.7`, 2026-09-25)
+#                                    — sqlx reste la SEULE source dans l'arbre ; reqwest 0.13 ne le
+#                                    tire toujours pas (`rustls-platform-verifier` → magasin système,
+#                                    cf. Dockerfile).
+#   - `rand`/`rand_core`/`getrandom` 0.8/0.6/0.2 ← RÉDUIT (pas éliminé) par la montée sqlx 0.9 :
+#                                    vérifié le 2026-09-25 (`cargo tree -i rand@10.3.0`), `sqlx-postgres`
+#                                    0.9 résout désormais `rand` **0.10.3** — convergé avec notre propre
+#                                    `rand = "0.10"` (workspace) et `carbonfr-adapter-http` — alors qu'en
+#                                    0.8 il tirait encore du 0.8 comme `gbdt`. Seul `gbdt` 0.1 (modèle
+#                                    NON SERVI, ADR-0012) reste sur la ligne 0.8/0.6/0.2 : sqlx est sorti
+#                                    de la liste des causes.
+#   - `sha2`/`digest`/`crypto-common`/`block-buffer` ← NOUVEAU depuis sqlx 0.9 (vérifié le 2026-09-25,
+#                                    `cargo tree -i digest@0.11.3`) : l'authentification SCRAM-SHA-256
+#                                    de `sqlx-postgres` 0.9 passe désormais par `hmac` 0.13 → `hkdf`
+#                                    0.13 / `md-5` 0.11 / `sha2` **0.11**, qui tirent la génération
+#                                    RustCrypto « 0.11 » (`digest` 0.11, `block-buffer` 0.12,
+#                                    `crypto-common` 0.2) — distincte de notre propre dépendance
+#                                    `sha2 = "0.10.9"` (workspace, `carbonfr-core` : signature HMAC des
+#                                    webhooks ADR-0016 ; aussi `carbonfr-adapter-http`), restée sur la
+#                                    génération « 0.10 ». Choix interne de sqlx, aucune action possible
+#                                    côté carbon-fr.
+#   - `base64` 0.22 / 0.23        ← toujours 2 versions (reqwest épingle `"0.23"` en direct, contre
+#                                    0.22 tiré par `hyper-util`), même nature que `tower-http`
+#                                    ci-dessous, pas d'action possible côté carbon-fr. Constat du
+#                                    2026-09-25 : `sqlx-core` 0.9 est désormais AUSSI une source de
+#                                    `base64` (même version 0.22.1 qu'`hyper-util` — ne crée pas de
+#                                    3ᵉ version, `cargo tree -i base64@0.22.1`).
+#   - `tower-http` 0.6 / 0.7      ← inchangé par la montée sqlx (montée reqwest 0.12 → 0.13, plan I5) :
+#                                    reqwest épingle lui-même `tower-http = "0.6.8"` en dépendance
+#                                    directe (features `decompression-gzip`/`follow-redirect`, cf. son
+#                                    Cargo.toml), sur ses DEUX branches majeures 0.12 et 0.13 — c'est
+#                                    `carbonfr-adapter-http` qui veut du 0.7 (cors + trace). Ne se
+#                                    résorbera qu'à une future montée de reqwest qui relève sa propre
+#                                    borne (hors de notre main).
 #   - `syn` 2 et 3                ← macros procédurales tierces (transition de l'écosystème)
 #   - `cpufeatures`, `windows-*`, `redox_syscall` ← dépendances de plateforme (non compilées sous Linux)
 # Un NOUVEAU doublon hors de cette liste mérite un coup d'œil (`cargo tree -d`).

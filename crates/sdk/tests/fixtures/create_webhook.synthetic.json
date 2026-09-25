@@ -1,0 +1,1 @@
+{"id":"00000000-0000-4000-8000-000000000001","secret":"whsec_SYNTHETIC_0123456789abcdef0123456789abcdef0123456789abcdef","region":"national","threshold":50.0,"direction":"below","callback_url":"https://example.com/webhooks/carbon-fr"}

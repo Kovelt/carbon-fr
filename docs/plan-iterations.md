@@ -1,7 +1,7 @@
 # Plan de la suite — itérations I0 → I7 (à partir du 2026-09-23)
 
 - **Statut** : document vivant — cocher les cases au fil des PR, dater chaque révision en tête.
-- **Dernière mise à jour** : 2026-09-24 (I0–I4 livrées ; I5 : `carbonfr-core`/`carbonfr-eligibility` publiées sur crates.io (0.9.1), `release-crates.yml` en place, `reqwest` 0.13 en PR → v0.9.2 ; I1 : reste la notification Uptime Kuma).
+- **Dernière mise à jour** : 2026-09-25 (I0–I4 livrées ; I5 : `carbonfr-core`/`carbonfr-eligibility` publiées sur crates.io (0.9.1), `release-crates.yml` en place, `reqwest` 0.13 en PR → v0.9.2 ; I6 : surface v1 bornée, membre `crates/sdk` (client + erreurs typées + flux SSE) et tests hermétiques en place, CI/`release-rust-sdk.yml`/docs à jour — restent le reste de `/v1`, `examples/` et la publication ; I1 : reste la notification Uptime Kuma).
 - **Sources** : état des lieux multi-agents du 2026-09-23 (constats revérifiés contre le code), recherche en 4 volets (préparation crates.io, backlog consolidé des ADR/roadmaps, montées majeures des dépendances, échéances datées), 3 plans concurrents (« fiabilité d'abord », « adoption d'abord », « valeur métier d'abord ») départagés par un juge. Base retenue : **valeur métier d'abord**, avec les greffes des deux autres.
 - **Horizon** : 13 à 17 semaines selon les itérations, soit vers mi-janvier 2027 au rythme d'un mainteneur seul assisté de Claude Code. Les durées sont des ordres de grandeur, pas des engagements.
 - **Liens** : feuille de route produit dans le [README](../README.md#feuille-de-route), [roadmap hydrogène](roadmap-hydrogene.md), [index des ADR](adr/README.md), [CHANGELOG](../CHANGELOG.md).
@@ -113,10 +113,12 @@ Les échéances datées (TRV, veille réglementaire, snapshots) sont listées à
 
 **Objectif** : l'équivalent Rust du SDK TS, publié sur crates.io — sur `reqwest` 0.13, déjà en place depuis I5 (sans quoi le SDK serait à retravailler tout de suite).
 
-- [ ] Relire intégralement `sdk/typescript/src/{client,types}.ts` pour borner la surface v1 (non fait exhaustivement par la recherche).
-- [ ] Nouveau membre du workspace (chemin fixé par l'ADR-0031) : client configurable (URL de base, clé API), erreurs typées (RFC 9457), intensité (`now`/`date`/`stats`), webhooks (créer/lister/supprimer), **flux SSE** en `Stream` Rust (le point le plus délicat : à commencer en premier).
-- [ ] Tests hermétiques (serveur de test local, aucun appel réseau), `examples/` exécutables ; le reste de `/v1` (prix, coût, éligibilité, météo, échanges, renouvelable) couvert ou explicitement marqué « à venir » dans la doc.
-- [ ] Publication `carbonfr-sdk` 0.1.0 : première publication **manuelle** (jeton ponctuel, comme en I5), puis *trusted publisher* déclaré pour cette crate ; tag `rust-sdk-v0.1.0` (axe de versionnement propre, comme le SDK TS) ; README : section « SDK officiels ».
+- [x] Relire intégralement `sdk/typescript/src/{client,types}.ts` pour borner la surface v1 (fait le 2026-09-25 : lecture intégrale des 493 + 589 lignes, croisée avec le snapshot OpenAPI 3.1.0 — 26/26 méthodes publiques de `CarbonFr` (client.ts 0.2.0) correspondent 1:1 aux 26 opérations `/v1` en périmètre, hors `health`/`health_ready`).
+- [x] Nouveau membre du workspace `crates/sdk` (chemin fixé par l'ADR-0031) : client configurable (URL de base, clé API `Bearer`, timeout REST configurable/désactivable, `reqwest::Client` injectable), erreurs typées `CarbonFrError` `#[non_exhaustive]` (RFC 9457, `ProblemDetails`), **flux SSE** en `Stream` Rust nommé (`IntensityStream`, feature Cargo `stream`) — le point le plus délicat, commencé en premier comme prévu.
+- [x] Le reste de `/v1` — intensité (`now`/`date`/`stats`), webhooks (créer/lister/supprimer), prix, coût, éligibilité, météo, échanges, renouvelable : **25 méthodes REST** (fait le 2026-09-25), chacune testée contre un serveur local avec des réponses réelles capturées sur la prod (23 lectures) ; test de parité avec le snapshot OpenAPI (26 opérations).
+- [x] Tests hermétiques (serveur de test local `axum`, patron `adapter-webhook`, aucun appel réseau) : en place pour le socle et le flux SSE (`crates/sdk/src/{client,stream,region}.rs`, modules `tests`). Fixtures JSON/SSE des 26 opérations `/v1` déjà rapatriées (`crates/sdk/tests/fixtures/`), prêtes pour le test de parité (ADR-0031 décision 2) et les futurs tests des opérations REST restantes.
+- [x] `examples/` exécutables (fait le 2026-09-25) : `intensity_now`, `mix_region`, `stream` (feature `stream`), `api_error` ; compilés en CI.
+- [ ] Publication `carbonfr-sdk` 0.1.0 : première publication **manuelle** (jeton ponctuel, comme en I5), puis *trusted publisher* déclaré pour cette crate (workflow `release-rust-sdk.yml`, en place et prêt, déclenché par le tag `rust-sdk-v*`) ; tag `rust-sdk-v0.1.0` (axe de versionnement propre, comme le SDK TS) ; README : section « SDK officiels » (à créer à ce moment-là — prématuré tant que la crate n'est pas publiée).
 
 **Sortie** : `cargo add carbonfr-sdk` compile dans un projet vide ; parité TS atteinte sur intensité, webhooks et SSE ; docs.rs vert.
 

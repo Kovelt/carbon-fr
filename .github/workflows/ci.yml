@@ -57,6 +57,9 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           command: check
+          # --all-features : couvre aussi les dépendances optionnelles (feature
+          # `stream` du SDK Rust : eventsource-stream, futures-*).
+          arguments: --all-features --workspace
 
   test:
     name: tests (avec PostgreSQL)
@@ -93,6 +96,15 @@ jobs:
         # Les tests ODRÉ « live » sont #[ignore] (réseau + quota) : non exécutés.
         run: cargo test --workspace
 
+      # `cargo test` ne compile pas les `examples/` par défaut : les couvrir
+      # ici (compilation seule, pas d'exécution — certains touchent le flux
+      # SSE en direct) plutôt que d'ajouter un job requis de plus (I6,
+      # ADR-0031 décision 11). `--all-features` couvre la feature `stream`.
+      # Les 4 exemples de `crates/sdk/examples/` (dont `stream`, qui exige la
+      # feature du même nom) doivent toujours compiler.
+      - name: Exemples du SDK Rust (compilation)
+        run: cargo build -p carbonfr-sdk --examples --all-features
+
   build-release:
     name: build release (artefact déployable)
     runs-on: ubuntu-latest
@@ -125,9 +137,12 @@ jobs:
       - name: Typecheck + build
         run: npm run build
 
-  # Les trois jobs suivants ne concernent que les deux crates publiables sur
-  # crates.io, carbonfr-core et carbonfr-eligibility (ADR-0030 §1) — les 9
-  # autres membres du workspace (adapters, bin/server) n'y sont pas soumis.
+  # Les trois jobs suivants concernent les crates publiées/publiables sur
+  # crates.io : carbonfr-core et carbonfr-eligibility (ADR-0030 §1), rejointes
+  # depuis I6 par carbonfr-sdk pour les jobs MSRV et rustdoc+package
+  # (ADR-0031 décision 10) — le job semver l'exclut encore, cf. son
+  # commentaire plus bas. Les 9 autres membres du workspace (adapters,
+  # bin/server) n'y sont pas soumis.
   msrv:
     name: MSRV (Rust 1.88)
     runs-on: ubuntu-latest
@@ -148,10 +163,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
-      # Seules les deux crates publiables : la MSRV ne concerne pas les
-      # adapters ni bin/server (ADR-0030 §5).
+      # Les trois crates publiées/publiables : la MSRV ne concerne pas les
+      # adapters ni bin/server (ADR-0030 §5). `--all-features` couvre la
+      # feature `stream` de carbonfr-sdk (ADR-0031 décision 9) ; sans effet
+      # sur core/eligibility, qui n'ont aucune feature.
       - name: cargo check (crates publiables uniquement)
-        run: cargo check --locked -p carbonfr-core -p carbonfr-eligibility
+        run: cargo check --locked -p carbonfr-core -p carbonfr-eligibility -p carbonfr-sdk --all-features
 
   semver:
     name: semver (crates publiables)
@@ -183,6 +200,14 @@ jobs:
       # simple ajout de `#[non_exhaustive]` sans bump). À partir d'I5
       # (première publication réelle), la baseline redeviendra le registre
       # crates.io par défaut (ADR-0030 §4) et ce job changera d'entrée.
+      #
+      # TODO (2026-09-25, I6) : ajouter carbonfr-sdk à ce job APRÈS sa
+      # première publication crates.io (ADR-0031 décision 12) — pas de tag
+      # `rust-sdk-v*` avant cela, donc pas de baseline possible aujourd'hui
+      # (`cargo-semver-checks` a besoin d'un état publié ou d'un tag à
+      # comparer). Le motif `--match 'v*'` de la baseline ci-dessous ignore
+      # déjà `rust-sdk-v*` (un tag ne commençant pas par `v` ne matche pas
+      # `v*`) : aucun risque de baseline erronée entre-temps.
       - name: cargo-semver-checks (baseline ${{ steps.baseline.outputs.rev }})
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
         with:
@@ -199,22 +224,27 @@ jobs:
 
       # docs.rs ne rejette pas un avertissement rustdoc, contrairement à ce
       # job (ADR-0030 §9) : plus strict ici pour ne jamais publier de lien
-      # mort.
+      # mort. `--all-features` couvre la feature `stream` de carbonfr-sdk
+      # (ADR-0031 décision 9, rejointe depuis I6) ; sans effet sur
+      # core/eligibility, qui n'ont aucune feature.
       - name: rustdoc (liens morts en erreur)
         env:
           RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --no-deps --locked -p carbonfr-core -p carbonfr-eligibility
+        run: cargo doc --no-deps --locked -p carbonfr-core -p carbonfr-eligibility -p carbonfr-sdk --all-features
 
-      # Les DEUX crates dans le même appel : Cargo superpose un registre local
-      # pour les membres du workspace pas encore publiés, et vérifie donc
-      # `eligibility` contre la version locale de `core` (seule,
+      # core + eligibility dans le même appel : Cargo superpose un registre
+      # local pour les membres du workspace pas encore publiés, et vérifie
+      # donc `eligibility` contre la version locale de `core` (seule,
       # `cargo package -p carbonfr-eligibility` échouerait avant la publication
       # de `core`). Échoue aussi si la dépendance interne versionnée
       # (`carbonfr-core = { …, version = … }`) diverge de la version du
-      # workspace. Aucun upload, aucun jeton (ADR-0030 §8 : la 1re publication
-      # est manuelle, en I5).
+      # workspace. `carbonfr-sdk` n'a, lui, aucune dépendance interne
+      # (ADR-0031 décision 5) : il est empaqueté dans le même appel par
+      # commodité (rejoint depuis I6), pas par nécessité de vérification
+      # croisée. Aucun upload, aucun jeton (ADR-0030 §8 : la 1re publication
+      # est manuelle, en I5 pour core/eligibility, à venir pour le SDK).
       - name: Empaquetage (package + vérification croisée, aucun upload)
-        run: cargo package --locked -p carbonfr-core -p carbonfr-eligibility
+        run: cargo package --locked -p carbonfr-core -p carbonfr-eligibility -p carbonfr-sdk
 
   # Le scan quotidien a échoué 8 jours d'affilée (RUSTSEC-2026-0285, sept.
   # 2026) sans que personne ne le voie : un échec du run PLANIFIÉ ouvre une

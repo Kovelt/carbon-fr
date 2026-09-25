@@ -1,0 +1,1 @@
+{"_fixture_note":"DELETE /v1/webhooks/{id} renvoie 204 No Content (aucun corps, aucun schéma dans le snapshot OpenAPI) — ce fichier documente le contrat plutôt qu'un corps JSON inexistant.","status":204,"body":null}

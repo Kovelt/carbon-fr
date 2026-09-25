@@ -6,7 +6,16 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.9.3] - 2026-09-25
+
+Clôture des itérations I6 et I7 du [plan](docs/plan-iterations.md) : **SDK
+Rust `carbonfr-sdk`** publié sur crates.io (axe de version propre, 0.1.1),
+**`sqlx` 0.9** (dernière montée majeure prévue) et **décisions de
+méthodologie** actées (partitionnement non retenu sur mesures de prod,
+`acv-ademe@3`, vue consommation régionale, revue LCOE, ADR-0032). Version
+*patch* : l'API de `carbonfr-core` et `carbonfr-eligibility` est inchangée
+depuis 0.9.2 (vérifié par `cargo-semver-checks`), elles sont republiées en
+0.9.3 par le workflow. Aucune migration, aucun changement de `/v1`.
 
 ### Ajouté
 

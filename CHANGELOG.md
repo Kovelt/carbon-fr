@@ -27,6 +27,18 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   corrigé (la 0.1.0 affichait encore « first crates.io publication » à venir),
   publiée par `release-rust-sdk.yml`.
 
+### Modifié
+
+- **`sqlx` 0.8 → 0.9** (itération I7, montée isolée) : les 4 requêtes SQL
+  construites dynamiquement passent par `AssertSqlSafe`, chacune justifiée en
+  commentaire (seules des constantes internes sont interpolées ; toute valeur
+  passe par `bind`) ; `QueryBuilder` et `migrate!` inchangés ; SQL et
+  comportement identiques. Suite d'intégration PostgreSQL 17 complète verte
+  (23 tests) ; démarrage réel du serveur (migrations, ingestion, `/health`,
+  `/v1/intensity/now`). Doublons `rand`/`getrandom` résorbés (hors `gbdt`,
+  non servi) ; nouveau groupe `sha2`/`digest` 0.11 (authentification SCRAM de
+  sqlx) documenté dans `deny.toml`. Aucune migration, aucun changement de `/v1`.
+
 ### CI
 
 - Le job « semver (crates publiables) » vérifie aussi `carbonfr-sdk`, contre

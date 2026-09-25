@@ -26,7 +26,7 @@ use carbonfr_core::ports::{
     SpotPriceRepository, SubscriptionRepository, VisitCounter, WeatherRepository,
 };
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use sqlx::{PgPool, QueryBuilder, Row};
+use sqlx::{AssertSqlSafe, PgPool, QueryBuilder, Row};
 use time::{Date, OffsetDateTime};
 
 use mapping::{
@@ -204,7 +204,11 @@ impl IntensityRepository for PgIntensityRepository {
              WHERE region = $1 AND methodology_id = $2 \
              ORDER BY at DESC LIMIT 1"
         );
-        let row = sqlx::query(&sql)
+        // sqlx 0.9 (`SqlSafeStr`) : sûr — seule la constante `COLUMNS` (liste de
+        // colonnes fixe, ci-dessus) est interpolée dans la chaîne ; `region` et
+        // `methodology_id` (entrée utilisateur, via le port `IntensityRepository`)
+        // passent exclusivement par `.bind()`, jamais dans la chaîne SQL.
+        let row = sqlx::query(AssertSqlSafe(sql))
             .bind(region.slug())
             .bind(methodology_id)
             .fetch_optional(&self.pool)
@@ -225,7 +229,10 @@ impl IntensityRepository for PgIntensityRepository {
              WHERE region = $1 AND methodology_id = $2 AND at >= $3 AND at < $4 \
              ORDER BY at ASC"
         );
-        let rows = sqlx::query(&sql)
+        // sqlx 0.9 (`SqlSafeStr`) : sûr — seule la constante `COLUMNS` est
+        // interpolée ; `region`/`methodology_id`/`range` (entrée utilisateur)
+        // passent exclusivement par `.bind()`, jamais dans la chaîne SQL.
+        let rows = sqlx::query(AssertSqlSafe(sql))
             .bind(region.slug())
             .bind(methodology_id)
             .bind(range.start())
@@ -284,7 +291,9 @@ impl IntensityRepository for PgIntensityRepository {
         range: TimeRange,
         granularity: Granularity,
     ) -> Result<Vec<RollupBucket>, RepositoryError> {
-        // Le nom de vue provient d'un enum (pas d'entrée utilisateur).
+        // Le nom de vue provient d'un enum (pas d'entrée utilisateur) : seules
+        // les deux valeurs littérales ci-dessous sont possibles, `granularity`
+        // ne peut porter aucune autre chaîne.
         let view = match granularity {
             Granularity::Hourly => "measurement_rollup_hourly",
             Granularity::Daily => "measurement_rollup_daily",
@@ -294,7 +303,10 @@ impl IntensityRepository for PgIntensityRepository {
              WHERE region = $1 AND methodology_id = $2 AND bucket >= $3 AND bucket < $4 \
              ORDER BY bucket ASC"
         );
-        let rows = sqlx::query(&sql)
+        // sqlx 0.9 (`SqlSafeStr`) : sûr — `view` est l'un des deux littéraux
+        // internes ci-dessus (jamais dérivé de `region`/`methodology_id`, qui,
+        // eux, passent par `.bind()`).
+        let rows = sqlx::query(AssertSqlSafe(sql))
             .bind(region.slug())
             .bind(methodology_id)
             .bind(range.start())
@@ -324,11 +336,14 @@ impl PgIntensityRepository {
     /// seau touché est **entièrement** réagrégé → avg/min/max/count exacts (les
     /// mesures ne sont jamais supprimées, donc pas de ligne de rollup orpheline).
     async fn upsert_rollups(&self, since: Option<OffsetDateTime>) -> Result<(), RepositoryError> {
-        // `table`/`unit` proviennent d'un littéral (pas d'entrée utilisateur).
+        // `table`/`unit` proviennent d'un littéral (pas d'entrée utilisateur) :
+        // itération sur les deux seules paires possibles, ci-dessus.
         for (table, unit) in [
             ("measurement_rollup_hourly", "hour"),
             ("measurement_rollup_daily", "day"),
         ] {
+            // `filter` aussi : littéral fixe selon que `since` (paramètre interne
+            // du poller/backfill, jamais une entrée utilisateur) est renseigné.
             let filter = if since.is_some() {
                 "WHERE at >= $1"
             } else {
@@ -345,7 +360,11 @@ impl PgIntensityRepository {
                    avg_intensity = EXCLUDED.avg_intensity, min_intensity = EXCLUDED.min_intensity, \
                    max_intensity = EXCLUDED.max_intensity, n = EXCLUDED.n"
             );
-            let query = sqlx::query(&sql);
+            // sqlx 0.9 (`SqlSafeStr`) : sûr — `table`/`unit`/`filter` sont tous
+            // des littéraux internes (ci-dessus) ; la seule valeur variable,
+            // `since`, passe par `.bind()` juste en dessous, jamais dans la
+            // chaîne.
+            let query = sqlx::query(AssertSqlSafe(sql));
             let query = match since {
                 Some(t) => query.bind(t),
                 None => query,

@@ -124,7 +124,17 @@ quick-xml = { version = "0.42.0", features = ["serialize"] }
 # utilisé par la validation anti-SSRF des webhooks pour voir exactement l'hôte
 # que le client contactera (ADR-0016).
 url = "2.5"
-sqlx = { version = "0.8.6", default-features = false, features = [
+# sqlx 0.9 (I7, plan-iterations.md) : MSRV 1.94.0 (docs.rs/sqlx/0.9.0, page
+# racine) — SUPÉRIEURE à `rust-version` du workspace (1.88.0, ci-dessus). Sans
+# conséquence : ce champ n'engage que les 3 crates publiables (core/eligibility/
+# sdk, `rust-version.workspace = true`), qui ne dépendent PAS de sqlx (seul
+# `carbonfr-adapter-postgres` en dépend, sans hériter du `rust-version` du
+# workspace — cf. son `Cargo.toml`) ; le job CI « MSRV (Rust 1.88) » ne
+# `cargo check` que ces 3 crates, jamais `adapter-postgres`/`bin/server`. Même
+# jeu de features qu'en 0.8 : toutes existent encore à l'identique en 0.9
+# (CHANGELOG.md 0.9.0, aucune mention de renommage/suppression pour
+# runtime-tokio/tls-rustls-ring/postgres/time/migrate/macros).
+sqlx = { version = "0.9.0", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls-ring",
     "postgres",

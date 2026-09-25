@@ -66,7 +66,7 @@ const now = await cf.intensityNow();
 console.log(now.intensity.value, now.intensity.unit); // 20 gCO2eq/kWh
 ```
 
-🦀 **En Rust** — le cœur métier est publié sur crates.io (bibliothèques pures, sans IO : calculs d'intensité, méthodologies, prévision, éligibilité électrolyseur) : [`carbonfr-core`](https://crates.io/crates/carbonfr-core) ([docs.rs](https://docs.rs/carbonfr-core)) et [`carbonfr-eligibility`](https://crates.io/crates/carbonfr-eligibility) ([docs.rs](https://docs.rs/carbonfr-eligibility)), MSRV 1.88, politique de publication dans l'[ADR-0030](docs/adr/0030-politique-publication-crates-io.md). Un client HTTP Rust typé et asynchrone, avec flux SSE ([`carbonfr-sdk`](crates/sdk/), [ADR-0031](docs/adr/0031-conception-sdk-rust.md)) est en développement (itération I6) : **pas encore publié**, il sera disponible sur crates.io au tag `rust-sdk-v0.1.0`.
+🦀 **En Rust** — le cœur métier est publié sur crates.io (bibliothèques pures, sans IO : calculs d'intensité, méthodologies, prévision, éligibilité électrolyseur) : [`carbonfr-core`](https://crates.io/crates/carbonfr-core) ([docs.rs](https://docs.rs/carbonfr-core)) et [`carbonfr-eligibility`](https://crates.io/crates/carbonfr-eligibility) ([docs.rs](https://docs.rs/carbonfr-eligibility)), MSRV 1.88, politique de publication dans l'[ADR-0030](docs/adr/0030-politique-publication-crates-io.md). Pour interroger l'API depuis Rust : le client HTTP typé et asynchrone [`carbonfr-sdk`](https://crates.io/crates/carbonfr-sdk) ([docs.rs](https://docs.rs/carbonfr-sdk), [ADR-0031](docs/adr/0031-conception-sdk-rust.md)), en parité avec le SDK TypeScript, flux temps réel compris (feature `stream`) : `cargo add carbonfr-sdk`.
 
 ```bash
 cargo add carbonfr-core
@@ -147,7 +147,7 @@ carbon-fr/
 │   ├── adapter-entsoe/         # ✅ impl CrossBorderSource + SpotPriceSource (ENTSO-E)
 │   ├── adapter-webhook/        # ✅ impl Notifier (livraison signée, anti-SSRF)
 │   ├── adapter-gbdt/           # ✅ impl ForecastModel ML (GBDT, exploré — non servi)
-│   └── sdk/                    # 🚧 carbonfr-sdk : client HTTP Rust (hors hexagone, ne dépend pas de core), pas encore publié
+│   └── sdk/                    # carbonfr-sdk : client HTTP Rust (hors hexagone, ne dépend pas de core), publié sur crates.io
 ├── bin/
 │   └── server/                 # ✅ composition root : adapters + poller
 ├── bruno/                      # collection Bruno (requêtes .bru versionnées)
@@ -209,7 +209,7 @@ Outre le serveur, le binaire expose des **sous-commandes** *one-shot* : `backfil
 - [x] **Phase 5 — Enrichissement, déploiement & SDK** : échanges transfrontaliers (`/v1/exchanges`), météo (`/v1/weather`), dérivation renouvelable (`/v1/renewable`) ; **prix de l'électricité** (`/v1/price`, décomposition TRV, ADR-0023) + **couche comparative LCOE** (`/v1/cost-reference`, ADR-0024) ; **déployé** sur VPS FR/EU (Traefik + PostgreSQL) ; **SDK TypeScript** (`@carbon-fr/sdk`).
 - [x] **Extension hydrogène carbon-aware** (v0.4.0) : couche A « électrolyseur » — éligibilité **RFNBO / bas-carbone** par créneau au-dessus de `/greenest-window` (`?eligibility=`) + catalogue `/v1/eligibility/rulesets` ([ADR-0025](docs/adr/0025-extension-hydrogene-carbon-aware.md), [ADR-0026](docs/adr/0026-methodologie-overlays-eligibilite.md)).
 - [x] **Suite hydrogène** (v0.5.0–v0.6.0) : part renouvelable **prévue** `share-clim@1` dans l'overlay `rfnbo` ([ADR-0028](docs/adr/0028-prevision-part-renouvelable-eligibilite.md) ; variante météo `share-meteo@2` mesurée, non servie) · carte « électrolyseurs × carbone live » `GET /hydrogene` ([ADR-0029](docs/adr/0029-carte-electrolyseurs-carbone-live.md)).
-- [ ] **À venir** — détail, ordre et critères de sortie dans le [plan par itérations](docs/plan-iterations.md) : SDK Rust (`carbonfr-sdk`) ; site statique (o2switch) ; `UsageMeter` persistant ; suite hydrogène ([roadmap dédiée](docs/roadmap-hydrogene.md) : ruleset `rfnbo:2026-revision` quand le droit sera adopté ; branche EUA et bascule horaire 2030 en réserve).
+- [ ] **À venir** — détail, ordre et critères de sortie dans le [plan par itérations](docs/plan-iterations.md) : site statique (o2switch) ; `UsageMeter` persistant ; suite hydrogène ([roadmap dédiée](docs/roadmap-hydrogene.md) : ruleset `rfnbo:2026-revision` quand le droit sera adopté ; branche EUA et bascule horaire 2030 en réserve).
 
 ## Contribuer
 

@@ -48,10 +48,6 @@ Full parity with the 26 `/v1` operations of the TypeScript SDK (`@carbon-fr/sdk`
   type implementing `futures_core::Stream<Item = Result<IntensityEvent, CarbonFrError>>` over
   `GET /v1/intensity/stream` (Server-Sent Events).
 
-Not yet in this crate: `examples/` beyond the four shipped here, and the crate's own first
-crates.io publication (tracked separately, `docs/plan-iterations.md` §I6) — this README is
-kept accurate rather than describing a state that isn't reached yet.
-
 ## Examples
 
 Runnable end to end (`examples/`, against the default hosted instance unless you set a

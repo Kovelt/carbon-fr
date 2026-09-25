@@ -22,11 +22,15 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   (`Debug` masqué, test dédié). Écrit à la main ; chaque méthode est testée
   contre un serveur local avec des réponses réelles capturées sur la prod, et
   un test de parité échoue si une opération de l'OpenAPI n'est pas couverte.
-  4 exemples exécutables. **Pas encore publié** : tag `rust-sdk-v0.1.0` après
-  la première publication manuelle.
+  4 exemples exécutables. **Publié sur crates.io** le 2026-09-25 (0.1.0,
+  première publication manuelle, tag `rust-sdk-v0.1.0`) ; **0.1.1** : README
+  corrigé (la 0.1.0 affichait encore « first crates.io publication » à venir),
+  publiée par `release-rust-sdk.yml`.
 
 ### CI
 
+- Le job « semver (crates publiables) » vérifie aussi `carbonfr-sdk`, contre
+  le dernier tag `rust-sdk-v*`, toutes features comprises.
 - Les checks MSRV et « rustdoc + package » couvrent aussi `carbonfr-sdk`
   (noms de jobs inchangés) ; compilation des exemples ; `cargo-deny` vérifie
   désormais toutes les features. Nouveau workflow `release-rust-sdk.yml`

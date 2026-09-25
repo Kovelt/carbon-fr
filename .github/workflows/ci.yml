@@ -185,34 +185,38 @@ jobs:
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
-      - name: Baseline = dernier tag de release
+      - name: Baselines = derniers tags de release
         id: baseline
-        run: echo "rev=$(git describe --tags --abbrev=0 --match 'v*' HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "rev=$(git describe --tags --abbrev=0 --match 'v*' HEAD)" >> "$GITHUB_OUTPUT"
+          echo "sdk=$(git describe --tags --abbrev=0 --match 'rust-sdk-v*' HEAD)" >> "$GITHUB_OUTPUT"
 
-      # cargo-semver-checks compare l'API publique de carbonfr-core et
-      # carbonfr-eligibility à leur état au dernier tag `vX.Y.Z`. Règle
-      # ADR-0030 §3 (en 0.x, pré-1.0) : toute rupture — retrait/renommage
-      # public, nouvelle variante sur un enum exhaustif, nouveau champ sur
-      # une struct à champs publics hors doctrine §3, etc. — exige de
-      # relever la version *minor* du workspace ([workspace.package].version)
-      # dans la MÊME PR, sinon CE JOB ÉCHOUE : cargo-semver-checks « assume
-      # minor » tant que la version n'a pas bougé (il refuse par exemple un
-      # simple ajout de `#[non_exhaustive]` sans bump). À partir d'I5
-      # (première publication réelle), la baseline redeviendra le registre
-      # crates.io par défaut (ADR-0030 §4) et ce job changera d'entrée.
+      # cargo-semver-checks compare l'API publique de chaque crate publiée à
+      # son état au dernier tag de release — qui est aussi sa dernière version
+      # publiée sur crates.io (release-crates.yml / release-rust-sdk.yml
+      # publient à chaque tag). Règle ADR-0030 §3 (en 0.x, pré-1.0) : toute
+      # rupture — retrait/renommage public, nouvelle variante sur un enum
+      # exhaustif, nouveau champ sur une struct à champs publics, etc. — exige
+      # de relever la version *minor* dans la MÊME PR, sinon CE JOB ÉCHOUE :
+      # cargo-semver-checks « assume minor » tant que la version n'a pas bougé
+      # (il refuse par exemple un simple ajout de `#[non_exhaustive]` sans bump).
       #
-      # TODO (2026-09-25, I6) : ajouter carbonfr-sdk à ce job APRÈS sa
-      # première publication crates.io (ADR-0031 décision 12) — pas de tag
-      # `rust-sdk-v*` avant cela, donc pas de baseline possible aujourd'hui
-      # (`cargo-semver-checks` a besoin d'un état publié ou d'un tag à
-      # comparer). Le motif `--match 'v*'` de la baseline ci-dessous ignore
-      # déjà `rust-sdk-v*` (un tag ne commençant pas par `v` ne matche pas
-      # `v*`) : aucun risque de baseline erronée entre-temps.
-      - name: cargo-semver-checks (baseline ${{ steps.baseline.outputs.rev }})
+      # carbonfr-core / carbonfr-eligibility : version du workspace, tags `v*`.
+      - name: cargo-semver-checks core + eligibility (baseline ${{ steps.baseline.outputs.rev }})
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
         with:
           package: carbonfr-core,carbonfr-eligibility
           baseline-rev: ${{ steps.baseline.outputs.rev }}
+
+      # carbonfr-sdk : axe de version propre (crates/sdk/Cargo.toml), tags
+      # `rust-sdk-v*` (ADR-0031 décision 12) ; toutes les features, pour
+      # couvrir aussi `IntensityStream` (feature `stream`).
+      - name: cargo-semver-checks carbonfr-sdk (baseline ${{ steps.baseline.outputs.sdk }})
+        uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
+        with:
+          package: carbonfr-sdk
+          feature-group: all-features
+          baseline-rev: ${{ steps.baseline.outputs.sdk }}
 
   rustdoc-package:
     name: rustdoc + package (crates publiables)

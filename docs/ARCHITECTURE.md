@@ -155,7 +155,7 @@ Les crates publiables sont préfixées `carbonfr-*` même si les dossiers resten
 | `adapter-entsoe` | `CrossBorderSource` (flux A11 + intensité voisine A75) + `SpotPriceSource` (spot A44) | reqwest, quick-xml |
 | `adapter-webhook` | `Notifier` (livraison HMAC signée, anti-SSRF) | reqwest |
 | `adapter-gbdt` | `ForecastModel` ML (`gbdt@1`, gardé par backtest — non servi) | gbdt |
-| `sdk` | client HTTP Rust `carbonfr-sdk` de l'API publique (**hors hexagone** : c'est un client de `/v1`, pas un adapter du domaine — il ne dépend pas de `core`, ADR-0031 décision 5) ; socle + flux SSE en 0.1.0, pas encore publié (I6) | reqwest, rustls, time |
+| `sdk` | client HTTP Rust `carbonfr-sdk` de l'API publique (**hors hexagone** : c'est un client de `/v1`, pas un adapter du domaine — il ne dépend pas de `core`, ADR-0031 décision 5) ; 26 opérations `/v1` + flux SSE, publié sur crates.io (I6) | reqwest, rustls, time |
 | `server` (bin) | composition root + poller unique + watcher de webhooks + purge des abonnements désactivés + registre `/metrics` + sous-commandes | toutes les précédentes |
 
 ## 8. Roadmap

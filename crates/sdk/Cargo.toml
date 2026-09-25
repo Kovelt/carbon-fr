@@ -3,7 +3,7 @@ name = "carbonfr-sdk"
 # Axe de version PROPRE (pas `version.workspace = true`) : le SDK suit le
 # contrat d'API `/v1`, pas la version du serveur (ADR-0019 5e axe, ADR-0031
 # décision 12). Tag de release : `rust-sdk-v*`.
-version = "0.1.0"
+version = "0.1.1"
 # Anglais : audience crates.io/docs.rs internationale, comme core/eligibility
 # (ADR-0030 §7).
 description = "Async Rust client for the carbon-fr API — real-time and historical carbon intensity of French electricity."

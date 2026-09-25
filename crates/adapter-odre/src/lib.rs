@@ -284,7 +284,12 @@ impl OdreClient {
                     Ok(measurement) => measurements.push(measurement),
                     // Production locale nulle sur ce créneau → intensité indéfinie.
                     Err(SourceError::NoData(_)) => {}
-                    Err(other) => return Err(other),
+                    // Comme au national : une ligne invalide est ignorée, pas le lot.
+                    Err(err) => tracing::warn!(
+                        region = region.slug(),
+                        error = %err,
+                        "enregistrement ODRÉ régional invalide ignoré"
+                    ),
                 }
             }
             offset += count;
@@ -357,7 +362,15 @@ impl Eco2mixSource for OdreClient {
 
             let count = page.results.len() as u64;
             for record in page.results {
-                measurements.push(record.into_measurement()?);
+                // Une ligne invalide (valeur hors domaine, horodatage illisible)
+                // ne doit pas faire perdre toute la fenêtre du poller : on
+                // l'ignore et on le journalise.
+                match record.into_measurement() {
+                    Ok(measurement) => measurements.push(measurement),
+                    Err(err) => {
+                        tracing::warn!(error = %err, "enregistrement ODRÉ national invalide ignoré")
+                    }
+                }
             }
             offset += count;
 

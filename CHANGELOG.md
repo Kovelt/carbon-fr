@@ -6,6 +6,40 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### Corrigé
+
+- **Fenêtre glissante d'ingestion (`IngestRecent`)** : le poller n'ingérait
+  que le dernier point par cycle (`IngestLatest`), perdu définitivement quand
+  ODRÉ le publiait en retard (jeu temps réel, ~30 min, lignes futures
+  pré-remplies à valeurs nulles) — ~2 points nationaux perdus par jour en
+  moyenne, jamais rattrapés (et des trous de plusieurs jours en cas de panne
+  amont prolongée). Le poller relit désormais, à chaque cycle, les `N`
+  dernières heures (`CARBONFR_POLL_WINDOW_HOURS`, défaut 3 h) via le port
+  `Eco2mixSource::range` déjà existant, upsertées conditionnellement au
+  millésime (ADR-0006) : même nombre d'appels ODRÉ par cycle (un par zone),
+  quota inchangé. `IngestLatest` reste disponible pour compatibilité SemVer
+  (ADR-0030 §3) mais n'est plus appelé par le poller. Fenêtre plafonnée à
+  24 h (au-delà, la lecture paginerait). Une ligne ODRÉ invalide est ignorée
+  et journalisée au lieu de faire échouer toute la fenêtre. ADR-0003,
+  addendum 2026-09-25.
+- **Auto-réparation quotidienne de la collecte** : une fois par jour (10 min
+  après le démarrage, puis toutes les 24 h), réimport des 7 derniers jours
+  nationaux par un export de masse du jeu temps réel
+  (`CARBONFR_SELF_HEAL_DAYS`, 0 = désactivée, max 7), puis recalcul des
+  rollups. Une panne de la source de quelques jours se comble d'elle-même à
+  son retour. Cause de la panne du 25 août au 3 septembre établie par
+  Prometheus : 100 % des appels ODRÉ en échec pendant 8 jours, retour sans
+  intervention (cause externe). Coût : +1 appel ODRÉ par jour.
+
+### Supervision
+
+- Nouvelle alerte Prometheus **`CarbonfrDataStale`** (dernière mesure
+  nationale de plus de 2 h) dans `deploy/prometheus/alerts.yml`, appliquée en
+  production le 2026-09-25 : les alertes existantes ne voient pas une donnée
+  figée si le poller réécrit sans cesse le même point.
+
 ## [0.9.4] - 2026-09-25
 
 Rattrapage des trous de l'historique national. Aucune migration, aucun

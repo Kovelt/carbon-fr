@@ -16,6 +16,7 @@ mod get_history;
 mod get_price;
 mod get_stats;
 mod ingest_latest;
+mod ingest_recent;
 mod renewable;
 mod schedule;
 mod weather;
@@ -32,6 +33,9 @@ pub use get_history::GetIntensityHistory;
 pub use get_price::GetElectricityPrice;
 pub use get_stats::GetIntensityStats;
 pub use ingest_latest::IngestLatest;
+pub use ingest_recent::{
+    DEFAULT_WINDOW as INGEST_RECENT_DEFAULT_WINDOW, IngestRecent, IngestReport,
+};
 pub use renewable::CalibrateRenewable;
 pub use schedule::{CarbonAwareScheduler, ScheduledWindow};
 pub use weather::GetWeather;

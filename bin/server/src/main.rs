@@ -39,6 +39,7 @@
 //! | `DATABASE_URL`               | — (requis)     | DSN PostgreSQL                    |
 //! | `CARBONFR_BIND`              | `0.0.0.0:8080` | adresse d'écoute de l'API         |
 //! | `CARBONFR_POLL_SECS`         | `900` (15 min) | période d'ingestion ODRÉ (et TTL des caches de prévision), > 0 |
+//! | `CARBONFR_POLL_WINDOW_HOURS` | `3`            | largeur de la fenêtre glissante relue à chaque cycle (`IngestRecent`, rattrape un retard de publication ODRÉ sans appel supplémentaire), > 0, ADR-0003 addendum 2026-09-25 |
 //! | `CARBONFR_ENTSOE_TOKEN`      | (non défini)   | active l'ingestion ENTSO-E (imports `acv-ademe@2` + prix spot `/v1/price`) |
 //! | `CARBONFR_ENTSOE_BASE_URL`   | `https://web-api.tp.entsoe.eu/api` | endpoint de l'API ENTSO-E |
 //! | `CARBONFR_ENTSOE_WINDOW_HOURS` | `6`          | fenêtre récente interrogée par cycle de poll |
@@ -68,6 +69,7 @@
 //! | `CARBONFR_REVOKE_KEY`        | — (requis par `revoke-key`) | `revoke-key` : clé `cfr_…` ou son empreinte (64 hex, cf. `list-keys`) |
 //! | `CARBONFR_WEBHOOK_MAX_FAILURES` | `10`        | livraisons webhook échouées **consécutives** avant désactivation de l'abonnement (> 0, ADR-0016) |
 //! | `CARBONFR_WEBHOOK_PURGE_DAYS` | `30`         | délai avant suppression d'un abonnement **désactivé** (> 0, ADR-0016 addendum « purge ») ; purge au démarrage puis toutes les 6 h |
+//! | `CARBONFR_SELF_HEAL_DAYS`    | `7`            | auto-réparation quotidienne : réimport (export de masse, jeu temps réel) des N derniers jours nationaux, 10 min après le démarrage puis toutes les 24 h (0 = désactivée, ≤ 7 = fenêtre de recalcul des rollups ; ADR-0003 addendum 2026-09-25) |
 //! | `CARBONFR_TRUST_PROXY`       | `0` (off)      | faire confiance à `X-Forwarded-For` (derrière un reverse proxy) |
 //! | `CARBONFR_REAL_IP_HEADER`    | (non défini)   | en-tête d'IP réelle dédié (ex. `x-real-ip`) — **uniquement** si le proxy l'écrase systématiquement ; défaut = dernier segment de `X-Forwarded-For` (audit 2026-08) |
 //! | `CARBONFR_DB_MAX_CONNECTIONS` | `20`         | taille du pool PostgreSQL           |
@@ -96,7 +98,8 @@ use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_adapter_webhook::HttpNotifier;
 use carbonfr_core::application::{
     AnalyzeRenewableSignal, BackfillHistory, BacktestConsumptionForecast, BacktestForecast,
-    BacktestRenewable, BacktestReport, CalibrateRenewable, IngestLatest,
+    BacktestRenewable, BacktestReport, CalibrateRenewable, INGEST_RECENT_DEFAULT_WINDOW,
+    IngestRecent,
 };
 use carbonfr_core::domain::{
     ACV_FORECAST_ID, ACV_FORECAST_VERSION, CLIMATOLOGY_ID, CLIMATOLOGY_VERSION, ClimatologyParams,
@@ -215,6 +218,7 @@ async fn run_server() -> anyhow::Result<()> {
         repo.clone(),
         updates_tx.clone(),
         config.poll_interval,
+        config.poll_window,
         metrics.clone(),
     );
 
@@ -231,6 +235,17 @@ async fn run_server() -> anyhow::Result<()> {
     // même repository, tâche indépendante du watcher (fréquence bien plus
     // basse — 6 h contre chaque mise à jour du flux).
     let webhook_purge = spawn_webhook_purge(repo.clone(), config.webhook_purge_days);
+
+    // Auto-réparation quotidienne de la collecte (ADR-0003 addendum 2026-09-25) :
+    // un export de masse du jeu temps réel par jour comble les trous laissés par
+    // une panne de la source.
+    let self_heal = spawn_self_heal(
+        OdreClient::new()
+            .context("initialisation du client ODRÉ (auto-réparation)")?
+            .with_archive_source(ArchiveSource::Realtime),
+        repo.clone(),
+        config.self_heal_days,
+    );
 
     // Prévision (ADR-0009) : modèle climatology@1 alimenté par le même
     // repository. Intervalles **calibrés** au démarrage par quantiles de résidus
@@ -323,6 +338,7 @@ async fn run_server() -> anyhow::Result<()> {
     let mut poller = poller;
     let mut webhook_watcher = webhook_watcher;
     let mut webhook_purge = webhook_purge;
+    let mut self_heal = self_heal;
     let serve = {
         let shutdown = shutdown.clone();
         async move {
@@ -344,6 +360,9 @@ async fn run_server() -> anyhow::Result<()> {
         joined = &mut webhook_purge => Err(anyhow::anyhow!(
             "la purge des abonnements webhook désactivés s'est arrêtée ({joined:?})"
         )),
+        joined = &mut self_heal => Err(anyhow::anyhow!(
+            "l'auto-réparation de la collecte s'est arrêtée ({joined:?})"
+        )),
         // Filet de sécurité (audit 2026-08) : si une connexion refuse de se
         // drainer malgré la clôture des flux SSE, on force la sortie après le
         // délai de grâce plutôt que d'attendre le SIGKILL du superviseur.
@@ -362,6 +381,7 @@ async fn run_server() -> anyhow::Result<()> {
     poller.abort();
     webhook_watcher.abort();
     webhook_purge.abort();
+    self_heal.abort();
     serve_result
 }
 
@@ -1320,6 +1340,13 @@ const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(8);
 /// plus), 6 h suffisent largement sans justifier une planification plus fine.
 const WEBHOOK_PURGE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
 
+/// Auto-réparation de la collecte (ADR-0003 addendum 2026-09-25) : jours
+/// réimportés par défaut, période et délai avant le premier passage (laisse le
+/// démarrage — calibrations, premier cycle du poller — se faire d'abord).
+const DEFAULT_SELF_HEAL_DAYS: u32 = 7;
+const SELF_HEAL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+const SELF_HEAL_START_DELAY: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
 /// Profondeur de la climatologie de part renouvelable `share-clim@1`
 /// (ADR-0028) : 10 semaines, alignée sur `climatology@1` (N calé, ADR-0009).
 const SHARE_LOOKBACK_DAYS: i64 = 70;
@@ -1803,6 +1830,9 @@ struct ServerConfig {
     database_url: String,
     bind: SocketAddr,
     poll_interval: std::time::Duration,
+    /// Largeur de la fenêtre glissante ingérée à chaque cycle du poller
+    /// (`CARBONFR_POLL_WINDOW_HOURS`, ADR-0003 addendum 2026-09-25).
+    poll_window: Duration,
     visit_salt: Option<String>,
     trust_proxy: bool,
     /// En-tête d'IP réelle dédié (`CARBONFR_REAL_IP_HEADER`, opt-in — cf.
@@ -1814,6 +1844,9 @@ struct ServerConfig {
     /// Délai (jours) avant suppression d'un abonnement webhook **désactivé**
     /// (`CARBONFR_WEBHOOK_PURGE_DAYS`, ADR-0016 addendum « purge »).
     webhook_purge_days: u32,
+    /// Jours réimportés chaque jour par l'auto-réparation
+    /// (`CARBONFR_SELF_HEAL_DAYS`, 0 = désactivée, ADR-0003 addendum 2026-09-25).
+    self_heal_days: u32,
 }
 
 impl ServerConfig {
@@ -1827,6 +1860,8 @@ impl ServerConfig {
             .context("CARBONFR_BIND : adresse d'écoute invalide")?;
 
         let poll_secs = parse_poll_secs(std::env::var("CARBONFR_POLL_SECS").ok().as_deref())?;
+        let poll_window =
+            parse_poll_window_hours(std::env::var("CARBONFR_POLL_WINDOW_HOURS").ok().as_deref())?;
         let webhook_max_failures = parse_webhook_max_failures(
             std::env::var("CARBONFR_WEBHOOK_MAX_FAILURES")
                 .ok()
@@ -1834,6 +1869,8 @@ impl ServerConfig {
         )?;
         let webhook_purge_days =
             parse_webhook_purge_days(std::env::var("CARBONFR_WEBHOOK_PURGE_DAYS").ok().as_deref())?;
+        let self_heal_days =
+            parse_self_heal_days(std::env::var("CARBONFR_SELF_HEAL_DAYS").ok().as_deref())?;
 
         let trust_proxy = matches!(
             std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
@@ -1862,11 +1899,13 @@ impl ServerConfig {
             database_url,
             bind,
             poll_interval: std::time::Duration::from_secs(poll_secs),
+            poll_window,
             visit_salt,
             trust_proxy,
             real_ip_header: real_ip_header_from_env(),
             webhook_max_failures,
             webhook_purge_days,
+            self_heal_days,
         })
     }
 }
@@ -1883,6 +1922,52 @@ fn parse_poll_secs(raw: Option<&str>) -> anyhow::Result<u64> {
         .unwrap_or(900);
     anyhow::ensure!(secs > 0, "CARBONFR_POLL_SECS doit être > 0 (secondes)");
     Ok(secs)
+}
+
+/// Largeur de la fenêtre glissante interrogée par le poller à chaque cycle
+/// (`CARBONFR_POLL_WINDOW_HOURS`, défaut [`INGEST_RECENT_DEFAULT_WINDOW`], 3 h
+/// — ADR-0003 addendum 2026-09-25) : au lieu du seul dernier point
+/// ([`IngestLatest`](carbonfr_core::application::IngestLatest), l'ancien
+/// comportement), chaque cycle relit les `N` dernières heures via
+/// [`IngestRecent`], ce qui comble d'éventuels retards de publication d'ODRÉ
+/// sans appel supplémentaire (toujours un appel par zone et par cycle).
+/// **Refusée si nulle** : le poller n'ingérerait alors plus jamais rien,
+/// silencieusement — même logique que [`parse_poll_secs`].
+fn parse_poll_window_hours(raw: Option<&str>) -> anyhow::Result<Duration> {
+    let hours = raw
+        .map(|raw| raw.trim().parse::<u32>())
+        .transpose()
+        .context("CARBONFR_POLL_WINDOW_HOURS : nombre invalide")?;
+    let window = match hours {
+        None => INGEST_RECENT_DEFAULT_WINDOW,
+        Some(hours) => {
+            // Plafond 24 h : au-delà, `range()` pagine (100 points par page au
+            // pas de 15 min) et le coût en appels ODRÉ par cycle n'est plus de 1.
+            anyhow::ensure!(
+                (1..=24).contains(&hours),
+                "CARBONFR_POLL_WINDOW_HOURS doit être entre 1 et 24 (heures)"
+            );
+            Duration::hours(i64::from(hours))
+        }
+    };
+    Ok(window)
+}
+
+/// Jours réimportés par l'auto-réparation quotidienne (`CARBONFR_SELF_HEAL_DAYS`,
+/// défaut [`DEFAULT_SELF_HEAL_DAYS`]). `0` la désactive ; plafond 7 : au-delà,
+/// `refresh_rollups` (recalcul incrémental sur 7 j) ne mettrait pas à jour les
+/// séries agrégées des jours plus anciens réimportés.
+fn parse_self_heal_days(raw: Option<&str>) -> anyhow::Result<u32> {
+    let days = raw
+        .map(|raw| raw.trim().parse::<u32>())
+        .transpose()
+        .context("CARBONFR_SELF_HEAL_DAYS : nombre invalide")?
+        .unwrap_or(DEFAULT_SELF_HEAL_DAYS);
+    anyhow::ensure!(
+        days <= 7,
+        "CARBONFR_SELF_HEAL_DAYS doit être entre 0 (désactivée) et 7 (fenêtre de recalcul des rollups)"
+    );
+    Ok(days)
 }
 
 /// Seuil de désactivation automatique des webhooks
@@ -1970,6 +2055,15 @@ fn parse_rfc3339_env(name: &str) -> anyhow::Result<Option<OffsetDateTime>> {
 /// Démarre la tâche d'ingestion périodique. La première itération s'exécute
 /// immédiatement. Une erreur d'ingestion est journalisée sans interrompre la
 /// boucle (la donnée sera rattrapée à la prochaine itération ou au backfill).
+///
+/// Chaque cycle relit une **fenêtre glissante** de `window` (ADR-0003 addendum
+/// 2026-09-25, [`IngestRecent`]) plutôt que le seul dernier point
+/// ([`IngestLatest`](carbonfr_core::application::IngestLatest), ancien
+/// comportement) : un retard de publication d'ODRÉ (jeu temps réel, ~30 min)
+/// ne fait alors plus perdre le point définitivement, il est rattrapé au(x)
+/// cycle(s) suivant(s) — **sans appel ODRÉ supplémentaire** (toujours un appel
+/// par zone et par cycle, `range()` tenant en une page pour une fenêtre de
+/// quelques heures).
 #[allow(clippy::too_many_arguments)]
 fn spawn_poller<S, W, C, R>(
     source: S,
@@ -1978,6 +2072,7 @@ fn spawn_poller<S, W, C, R>(
     repo: R,
     updates: tokio::sync::broadcast::Sender<IntensityUpdate>,
     interval: std::time::Duration,
+    window: Duration,
     metrics: Metrics,
 ) -> JoinHandle<()>
 where
@@ -1992,7 +2087,7 @@ where
         + Clone
         + 'static,
 {
-    let ingest = IngestLatest::new(source.clone(), repo.clone());
+    let ingest = IngestRecent::new(source.clone(), repo.clone(), window);
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
         // Ticks manqués (cycle plus long que l'intervalle, machine suspendue…) :
@@ -2002,6 +2097,10 @@ where
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             ticker.tick().await;
+            // « Maintenant » figé une fois par cycle (pas par région) : la
+            // fenêtre glissante de chaque zone porte sur le même instant, et
+            // `IngestRecent` ne lit jamais l'horloge lui-même (pureté, ADR-0002).
+            let now = OffsetDateTime::now_utc();
 
             // National (rte-direct + acv-ademe dérivée) puis les 12 régions
             // (acv-ademe). Une région en échec ne bloque pas les autres.
@@ -2009,8 +2108,8 @@ where
             for region in std::iter::once(Region::National).chain(Region::METROPOLITAN) {
                 // Un appel ODRÉ par région : compté pour suivre le quota (50k/mois).
                 metrics.add_upstream_odre(1);
-                match ingest.execute(region).await {
-                    Ok(n) => written += n,
+                match ingest.execute(region, now).await {
+                    Ok(report) => written += report.written,
                     Err(err) => {
                         metrics.inc_error();
                         warn!(region = region.slug(), error = %err, "échec d'ingestion ODRÉ")
@@ -2269,6 +2368,58 @@ where
     })
 }
 
+/// Auto-réparation quotidienne de la collecte (ADR-0003 addendum 2026-09-25) :
+/// réimporte les `days` derniers jours nationaux par **un** export de masse du
+/// jeu temps réel (1 appel ODRÉ par jour), puis recalcule les rollups récents.
+/// Comble d'elle-même une panne de la source de quelques jours dès son retour
+/// (panne ODRÉ du 2026-08-25 au 2026-09-03 : 8 jours perdus). Upsert
+/// conditionnel au millésime : une mesure consolidée n'est jamais écrasée.
+/// Un échec est journalisé et retenté le lendemain ; `days = 0` la désactive
+/// (tâche inerte, pour garder une supervision uniforme).
+fn spawn_self_heal<A, R>(archive: A, repo: R, days: u32) -> JoinHandle<()>
+where
+    A: Eco2mixArchive + 'static,
+    R: IntensityRepository + Clone + 'static,
+{
+    tokio::spawn(async move {
+        if days == 0 {
+            info!("auto-réparation de la collecte désactivée (CARBONFR_SELF_HEAL_DAYS=0)");
+            std::future::pending::<()>().await;
+        }
+        let window = Duration::days(i64::from(days));
+        let backfill = BackfillHistory::new(archive, repo.clone(), window);
+        tokio::time::sleep(SELF_HEAL_START_DELAY).await;
+        let mut ticker = tokio::time::interval(SELF_HEAL_INTERVAL);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            ticker.tick().await;
+            let now = OffsetDateTime::now_utc();
+            let Some(range) = TimeRange::new(now - window, now) else {
+                continue;
+            };
+            match backfill.execute(range).await {
+                Ok(report) => {
+                    info!(
+                        days,
+                        read = report.read,
+                        written = report.written,
+                        "auto-réparation de la collecte terminée"
+                    );
+                    if report.written > 0
+                        && let Err(err) = repo.refresh_rollups().await
+                    {
+                        warn!(error = %err, "auto-réparation : recalcul des rollups impossible");
+                    }
+                }
+                Err(err) => warn!(
+                    error = %err,
+                    "auto-réparation de la collecte impossible (nouvel essai dans 24 h)"
+                ),
+            }
+        }
+    })
+}
+
 /// Attend **SIGINT (Ctrl-C) ou SIGTERM** pour un arrêt propre. SIGTERM est le
 /// signal envoyé par systemd/Docker à l'arrêt orchestré — sans lui, l'arrêt
 /// gracieux ne s'enclencherait pas en production.
@@ -2335,7 +2486,8 @@ mod tests {
     }
 
     use super::{
-        ArchiveSource, parse_backfill_source, parse_poll_secs, parse_webhook_max_failures,
+        ArchiveSource, INGEST_RECENT_DEFAULT_WINDOW, parse_backfill_source, parse_poll_secs,
+        parse_poll_window_hours, parse_self_heal_days, parse_webhook_max_failures,
         parse_webhook_purge_days, revocation_target, spawn_webhook_watcher,
     };
 
@@ -2499,5 +2651,48 @@ mod tests {
     fn poll_secs_default_and_explicit() {
         assert_eq!(parse_poll_secs(None).unwrap(), 900);
         assert_eq!(parse_poll_secs(Some("60")).unwrap(), 60);
+    }
+
+    /// Même logique que `CARBONFR_POLL_SECS=0` (audit 2026-08) : une fenêtre
+    /// nulle ferait tourner le poller sans jamais rien ingérer, silencieusement.
+    #[test]
+    fn poll_window_hours_zero_is_rejected_at_parse() {
+        let err = parse_poll_window_hours(Some("0")).unwrap_err();
+        assert!(err.to_string().contains("CARBONFR_POLL_WINDOW_HOURS"));
+    }
+
+    #[test]
+    fn poll_window_hours_invalid_is_rejected() {
+        assert!(parse_poll_window_hours(Some("trois")).is_err());
+        assert!(parse_poll_window_hours(Some("-3")).is_err());
+    }
+
+    /// Au-delà de 24 h, `range()` pagine : le coût en appels ODRÉ par cycle
+    /// ne serait plus constant.
+    #[test]
+    fn poll_window_hours_is_capped_at_24() {
+        assert!(parse_poll_window_hours(Some("24")).is_ok());
+        assert!(parse_poll_window_hours(Some("25")).is_err());
+    }
+
+    #[test]
+    fn self_heal_days_default_disable_and_cap() {
+        assert_eq!(parse_self_heal_days(None).unwrap(), 7);
+        assert_eq!(parse_self_heal_days(Some("0")).unwrap(), 0);
+        assert_eq!(parse_self_heal_days(Some(" 3 ")).unwrap(), 3);
+        assert!(parse_self_heal_days(Some("8")).is_err());
+        assert!(parse_self_heal_days(Some("sept")).is_err());
+    }
+
+    #[test]
+    fn poll_window_hours_default_and_explicit() {
+        assert_eq!(
+            parse_poll_window_hours(None).unwrap(),
+            INGEST_RECENT_DEFAULT_WINDOW
+        );
+        assert_eq!(
+            parse_poll_window_hours(Some(" 6 ")).unwrap(),
+            time::Duration::hours(6)
+        );
     }
 }

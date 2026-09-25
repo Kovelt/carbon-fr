@@ -6,11 +6,18 @@ use crate::ports::{Eco2mixSource, IntensityRepository};
 use super::ApplicationError;
 
 /// Récupère la dernière mesure depuis la source et la persiste via l'upsert
-/// conditionnel au millésime (ADR-0003, ADR-0006). C'est l'opération que le
-/// poller exécute périodiquement.
+/// conditionnel au millésime (ADR-0003, ADR-0006).
 ///
 /// Quand la mesure porte un mix de production, on **dérive et stocke aussi** la
 /// mesure `acv-ademe` (cycle de vie, ADR-0008) au même horodatage.
+///
+/// ⚠️ Conservé pour compatibilité (SemVer, ADR-0030) mais **plus utilisé par le
+/// poller** depuis l'addendum ADR-0003 du 2026-09-25 : ne lisant que le tout
+/// dernier point, un retard de publication d'ODRÉ le faisait manquer
+/// définitivement (jamais rattrapé). Le poller ingère désormais une fenêtre
+/// glissante via [`IngestRecent`](super::IngestRecent), qui couvre aussi ce cas
+/// (fenêtre à un seul point de large ≈ ce cas d'usage). Préférer `IngestRecent`
+/// pour toute nouvelle intégration.
 pub struct IngestLatest<S: Eco2mixSource, R: IntensityRepository> {
     source: S,
     repository: R,

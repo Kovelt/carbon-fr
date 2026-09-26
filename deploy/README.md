@@ -162,6 +162,13 @@ Mesure du 2026-09-25 : 150 jours rattrapés depuis le consolidé en ~1 min 15 s 
 horaires (~280 000 seaux) prend ~4 s et journalise un avertissement « slow statement »
 attendu.
 
+Mesure du 2026-09-26 (régional, v0.9.6) : 5 mois de consolidé (5 exports, 86 376 lignes
+lues / 86 352 écrites) puis 3 mois de temps réel (3 exports, 101 124 lignes) en ~1 min au
+total ; `measurement` passe de 158 à 221 Mo ; chaque reconstruction des rollups prend ~4,5 s.
+Les jours déjà partiellement couverts en temps réel avant le passage du consolidé gardent
+leurs points intermédiaires (`:15`/`:45`) : 58 à 65 points par jour au lieu de 48 sur la
+fenêtre concernée (cf. addendum ADR-0003 du 2026-09-26).
+
 ### Comblement régional (item PROD-1)
 
 Même sous-commande, `CARBONFR_BACKFILL_SCOPE=regional` : un export de masse par tranche

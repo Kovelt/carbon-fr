@@ -6,6 +6,14 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### Documentation
+
+- Plan I8 à jour après la v0.9.6 : quota ODRÉ, comblement régional (run en
+  prod le 2026-09-26) et resynchronisation des alertes cochés ; mesure du
+  backfill régional ajoutée à `deploy/README.md` §5.
+
 ## [0.9.6] - 2026-09-26
 
 Premières livraisons de l'itération I8 du [plan](docs/plan-iterations.md) :

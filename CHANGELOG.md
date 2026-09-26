@@ -25,6 +25,13 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 - Section `[0.9.5]` ci-dessous : ses notes étaient restées sous
   « Non publié » au moment du tag `v0.9.5` (rectifié ici).
 
+### Ajouté
+
+- **OpenAPI : champ `servers`** — `/v1/openapi.json` déclare l'instance
+  hébergée (`https://carbon-fr-api.kovelt.fr`) et une instance locale ;
+  Swagger UI (`/docs`) et les générateurs de clients ont désormais une URL de
+  base (promis à l'itération I2, livré ici).
+
 ## [0.9.5] - 2026-09-25
 
 Collecte fiabilisée après le diagnostic de la panne ODRÉ d'août : fenêtre

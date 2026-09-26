@@ -26,6 +26,10 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         license(name = "MIT OR Apache-2.0"),
         contact(name = "Kovelt", url = "https://kovelt.fr"),
     ),
+    servers(
+        (url = "https://carbon-fr-api.kovelt.fr", description = "Instance hébergée (Kovelt)"),
+        (url = "http://localhost:8080", description = "Instance locale (cargo run -p server)"),
+    ),
     paths(
         crate::handlers::intensity_now,
         crate::handlers::intensity_date,
@@ -231,6 +235,18 @@ mod tests {
              • si c'est INVOLONTAIRE : c'est une rupture de contrat, corrige le code ;\n\
              • si c'est VOLONTAIRE : régénère l'instantané et relis son diff dans ta PR :\n    \
              UPDATE_OPENAPI_SNAPSHOT=1 cargo test -p carbonfr-adapter-http openapi_contract_snapshot\n"
+        );
+    }
+
+    #[test]
+    fn document_lists_servers() {
+        let doc = document();
+        let servers = doc.servers.expect("servers");
+        let urls: Vec<&str> = servers.iter().map(|s| s.url.as_str()).collect();
+        assert_eq!(
+            urls,
+            ["https://carbon-fr-api.kovelt.fr", "http://localhost:8080"],
+            "l'instance hébergée doit être déclarée en premier (défaut de Swagger UI)"
         );
     }
 

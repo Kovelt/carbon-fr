@@ -261,7 +261,7 @@
           {
             "name": "version",
             "in": "query",
-            "description": "Version (défaut : dernière version de la méthode).",
+            "description": "Version (défaut : `1`, comme le reste de l'API ; `2` = vue\nconsommation, table incluant les pertes T&D).",
             "required": false,
             "schema": {
               "type": "integer",

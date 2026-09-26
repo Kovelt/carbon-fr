@@ -12,6 +12,16 @@
     },
     "version": "{{version}}"
   },
+  "servers": [
+    {
+      "url": "https://carbon-fr-api.kovelt.fr",
+      "description": "Instance hébergée (Kovelt)"
+    },
+    {
+      "url": "http://localhost:8080",
+      "description": "Instance locale (cargo run -p server)"
+    }
+  ],
   "paths": {
     "/health": {
       "get": {

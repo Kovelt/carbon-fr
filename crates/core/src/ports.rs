@@ -74,6 +74,21 @@ pub trait Eco2mixArchive: Send + Sync {
     /// par export de masse — pour calibrer `climatology@2` (ADR-0011 §4).
     async fn export_national_loads(&self, range: TimeRange)
     -> Result<Vec<LoadRecord>, SourceError>;
+
+    /// Mesures **régionales** historiques `acv-ademe` sur `range`, obtenues par
+    /// export de masse — toutes les régions métropolitaines en **un** export
+    /// par tranche (ADR-0003 addendum 2026-09-26). L'intensité est dérivée du
+    /// mix régional à l'adaptation, comme le fait [`Eco2mixSource::range`]
+    /// régional ; le millésime est porté par `nature` (ADR-0006).
+    ///
+    /// Méthode à **corps par défaut** : additive au trait (SemVer, ADR-0030) —
+    /// un implémenteur externe qui ne la redéfinit pas continue de compiler et
+    /// obtient simplement `Unavailable` s'il est appelé.
+    async fn export_regional(&self, _range: TimeRange) -> Result<Vec<Measurement>, SourceError> {
+        Err(SourceError::Unavailable(
+            "export régional non pris en charge par cette archive".into(),
+        ))
+    }
 }
 
 /// Port sortant : persistance des mesures (read-model + historique).

@@ -142,7 +142,7 @@ impl OdreClient {
         self
     }
 
-    /// Branche un [`QuotaTracker`](quota::QuotaTracker) externe (partagé entre
+    /// Branche un [`QuotaTracker`] externe (partagé entre
     /// plusieurs clients du même processus, ex. poller + auto-réparation dans
     /// `bin/server`) à la place de celui créé par défaut.
     pub fn with_quota_tracker(mut self, tracker: quota::QuotaTracker) -> Self {

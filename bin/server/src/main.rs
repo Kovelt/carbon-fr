@@ -47,6 +47,7 @@
 //! | `CARBONFR_BACKFILL_TO`       | maintenant     | fin du backfill (RFC 3339)        |
 //! | `CARBONFR_BACKFILL_WINDOW_DAYS` | `90`        | largeur de tranche d'export       |
 //! | `CARBONFR_BACKFILL_SOURCE`   | `consolidated` | jeu exporté : `consolidated` (consolidé/définitif) ou `realtime` (temps réel, pour un trou récent pas encore consolidé) |
+//! | `CARBONFR_BACKFILL_SCOPE`    | `national`     | périmètre du backfill : `national` (inchangé), `regional` (mix `acv-ademe` des 12 régions, item PROD-1) ou `all` (les deux) — ADR-0003 addendum 2026-09-26 |
 //! | `CARBONFR_BACKTEST_FROM`/`_TO` | 30 derniers jours | fenêtre de test (RFC 3339)   |
 //! | `CARBONFR_BACKTEST_REGION`   | `national`     | région évaluée (slug)             |
 //! | `CARBONFR_BACKTEST_METHODOLOGY` | `rte-direct` | méthodologie évaluée             |
@@ -70,6 +71,7 @@
 //! | `CARBONFR_WEBHOOK_MAX_FAILURES` | `10`        | livraisons webhook échouées **consécutives** avant désactivation de l'abonnement (> 0, ADR-0016) |
 //! | `CARBONFR_WEBHOOK_PURGE_DAYS` | `30`         | délai avant suppression d'un abonnement **désactivé** (> 0, ADR-0016 addendum « purge ») ; purge au démarrage puis toutes les 6 h |
 //! | `CARBONFR_SELF_HEAL_DAYS`    | `7`            | auto-réparation quotidienne : réimport (export de masse, jeu temps réel) des N derniers jours nationaux, 10 min après le démarrage puis toutes les 24 h (0 = désactivée, ≤ 7 = fenêtre de recalcul des rollups ; ADR-0003 addendum 2026-09-25) |
+//! | `CARBONFR_SELF_HEAL_REGIONAL` | `0` (off)     | étend l'auto-réparation quotidienne au régional (même fenêtre, +1 export/jour sur le jeu régional temps réel) — item PERF-3, **à activer seulement une fois le quota ODRÉ réel visible** (PROD-3, jauges `carbonfr_odre_quota_*`) ; ADR-0003 addendum 2026-09-26 |
 //! | `CARBONFR_TRUST_PROXY`       | `0` (off)      | faire confiance à `X-Forwarded-For` (derrière un reverse proxy) |
 //! | `CARBONFR_REAL_IP_HEADER`    | (non défini)   | en-tête d'IP réelle dédié (ex. `x-real-ip`) — **uniquement** si le proxy l'écrase systématiquement ; défaut = dernier segment de `X-Forwarded-For` (audit 2026-08) |
 //! | `CARBONFR_DB_MAX_CONNECTIONS` | `20`         | taille du pool PostgreSQL           |
@@ -256,6 +258,7 @@ async fn run_server() -> anyhow::Result<()> {
             .with_quota_tracker(odre_quota.clone()),
         repo.clone(),
         config.self_heal_days,
+        config.self_heal_regional,
     );
 
     // Prévision (ADR-0009) : modèle climatology@1 alimenté par le même
@@ -596,12 +599,14 @@ fn generate_api_key() -> String {
     format!("cfr_{hex}")
 }
 
-/// Mode backfill : rapatriement de l'historique national, puis arrêt.
+/// Mode backfill : rapatriement de l'historique (national et/ou régional selon
+/// `CARBONFR_BACKFILL_SCOPE`, item PROD-1), puis arrêt.
 async fn run_backfill() -> anyhow::Result<()> {
     let database_url =
         std::env::var("DATABASE_URL").context("la variable DATABASE_URL est requise")?;
     let repo = connect_repo(&database_url).await?;
     let source = backfill_source()?;
+    let scope = backfill_scope()?;
     let archive = OdreClient::new()
         .context("initialisation du client ODRÉ")?
         .with_archive_source(source);
@@ -609,88 +614,113 @@ async fn run_backfill() -> anyhow::Result<()> {
     let (range, window) = backfill_params()?;
     let backfill = BackfillHistory::new(archive.clone(), repo.clone(), window);
 
-    info!(from = %range.start(), to = %range.end(), window_days = window.whole_days(), source = ?source, "backfill historique national démarré");
-    let report = backfill
-        .execute(range)
-        .await
-        .context("backfill historique")?;
-    info!(
-        read = report.read,
-        written = report.written,
-        windows = report.windows,
-        "backfill terminé"
-    );
+    info!(from = %range.start(), to = %range.end(), window_days = window.whole_days(), source = ?source, scope = ?scope, "backfill historique démarré");
 
-    // Reconstruction COMPLÈTE des rollups après le backfill massif (il écrit des
-    // seaux historiques arbitraires que l'incrémental récent du poller ne couvre pas).
-    repo.rebuild_rollups()
-        .await
-        .context("reconstruction des rollups")?;
-    info!("rollups reconstruits");
-
-    // Backfill de la **charge réalisée** historique (consommation) — store de
-    // charge réutilisable (features du futur modèle ML, ADR-0012). Les prévisions
-    // de charge, elles, sont ingérées en continu par le poller.
-    //
-    // **Fenêtré** comme le national (un export de masse par tranche) : un export
-    // unique sur tout l'historique dépasse le timeout du client HTTP → corps
-    // tronqué (« error decoding response body »).
-    let mut loads = Vec::new();
-    let mut win_start = range.start();
-    while win_start < range.end() {
-        let win_end = (win_start + window).min(range.end());
-        let Some(slice) = TimeRange::new(win_start, win_end) else {
-            break;
-        };
-        let mut part = archive
-            .export_national_loads(slice)
+    if matches!(scope, BackfillScope::National | BackfillScope::All) {
+        let report = backfill
+            .execute(range)
             .await
-            .context("backfill de la charge")?;
-        loads.append(&mut part);
-        win_start = win_end;
-    }
-    let loads_written = repo
-        .upsert_loads(&loads)
-        .await
-        .context("écriture de la charge")?;
-    info!(loads = loads_written, "charge réalisée backfillée");
+            .context("backfill historique")?;
+        info!(
+            read = report.read,
+            written = report.written,
+            windows = report.windows,
+            "backfill national terminé"
+        );
 
-    // Backfill de la **prévision météo archivée** (ADR-0012) pour entraîner le
-    // GBDT, par tranches de 30 j (limite raisonnable de l'API). `run_at =
-    // valid_at − 24 h` (anti-fuite). Échec non bloquant (best-effort).
-    //
-    // L'API Historical Forecast d'Open-Meteo accepte des requêtes dès
-    // 2016-01-01, mais les variables utilisées ici (`wind_speed_100m`,
-    // `shortwave_radiation`) répondent tout-`null` sur **toute 2016** (données
-    // réelles ~2017→, vérifié live — audit 2026-08 ; l'agrégation saute
-    // désormais ces créneaux plutôt que fabriquer des 0,0). On borne donc le
-    // départ à **2017-01-01** : sans ce garde-fou, 2012→2017 = ~61 tranches
-    // inutiles (400 avant 2016, tout-`null` ensuite).
-    let weather_min = OffsetDateTime::new_utc(
-        time::Date::from_calendar_date(2017, time::Month::January, 1)
-            .context("date plancher de l'archive météo")?,
-        time::Time::MIDNIGHT,
-    );
-    let meteo = OpenMeteoClient::new().context("initialisation du client Open-Meteo")?;
-    let mut weather_written = 0usize;
-    let mut chunk_start = range.start().max(weather_min);
-    while chunk_start < range.end() {
-        let chunk_end = (chunk_start + Duration::days(30)).min(range.end());
-        if let Some(chunk) = TimeRange::new(chunk_start, chunk_end) {
-            match meteo.historical_forecast(chunk).await {
-                Ok(forecasts) => match repo.upsert_weather(&forecasts).await {
-                    Ok(n) => weather_written += n,
-                    Err(err) => warn!(error = %err, "échec d'écriture de la météo"),
-                },
-                Err(err) => warn!(error = %err, "échec d'archive météo (tranche ignorée)"),
-            }
+        // Reconstruction COMPLÈTE des rollups après le backfill massif (il écrit des
+        // seaux historiques arbitraires que l'incrémental récent du poller ne couvre pas).
+        repo.rebuild_rollups()
+            .await
+            .context("reconstruction des rollups")?;
+        info!("rollups reconstruits");
+
+        // Backfill de la **charge réalisée** historique (consommation) — store de
+        // charge réutilisable (features du futur modèle ML, ADR-0012). Les prévisions
+        // de charge, elles, sont ingérées en continu par le poller.
+        //
+        // **Fenêtré** comme le national (un export de masse par tranche) : un export
+        // unique sur tout l'historique dépasse le timeout du client HTTP → corps
+        // tronqué (« error decoding response body »).
+        let mut loads = Vec::new();
+        let mut win_start = range.start();
+        while win_start < range.end() {
+            let win_end = (win_start + window).min(range.end());
+            let Some(slice) = TimeRange::new(win_start, win_end) else {
+                break;
+            };
+            let mut part = archive
+                .export_national_loads(slice)
+                .await
+                .context("backfill de la charge")?;
+            loads.append(&mut part);
+            win_start = win_end;
         }
-        chunk_start = chunk_end;
+        let loads_written = repo
+            .upsert_loads(&loads)
+            .await
+            .context("écriture de la charge")?;
+        info!(loads = loads_written, "charge réalisée backfillée");
+
+        // Backfill de la **prévision météo archivée** (ADR-0012) pour entraîner le
+        // GBDT, par tranches de 30 j (limite raisonnable de l'API). `run_at =
+        // valid_at − 24 h` (anti-fuite). Échec non bloquant (best-effort).
+        //
+        // L'API Historical Forecast d'Open-Meteo accepte des requêtes dès
+        // 2016-01-01, mais les variables utilisées ici (`wind_speed_100m`,
+        // `shortwave_radiation`) répondent tout-`null` sur **toute 2016** (données
+        // réelles ~2017→, vérifié live — audit 2026-08 ; l'agrégation saute
+        // désormais ces créneaux plutôt que fabriquer des 0,0). On borne donc le
+        // départ à **2017-01-01** : sans ce garde-fou, 2012→2017 = ~61 tranches
+        // inutiles (400 avant 2016, tout-`null` ensuite).
+        let weather_min = OffsetDateTime::new_utc(
+            time::Date::from_calendar_date(2017, time::Month::January, 1)
+                .context("date plancher de l'archive météo")?,
+            time::Time::MIDNIGHT,
+        );
+        let meteo = OpenMeteoClient::new().context("initialisation du client Open-Meteo")?;
+        let mut weather_written = 0usize;
+        let mut chunk_start = range.start().max(weather_min);
+        while chunk_start < range.end() {
+            let chunk_end = (chunk_start + Duration::days(30)).min(range.end());
+            if let Some(chunk) = TimeRange::new(chunk_start, chunk_end) {
+                match meteo.historical_forecast(chunk).await {
+                    Ok(forecasts) => match repo.upsert_weather(&forecasts).await {
+                        Ok(n) => weather_written += n,
+                        Err(err) => warn!(error = %err, "échec d'écriture de la météo"),
+                    },
+                    Err(err) => warn!(error = %err, "échec d'archive météo (tranche ignorée)"),
+                }
+            }
+            chunk_start = chunk_end;
+        }
+        info!(
+            weather = weather_written,
+            "prévisions météo archivées backfillées"
+        );
     }
-    info!(
-        weather = weather_written,
-        "prévisions météo archivées backfillées"
-    );
+
+    if matches!(scope, BackfillScope::Regional | BackfillScope::All) {
+        // Périmètre régional (item PROD-1) : mix `acv-ademe` des 12 régions
+        // métropolitaines. **Pas** de backfill de charge ni de météo (entrées
+        // nationales, cf. `ConsumptionRepository`/`WeatherRepository`).
+        let report = backfill
+            .execute_regional(range)
+            .await
+            .context("backfill historique régional")?;
+        info!(
+            read = report.read,
+            written = report.written,
+            windows = report.windows,
+            "backfill régional terminé"
+        );
+
+        repo.rebuild_rollups()
+            .await
+            .context("reconstruction des rollups (régional)")?;
+        info!("rollups reconstruits (régional)");
+    }
+
     Ok(())
 }
 
@@ -1887,6 +1917,11 @@ struct ServerConfig {
     /// Jours réimportés chaque jour par l'auto-réparation
     /// (`CARBONFR_SELF_HEAL_DAYS`, 0 = désactivée, ADR-0003 addendum 2026-09-25).
     self_heal_days: u32,
+    /// Étend l'auto-réparation quotidienne au régional
+    /// (`CARBONFR_SELF_HEAL_REGIONAL`, défaut `0`/désactivée — item PERF-3,
+    /// ADR-0003 addendum 2026-09-26). Livré désactivé par défaut : n'activer
+    /// qu'une fois le quota ODRÉ réel visible en prod (PROD-3).
+    self_heal_regional: bool,
 }
 
 impl ServerConfig {
@@ -1911,6 +1946,12 @@ impl ServerConfig {
             parse_webhook_purge_days(std::env::var("CARBONFR_WEBHOOK_PURGE_DAYS").ok().as_deref())?;
         let self_heal_days =
             parse_self_heal_days(std::env::var("CARBONFR_SELF_HEAL_DAYS").ok().as_deref())?;
+        // Même patron booléen que `CARBONFR_TRUST_PROXY` : "1"/"true" = activée,
+        // tout le reste (y compris absent) = désactivée (défaut sûr, PERF-3).
+        let self_heal_regional = matches!(
+            std::env::var("CARBONFR_SELF_HEAL_REGIONAL").as_deref(),
+            Ok("1") | Ok("true")
+        );
 
         let trust_proxy = matches!(
             std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
@@ -1946,6 +1987,7 @@ impl ServerConfig {
             webhook_max_failures,
             webhook_purge_days,
             self_heal_days,
+            self_heal_regional,
         })
     }
 }
@@ -2053,6 +2095,34 @@ fn parse_backfill_source(value: Option<&str>) -> anyhow::Result<ArchiveSource> {
         Some("realtime") => Ok(ArchiveSource::Realtime),
         Some(other) => anyhow::bail!(
             "CARBONFR_BACKFILL_SOURCE : « {other} » invalide (attendu : consolidated ou realtime)"
+        ),
+    }
+}
+
+/// Périmètre du backfill (`CARBONFR_BACKFILL_SCOPE`, item PROD-1) : national
+/// par défaut (comportement historique inchangé — charge + météo archivées
+/// comprises), régional (mix `acv-ademe` des 12 régions, sans charge ni
+/// météo — entrées nationales), ou les deux.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum BackfillScope {
+    #[default]
+    National,
+    Regional,
+    All,
+}
+
+/// Périmètre exporté par le backfill (`CARBONFR_BACKFILL_SCOPE`).
+fn backfill_scope() -> anyhow::Result<BackfillScope> {
+    parse_backfill_scope(std::env::var("CARBONFR_BACKFILL_SCOPE").ok().as_deref())
+}
+
+fn parse_backfill_scope(value: Option<&str>) -> anyhow::Result<BackfillScope> {
+    match value.map(str::trim) {
+        None | Some("") | Some("national") => Ok(BackfillScope::National),
+        Some("regional") => Ok(BackfillScope::Regional),
+        Some("all") => Ok(BackfillScope::All),
+        Some(other) => anyhow::bail!(
+            "CARBONFR_BACKFILL_SCOPE : « {other} » invalide (attendu : national, regional ou all)"
         ),
     }
 }
@@ -2416,7 +2486,15 @@ where
 /// conditionnel au millésime : une mesure consolidée n'est jamais écrasée.
 /// Un échec est journalisé et retenté le lendemain ; `days = 0` la désactive
 /// (tâche inerte, pour garder une supervision uniforme).
-fn spawn_self_heal<A, R>(archive: A, repo: R, days: u32) -> JoinHandle<()>
+///
+/// `regional` (`CARBONFR_SELF_HEAL_REGIONAL`, défaut désactivée, item PERF-3,
+/// ADR-0003 addendum 2026-09-26) étend, sur la **même fenêtre**, une seconde
+/// tranche d'export de masse sur le jeu régional — journalisée à part, échec
+/// non bloquant comme le national. Coût quand activée : +1 export/jour sur le
+/// jeu régional temps réel. **À activer en prod seulement une fois le quota
+/// ODRÉ réel visible** (PROD-3, jauges `carbonfr_odre_quota_*`) : livrée
+/// désactivée par défaut.
+fn spawn_self_heal<A, R>(archive: A, repo: R, days: u32, regional: bool) -> JoinHandle<()>
 where
     A: Eco2mixArchive + 'static,
     R: IntensityRepository + Clone + 'static,
@@ -2437,6 +2515,9 @@ where
             let Some(range) = TimeRange::new(now - window, now) else {
                 continue;
             };
+
+            // Tranche nationale (toujours active tant que `days > 0`).
+            let mut written_total = 0usize;
             match backfill.execute(range).await {
                 Ok(report) => {
                     info!(
@@ -2445,16 +2526,39 @@ where
                         written = report.written,
                         "auto-réparation de la collecte terminée"
                     );
-                    if report.written > 0
-                        && let Err(err) = repo.refresh_rollups().await
-                    {
-                        warn!(error = %err, "auto-réparation : recalcul des rollups impossible");
-                    }
+                    written_total += report.written;
                 }
                 Err(err) => warn!(
                     error = %err,
                     "auto-réparation de la collecte impossible (nouvel essai dans 24 h)"
                 ),
+            }
+
+            // Tranche régionale (PERF-3, désactivée par défaut) : même fenêtre,
+            // journalisée à part ; un échec ne bloque ni la boucle ni la tranche
+            // nationale déjà écrite (best-effort, comme le national ci-dessus).
+            if regional {
+                match backfill.execute_regional(range).await {
+                    Ok(report) => {
+                        info!(
+                            days,
+                            read = report.read,
+                            written = report.written,
+                            "auto-réparation régionale de la collecte terminée"
+                        );
+                        written_total += report.written;
+                    }
+                    Err(err) => warn!(
+                        error = %err,
+                        "auto-réparation régionale de la collecte impossible (nouvel essai dans 24 h)"
+                    ),
+                }
+            }
+
+            if written_total > 0
+                && let Err(err) = repo.refresh_rollups().await
+            {
+                warn!(error = %err, "auto-réparation : recalcul des rollups impossible");
             }
         }
     })
@@ -2525,10 +2629,34 @@ mod tests {
         assert!(parse_backfill_source(Some("tr")).is_err());
     }
 
+    #[test]
+    fn backfill_scope_defaults_to_national() {
+        assert_eq!(parse_backfill_scope(None).unwrap(), BackfillScope::National);
+        assert_eq!(
+            parse_backfill_scope(Some("")).unwrap(),
+            BackfillScope::National
+        );
+        assert_eq!(
+            parse_backfill_scope(Some("national")).unwrap(),
+            BackfillScope::National
+        );
+        assert_eq!(
+            parse_backfill_scope(Some("regional")).unwrap(),
+            BackfillScope::Regional
+        );
+        assert_eq!(
+            parse_backfill_scope(Some("all")).unwrap(),
+            BackfillScope::All
+        );
+        let err = parse_backfill_scope(Some("europe")).unwrap_err();
+        assert!(err.to_string().contains("CARBONFR_BACKFILL_SCOPE"));
+    }
+
     use super::{
-        ArchiveSource, INGEST_RECENT_DEFAULT_WINDOW, parse_backfill_source, parse_poll_secs,
-        parse_poll_window_hours, parse_self_heal_days, parse_webhook_max_failures,
-        parse_webhook_purge_days, revocation_target, spawn_webhook_watcher,
+        ArchiveSource, BackfillScope, INGEST_RECENT_DEFAULT_WINDOW, parse_backfill_scope,
+        parse_backfill_source, parse_poll_secs, parse_poll_window_hours, parse_self_heal_days,
+        parse_webhook_max_failures, parse_webhook_purge_days, revocation_target,
+        spawn_webhook_watcher,
     };
 
     /// Le watcher enregistre l'issue de chaque livraison avec le seuil configuré

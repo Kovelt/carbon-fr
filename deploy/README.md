@@ -90,7 +90,11 @@ Deux couches complémentaires, **à relier à un canal de notification** (sans l
 1. **Prometheus** scrute `/metrics` sur le réseau interne (cf. ci-dessus) et évalue les règles de [`prometheus/alerts.yml`](prometheus/alerts.yml) (ADR-0022) :
    - `CarbonfrIngestionStale` — **alerte phare** : aucun cycle de poll réussi depuis plus de 2 × l'intervalle (`time() - carbonfr_poller_last_success_timestamp_seconds > 1800` pour le défaut de 900 s ; à ajuster si `CARBONFR_POLL_SECS` change) ;
    - `CarbonfrDown` — scrape en échec depuis 5 min ;
-   - `CarbonfrIngestionErrors` — plus de 10 échecs d'ingestion en 15 min.
+   - `CarbonfrIngestionErrors` — plus de 10 échecs d'ingestion en 15 min ;
+   - `CarbonfrDataStale` — dernière mesure nationale connue de plus de 2 h (poller qui « réussit » en boucle sans rien de neuf, ou source ODRÉ en panne) ;
+   - `CarbonfrOdreQuotaLow` / `CarbonfrOdreQuotaExhausted` — quota **réel** ODRÉ (par jeu de données) sous 10 % / épuisé (ADR-0022 addendum 2026-09-26, PROD-3).
+
+   Ces deux dernières règles lisent les jauges `carbonfr_odre_quota_{limit,remaining,reset_timestamp_seconds,observed_timestamp_seconds}`, labellisées `dataset="…"` — une par jeu de données ODRÉ interrogé (national temps réel, régional, export…). Elles reflètent les en-têtes de quota renvoyés par ODRÉ lui-même, **pas** un comptage d'appels initiés : le quota est remis à zéro le 1er du mois, et il est compté **par client (IP)** — ces jauges donnent donc le quota de l'instance qui scrape `/metrics` (celui d'un déploiement self-hosted sur une autre IP est indépendant).
 
    ```yaml
    # prometheus.yml (extrait)

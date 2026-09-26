@@ -32,6 +32,22 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   Swagger UI (`/docs`) et les générateurs de clients ont désormais une URL de
   base (promis à l'itération I2, livré ici).
 
+### Supervision
+
+- **Quota ODRÉ réel sur `/metrics`** — jauges
+  `carbonfr_odre_quota_{limit,remaining,reset_timestamp_seconds,observed_timestamp_seconds}{dataset}`,
+  lues directement sur les en-têtes de quota renvoyés par ODRÉ
+  (`x-ratelimit-dataset-*`, par jeu de données et par client) : 0 appel ODRÉ
+  supplémentaire, observation opportuniste dans `carbonfr-adapter-odre`
+  (`OdreClient::fetch`/`fetch_export`), rendu dans la composition root. Le
+  proxy existant (`carbonfr_upstream_requests_total`) reste seul pour
+  Open-Meteo/ENTSO-E. Deux règles d'alerte ajoutées à
+  `deploy/prometheus/alerts.yml` : `CarbonfrOdreQuotaLow` (< 10 % restant,
+  30 min) et `CarbonfrOdreQuotaExhausted` (0 restant, 15 min). ADR-0022,
+  addendum 2026-09-26. **Prérequis** du comblement régional (PROD-1/PERF-3,
+  plan I8) : visibilité sur le quota réel avant toute densification du poll
+  sur le jeu régional.
+
 ## [0.9.5] - 2026-09-25
 
 Collecte fiabilisée après le diagnostic de la panne ODRÉ d'août : fenêtre

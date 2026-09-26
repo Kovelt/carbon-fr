@@ -56,3 +56,46 @@ Les métriques utiles ici sont des **compteurs et des jauges** — pas d'histogr
 - **Crates `metrics` + `metrics-exporter-prometheus`** — écarté : histogrammes gratuits mais 2 dépendances et plus de surface, pour un besoin couvert par des compteurs/jauges maison.
 - **S'en tenir aux logs** — écarté : les logs répondent à « que s'est-il passé ? », pas à « depuis combien de temps la donnée est-elle gelée ? » sous forme alertable.
 - **Exposer `/metrics` sous `/v1`** — écarté : ce n'est pas un contrat public versionné mais de l'exploitation ; le coupler à `/v1` brouillerait les deux.
+
+## Addendum (2026-09-26) — quota ODRÉ réel
+
+**Constat** : ODRÉ renvoie, sur **chaque** réponse (`records` comme `exports/json`), des en-têtes de quota **par jeu de données et par client (IP)** :
+
+```
+x-ratelimit-dataset-limit: 50000
+x-ratelimit-dataset-remaining: 49977
+x-ratelimit-dataset-reset: 2026-10-01 00:00:00+00:00
+x-ratelimit-limit: 10000000            (quota API global, moins intéressant)
+x-ratelimit-remaining: 9999959
+x-ratelimit-reset: 2026-09-27 00:00:00+00:00
+```
+
+`carbonfr_upstream_requests_total{source="odre"}` (décision ci-dessus) n'en captait rien : c'est un **proxy** (appels initiés par le processus), pas ce qu'ODRÉ pense réellement du quota consommé sur cette IP. En prod, le jeu régional (`eco2mix-regional-tr`) était à ~55 % consommé à J26 du mois (22 422 restants sur 50 000) — cf. ADR-0003 addendum 2026-09-23. C'est le **prérequis explicite** posé par ce dernier addendum avant de densifier davantage le poll régional (plan I8, item PROD-3) : ne pas ajouter d'appel sans visibilité sur ce que le quota réel en dit.
+
+### Décision
+
+**Observer ces en-têtes de façon opportuniste**, sans appel supplémentaire, et les rendre en jauges Prometheus — en plus du proxy existant, pas à sa place.
+
+**Placement (hexagonal)** : l'observation vit dans l'**adapter** (`crates/adapter-odre/src/quota.rs`, nouveau module `QuotaTracker` + `DatasetQuota`), pas dans `core`/`eligibility` (aucun nouveau port : ce n'est pas une donnée du domaine, seulement de l'exploitation d'un adapter concret) : `OdreClient` lit `resp.headers()` dans `fetch` et `fetch_export`, **avant** le contrôle du statut et avant de consommer le corps — à dessein, pour capter aussi les en-têtes d'un 429 (quota dépassé, le cas le plus probable pour porter `remaining: 0`) plutôt que de les perdre parce que la requête échoue — 0 appel HTTP en plus. Le **rendu** vit dans la composition root (`bin/server/src/metrics.rs`, `render_odre_quota` + `QuotaGauge`), qui reste indépendante des types de l'adapter (conversion faite dans `main.rs`). Un seul `QuotaTracker` est créé au démarrage du serveur et partagé (`with_quota_tracker`) entre les **deux** clients ODRÉ du processus qui exposent `/metrics` — le poller et l'auto-réparation quotidienne (ADR-0003 addendum 2026-09-25) — pas celui de la sous-commande `backfill`, un processus séparé sans `/metrics`.
+
+**4 jauges ajoutées**, labellisées `dataset="…"` (une par jeu de données observé) :
+
+| Métrique | Type | Usage |
+| --- | --- | --- |
+| `carbonfr_odre_quota_limit{dataset}` | gauge | plafond mensuel du jeu (`x-ratelimit-dataset-limit`) |
+| `carbonfr_odre_quota_remaining{dataset}` | gauge | appels restants avant remise à zéro (`x-ratelimit-dataset-remaining`) |
+| `carbonfr_odre_quota_reset_timestamp_seconds{dataset}` | gauge | prochaine remise à zéro (`x-ratelimit-dataset-reset`) ; **omise** pour un jeu sans cet en-tête (pas de `0` trompeur — `0` est un horodatage Unix valide) |
+| `carbonfr_odre_quota_observed_timestamp_seconds{dataset}` | gauge | horodatage de la dernière observation pour ce jeu |
+
+Observation **purement opportuniste** : si `limit` ou `remaining` est absent ou illisible, rien n'est enregistré (retour silencieux, jamais d'erreur — une observation manquée ne doit jamais faire échouer l'appel ODRÉ qui la porte).
+
+**La « limite assumée » de la décision initiale est levée pour ODRÉ** : on ne dépend plus seulement du proxy `carbonfr_upstream_requests_total` pour ce fournisseur, on lit ce qu'il déclare lui-même. Le proxy **reste la seule visibilité pour Open-Meteo et ENTSO-E**, qui n'exposent pas ce genre d'en-tête de quota par jeu.
+
+**Alertes** (`deploy/prometheus/alerts.yml`) :
+
+- `CarbonfrOdreQuotaLow` — `carbonfr_odre_quota_remaining / carbonfr_odre_quota_limit < 0.10` pendant 30 min, `severity: warning`.
+- `CarbonfrOdreQuotaExhausted` — `carbonfr_odre_quota_remaining == 0` pendant 15 min, `severity: critical`.
+
+### Déclenchement
+
+Prérequis explicite du **comblement régional** (PROD-1/PERF-3, plan `docs/plan-iterations.md` I8) : toute densification du poll sur `eco2mix-regional-tr` doit désormais pouvoir être vérifiée contre le quota **réel** (et alertée avant épuisement), pas seulement estimée par le proxy d'appels initiés.

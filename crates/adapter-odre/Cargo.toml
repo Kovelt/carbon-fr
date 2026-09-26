@@ -23,3 +23,7 @@ time = { workspace = true, features = ["parsing", "formatting"] }
 [dev-dependencies]
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+# Serveur HTTP local pour le test hermétique de bout en bout du quota (aucun
+# appel ODRÉ réel) : jamais dans le binaire de prod, dev-dependency seulement —
+# même usage que `crates/adapter-webhook`.
+axum = { workspace = true }

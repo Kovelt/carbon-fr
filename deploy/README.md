@@ -138,7 +138,9 @@ sous-commande `backfill`, qui télécharge l'**export de masse** d'ODRÉ par tra
 l'API paginée, qui consommerait le quota — ADR-0003), réécrit les mesures avec l'upsert
 conditionnel au millésime (ADR-0006, sans effet sur une valeur de meilleur millésime),
 reconstruit les séries agrégées, puis rattrape la charge et la météo archivée de la
-période.
+période. **Périmètre** (`CARBONFR_BACKFILL_SCOPE`, défaut `national`) : la procédure
+ci-dessous couvre le national (comportement historique, inchangé) ; pour le régional
+(item PROD-1), voir la sous-section dédiée en fin de section.
 
 1. **Mesurer le trou** (lecture seule) : jours sans mesure nationale `rte-direct` sur la
    période suspecte.
@@ -159,3 +161,48 @@ Mesure du 2026-09-25 : 150 jours rattrapés depuis le consolidé en ~1 min 15 s 
 8 jours depuis le temps réel en quelques secondes. La reconstruction complète des séries
 horaires (~280 000 seaux) prend ~4 s et journalise un avertissement « slow statement »
 attendu.
+
+### Comblement régional (item PROD-1)
+
+Même sous-commande, `CARBONFR_BACKFILL_SCOPE=regional` : un export de masse par tranche
+couvre les **12 régions métropolitaines en un coup** (pas de paramètre région — l'export
+n'est pas filtré par `refine`), mesures `acv-ademe` dérivées à l'adaptation, comme
+`Eco2mixSource::range` régional. **Pas** de backfill de charge ni de météo dans ce
+périmètre (entrées nationales uniquement).
+
+1. **Mesurer le trou** (lecture seule) : nombre de lignes `measurement` par région et par
+   jour sur la méthodologie `acv-ademe`, ou `/v1/intensity/date?region=<slug>&methodology=acv-ademe`
+   sur quelques régions.
+2. **Choisir la source** comme au national : `consolidated` (défaut) si la période est déjà
+   couverte (RTE la publie avec ~3 mois de retard), sinon `realtime` pour la période la plus
+   récente.
+3. **Fenêtre recommandée : `CARBONFR_BACKFILL_WINDOW_DAYS=30`** (contre 90 au national) — un
+   export régional couvre 12 régions à la fois ; à fenêtre égale, le corps téléchargé est
+   nettement plus gros qu'au national.
+4. **Répéter en local** sur une base PostgreSQL 17 jetable, comme au national, et contrôler
+   le nombre de mesures **par jour et par région** :
+   ```sql
+   select region, date_trunc('day', at) as day, count(*)
+   from measurement
+   where methodology_id = 'acv-ademe' and region <> 'national'
+   group by region, day
+   order by day, region;
+   ```
+   Attendu : **48 points/jour/région** en consolidé (pas 30 min), **96** en temps réel
+   (pas 15 min) — cf. addendum ADR-0003 2026-09-26.
+5. **En production** : dump de la base juste avant (droits `600`, comme au national). **Ordre
+   recommandé** pour rapatrier tout l'historique manquant sans mélanger les deux sources sur
+   la même période : le **consolidé** d'abord sur la partie déjà consolidée par RTE (ex.
+   février → juin), puis le **temps réel** ensuite sur la partie la plus récente (ex. juillet
+   → aujourd'hui) :
+   ```
+   docker exec -e CARBONFR_BACKFILL_SCOPE=regional -e CARBONFR_BACKFILL_FROM=2026-02-01T00:00:00Z -e CARBONFR_BACKFILL_TO=2026-07-01T00:00:00Z -e CARBONFR_BACKFILL_WINDOW_DAYS=30 <conteneur> carbonfr-server backfill
+   docker exec -e CARBONFR_BACKFILL_SCOPE=regional -e CARBONFR_BACKFILL_SOURCE=realtime -e CARBONFR_BACKFILL_FROM=2026-07-01T00:00:00Z -e CARBONFR_BACKFILL_WINDOW_DAYS=30 <conteneur> carbonfr-server backfill
+   ```
+6. **Vérifier** : la requête de contrôle de l'étape 4 sur la prod, puis
+   `/v1/intensity/date?region=<slug>&methodology=acv-ademe` et `/v1/intensity/stats` sur
+   quelques régions et dates.
+
+`CARBONFR_SELF_HEAL_REGIONAL` (défaut désactivée) étend ensuite l'auto-réparation
+quotidienne au régional pour ne pas rouvrir ce même trou — à activer seulement une fois le
+quota ODRÉ réel visible sur `/metrics` (item PROD-3, jauges `carbonfr_odre_quota_*`).

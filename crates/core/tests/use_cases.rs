@@ -10,8 +10,8 @@ use async_trait::async_trait;
 use time::{Duration, OffsetDateTime};
 
 use carbonfr_core::application::{
-    BackfillHistory, BacktestConsumptionForecast, FindGreenestWindow, GetCurrentIntensity,
-    GetIntensityHistory, GetIntensityStats, IngestLatest, IngestRecent,
+    ApplicationError, BackfillHistory, BacktestConsumptionForecast, FindGreenestWindow,
+    GetCurrentIntensity, GetIntensityHistory, GetIntensityStats, IngestLatest, IngestRecent,
 };
 use carbonfr_core::domain::{
     CarbonIntensity, ForecastPoint, GenerationMix, Granularity, IntensityStats, Measurement,
@@ -718,11 +718,15 @@ async fn get_stats_summary_and_hourly_rollup() {
 }
 
 /// Export de masse simulé : rend une mesure à pas `step` couvrant l'intervalle
-/// demandé, et enregistre les bornes de chaque tranche reçue.
+/// demandé, et enregistre les bornes de chaque tranche reçue. `export_regional`
+/// rend, à chaque pas, une mesure `acv-ademe` pour chacune des 12 régions
+/// métropolitaines (comme l'export ODRÉ réel, une tranche = un téléchargement
+/// couvrant toutes les régions, ADR-0003 addendum 2026-09-26).
 #[derive(Clone, Default)]
 struct FakeArchive {
     step: Duration,
     ranges: Arc<Mutex<Vec<TimeRange>>>,
+    regional_ranges: Arc<Mutex<Vec<TimeRange>>>,
 }
 
 #[async_trait]
@@ -744,6 +748,47 @@ impl Eco2mixArchive for FakeArchive {
     ) -> Result<Vec<carbonfr_core::domain::LoadRecord>, SourceError> {
         Ok(Vec::new())
     }
+
+    async fn export_regional(&self, range: TimeRange) -> Result<Vec<Measurement>, SourceError> {
+        self.regional_ranges.lock().unwrap().push(range);
+        let mut out = Vec::new();
+        let mut t = range.start();
+        while t < range.end() {
+            for region in Region::METROPOLITAN {
+                out.push(Measurement {
+                    at: t,
+                    region,
+                    intensity: CarbonIntensity::new(40.0).unwrap(),
+                    methodology: Methodology::acv_ademe(),
+                    vintage: Vintage::Consolidated,
+                    mix: None,
+                });
+            }
+            t += self.step;
+        }
+        Ok(out)
+    }
+}
+
+/// Archive minimale n'implémentant que le périmètre national (comme un
+/// adapter externe écrit avant l'ajout du port régional) : `export_regional`
+/// reste sur la méthode par défaut du trait [`Eco2mixArchive`] — additive,
+/// donc sans rupture de compilation pour cet implémenteur (SemVer, ADR-0030).
+#[derive(Clone, Default)]
+struct NationalOnlyArchive;
+
+#[async_trait]
+impl Eco2mixArchive for NationalOnlyArchive {
+    async fn export_national(&self, _range: TimeRange) -> Result<Vec<Measurement>, SourceError> {
+        Ok(Vec::new())
+    }
+
+    async fn export_national_loads(
+        &self,
+        _range: TimeRange,
+    ) -> Result<Vec<carbonfr_core::domain::LoadRecord>, SourceError> {
+        Ok(Vec::new())
+    }
 }
 
 #[tokio::test]
@@ -753,6 +798,7 @@ async fn backfill_slices_range_and_upserts_each_window() {
     let archive = FakeArchive {
         step: Duration::hours(1),
         ranges: Arc::default(),
+        regional_ranges: Arc::default(),
     };
 
     // 24 h découpées en tranches de 6 h → 4 tranches, 6 mesures chacune.
@@ -779,6 +825,81 @@ async fn backfill_slices_range_and_upserts_each_window() {
         .await
         .unwrap();
     assert_eq!(stored.len(), 24);
+}
+
+/// Périmètre régional (PROD-1) : mêmes tranches que le national, mais chaque
+/// export rend les 12 régions d'un coup (un export = toutes les régions,
+/// ADR-0003 addendum 2026-09-26) — sans dérivation cycle de vie à l'upsert
+/// (déjà `acv-ademe` en sortie de l'export).
+#[tokio::test]
+async fn backfill_regional_slices_range_and_upserts_each_window() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let repo = InMemoryRepo::default();
+    let archive = FakeArchive {
+        step: Duration::hours(6),
+        ranges: Arc::default(),
+        regional_ranges: Arc::default(),
+    };
+
+    // 24 h découpées en tranches de 6 h → 4 tranches ; à pas 6 h, chaque
+    // tranche ne produit qu'un seul pas × 12 régions = 12 mesures.
+    let backfill = BackfillHistory::new(archive.clone(), repo.clone(), Duration::hours(6));
+    let range = TimeRange::new(t0, t0 + Duration::hours(24)).unwrap();
+    let report = backfill.execute_regional(range).await.unwrap();
+
+    assert_eq!(report.windows, 4);
+    assert_eq!(report.read, 48);
+    assert_eq!(report.written, 48);
+
+    // Les tranches régionales couvrent l'intervalle sans trou ni chevauchement
+    // (bloc : le verrou ne doit pas traverser un point d'`await`, cf.
+    // `backfill_slices_range_and_upserts_each_window` ci-dessus).
+    let (count, first_start, last_end) = {
+        let ranges = archive.regional_ranges.lock().unwrap();
+        (ranges.len(), ranges[0].start(), ranges[3].end())
+    };
+    assert_eq!(count, 4);
+    assert_eq!(first_start, t0);
+    assert_eq!(last_end, t0 + Duration::hours(24));
+
+    // Le national n'a pas été touché par le backfill régional.
+    assert!(archive.ranges.lock().unwrap().is_empty());
+
+    // Les 12 régions métropolitaines sont bien présentes dans le repository,
+    // sous la méthodologie `acv-ademe`, une mesure par tranche (4).
+    for region in Region::METROPOLITAN {
+        let stored = repo.range(region, "acv-ademe", range).await.unwrap();
+        assert_eq!(stored.len(), 4, "région {region} : 4 mesures attendues");
+    }
+}
+
+/// La méthode par défaut du port [`Eco2mixArchive::export_regional`] (non
+/// redéfinie par un implémenteur qui ne connaît que le national) renvoie
+/// `Unavailable` plutôt que de paniquer ou de renvoyer un vide silencieux.
+#[tokio::test]
+async fn eco2mix_archive_export_regional_defaults_to_unavailable() {
+    let archive = NationalOnlyArchive;
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let range = TimeRange::new(t0, t0 + Duration::hours(1)).unwrap();
+
+    let err = archive.export_regional(range).await.unwrap_err();
+    assert!(matches!(err, SourceError::Unavailable(_)));
+}
+
+/// Ce défaut se propage tel quel jusqu'au cas d'usage : `execute_regional` ne
+/// masque pas l'indisponibilité derrière un bilan vide.
+#[tokio::test]
+async fn backfill_execute_regional_propagates_default_port_error() {
+    let repo = InMemoryRepo::default();
+    let backfill = BackfillHistory::new(NationalOnlyArchive, repo, Duration::hours(6));
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let range = TimeRange::new(t0, t0 + Duration::hours(6)).unwrap();
+
+    let err = backfill.execute_regional(range).await.unwrap_err();
+    assert!(matches!(
+        err,
+        ApplicationError::Source(SourceError::Unavailable(_))
+    ));
 }
 
 /// Modèle de prévision *fake* : valeur constante sur la grille (`from + k·step`),

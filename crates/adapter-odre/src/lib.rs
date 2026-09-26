@@ -38,10 +38,25 @@ const NATIONAL_DATASET: &str = "eco2mix-national-tr";
 const REGIONAL_DATASET: &str = "eco2mix-regional-tr";
 /// Dataset éCO2mix national consolidé + définitif (historique, ADR-0003).
 const NATIONAL_ARCHIVE_DATASET: &str = "eco2mix-national-cons-def";
+/// Dataset éCO2mix régional consolidé + définitif (historique régional,
+/// ADR-0003 addendum 2026-09-26) — pas 30 min (contre 15 min en temps réel).
+const REGIONAL_ARCHIVE_DATASET: &str = "eco2mix-regional-cons-def";
 /// Plafond de pagination de l'API ODS v2.1 (`offset + limit ≤ 10 000`).
 const API_WINDOW: u64 = 10_000;
 /// Taille de page (maximum autorisé par l'API `records`).
 const PAGE_SIZE: u64 = 100;
+/// Colonnes retenues sur l'export de masse régional (ADR-0003 addendum
+/// 2026-09-26) : un enregistrement complet pèse ~700 o avec le détail
+/// `tco_*`/`tch_*` — un `select` explicite borne la taille du corps téléchargé
+/// (jusqu'à ~35 000 lignes pour une tranche de 30 j en temps réel).
+const REGIONAL_EXPORT_SELECT: &str = "date_heure,nature,code_insee_region,consommation,\
+    thermique,nucleaire,eolien,solaire,hydraulique,bioenergies,ech_physiques";
+/// Timeout **par requête** des exports de masse, plus large que le timeout
+/// global du client (30 s, [`OdreClient::new`]) : un export régional d'une
+/// tranche de 30 j en temps réel (~35 000 lignes) peut le dépasser. N'affecte
+/// que les appels `exports/json` — les appels `records` du poller gardent le
+/// timeout global.
+const EXPORT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// Installe le provider crypto `ring` de rustls comme provider par défaut du
 /// **processus**, si aucun n'est déjà en place.
@@ -74,8 +89,10 @@ fn ensure_crypto_provider() {
 pub struct OdreClient {
     http: reqwest::Client,
     base_url: String,
-    /// Jeu exporté par [`Eco2mixArchive`] (backfill) : consolidé par défaut.
-    archive_dataset: &'static str,
+    /// Source d'archive choisie (consolidée par défaut) : détermine à la fois
+    /// le jeu **national** et le jeu **régional** exportés par
+    /// [`Eco2mixArchive`] (backfill, ADR-0003 addendum 2026-09-26).
+    archive_source: ArchiveSource,
     /// Observation opportuniste du quota ODRÉ réel par jeu de données (ADR-0022
     /// addendum 2026-09-26). Partagé entre les clones (`Arc` interne) : un
     /// même traceur peut être branché sur plusieurs clients du même processus
@@ -101,10 +118,21 @@ pub enum ArchiveSource {
 }
 
 impl ArchiveSource {
+    /// Jeu national exporté par le backfill.
     fn dataset(self) -> &'static str {
         match self {
             Self::Consolidated => NATIONAL_ARCHIVE_DATASET,
             Self::Realtime => NATIONAL_DATASET,
+        }
+    }
+
+    /// Jeu **régional** exporté par le backfill régional (`export_regional`,
+    /// ADR-0003 addendum 2026-09-26) — même logique consolidé/temps réel que
+    /// [`dataset`](Self::dataset), sur le jeu régional correspondant.
+    fn regional_dataset(self) -> &'static str {
+        match self {
+            Self::Consolidated => REGIONAL_ARCHIVE_DATASET,
+            Self::Realtime => REGIONAL_DATASET,
         }
     }
 }
@@ -130,15 +158,15 @@ impl OdreClient {
         Self {
             http,
             base_url: base_url.into(),
-            archive_dataset: ArchiveSource::default().dataset(),
+            archive_source: ArchiveSource::default(),
             quota: quota::QuotaTracker::new(),
         }
     }
 
-    /// Choisit le jeu exporté par le backfill (consolidé par défaut, cf.
-    /// [`ArchiveSource`]).
+    /// Choisit le jeu (national **et** régional) exporté par le backfill
+    /// (consolidé par défaut, cf. [`ArchiveSource`]).
     pub fn with_archive_source(mut self, source: ArchiveSource) -> Self {
-        self.archive_dataset = source.dataset();
+        self.archive_source = source;
         self
     }
 
@@ -214,11 +242,18 @@ impl OdreClient {
 
     /// Export de masse (un téléchargement) : l'endpoint `exports/json` renvoie un
     /// tableau JSON de tous les enregistrements filtrés, sans plafond paginé.
-    async fn fetch_export(
+    ///
+    /// Générique sur le type de sortie `T` (national ou régional) et sur les
+    /// paramètres de requête additionnels (`query`, ex. `select` pour borner la
+    /// taille du corps régional, ADR-0003 addendum 2026-09-26) : `query` porte
+    /// déjà `where`, ajouté par l'appelant. Timeout [`EXPORT_TIMEOUT`], plus
+    /// large que le timeout global du client — sans changement pour les appels
+    /// `records` du poller.
+    async fn fetch_export<T: DeserializeOwned>(
         &self,
         dataset: &str,
-        filter: &str,
-    ) -> Result<Vec<NationalRecord>, SourceError> {
+        query: &[(&str, &str)],
+    ) -> Result<Vec<T>, SourceError> {
         let url = format!(
             "{}/api/explore/v2.1/catalog/datasets/{dataset}/exports/json",
             self.base_url.trim_end_matches('/')
@@ -226,7 +261,8 @@ impl OdreClient {
         let resp = self
             .http
             .get(url)
-            .query(&[("where", filter)])
+            .query(query)
+            .timeout(EXPORT_TIMEOUT)
             .send()
             .await
             .map_err(|e| SourceError::Unavailable(format!("export ODRÉ : {e}")))?;
@@ -243,7 +279,7 @@ impl OdreClient {
             )));
         }
 
-        resp.json::<Vec<NationalRecord>>()
+        resp.json::<Vec<T>>()
             .await
             .map_err(|e| SourceError::Invalid(format!("export ODRÉ illisible : {e}")))
     }
@@ -454,7 +490,9 @@ impl ConsumptionSource for OdreClient {
 impl Eco2mixArchive for OdreClient {
     async fn export_national(&self, range: TimeRange) -> Result<Vec<Measurement>, SourceError> {
         let filter = Self::time_filter(range)?;
-        let records = self.fetch_export(self.archive_dataset, &filter).await?;
+        let dataset = self.archive_source.dataset();
+        let records: Vec<NationalRecord> =
+            self.fetch_export(dataset, &[("where", &filter)]).await?;
         // L'export n'est pas trié ; le tri est garanti à la lecture (repository).
         records
             .into_iter()
@@ -477,7 +515,9 @@ impl Eco2mixArchive for OdreClient {
         let filter = format!(
             "date_heure >= '{start}' and date_heure < '{end}' and consommation is not null"
         );
-        let records = self.fetch_export(self.archive_dataset, &filter).await?;
+        let dataset = self.archive_source.dataset();
+        let records: Vec<NationalRecord> =
+            self.fetch_export(dataset, &[("where", &filter)]).await?;
         let mut loads = Vec::with_capacity(records.len());
         for record in records {
             if let Some(load) = record.into_realized_load()? {
@@ -485,6 +525,63 @@ impl Eco2mixArchive for OdreClient {
             }
         }
         Ok(loads)
+    }
+
+    /// Export de masse régional (item PROD-1, ADR-0003 addendum 2026-09-26) :
+    /// **un** téléchargement couvre les 12 régions métropolitaines (pas de
+    /// `refine` par région, contrairement à `latest_regional`/`range_regional`) ;
+    /// chaque enregistrement porte son propre `code_insee_region`, résolu ici en
+    /// [`Region`]. `select` (cf. `REGIONAL_EXPORT_SELECT`) borne la taille du
+    /// corps téléchargé.
+    async fn export_regional(&self, range: TimeRange) -> Result<Vec<Measurement>, SourceError> {
+        let start = range
+            .start()
+            .format(&Rfc3339)
+            .map_err(|e| SourceError::Invalid(format!("borne de début : {e}")))?;
+        let end = range
+            .end()
+            .format(&Rfc3339)
+            .map_err(|e| SourceError::Invalid(format!("borne de fin : {e}")))?;
+        let filter = format!(
+            "date_heure >= '{start}' and date_heure < '{end}' and consommation is not null"
+        );
+        let dataset = self.archive_source.regional_dataset();
+        let records: Vec<RegionalRecord> = self
+            .fetch_export(
+                dataset,
+                &[("where", &filter), ("select", REGIONAL_EXPORT_SELECT)],
+            )
+            .await?;
+
+        let mut measurements = Vec::with_capacity(records.len());
+        for record in records {
+            let code = record.code_insee_region.clone();
+            let region = match code.as_deref().and_then(Region::from_insee_code) {
+                Some(region) => region,
+                // Code absent, ou hors périmètre métropolitain (Corse, DOM-TOM,
+                // cf. ADR-0003) : ignoré, jamais une erreur — l'export couvre
+                // toutes les régions publiées, pas seulement les 12 attendues.
+                None => {
+                    tracing::debug!(
+                        code_insee_region = ?code,
+                        "enregistrement régional (export) hors périmètre métropolitain ignoré"
+                    );
+                    continue;
+                }
+            };
+            match record.into_measurement(region) {
+                Ok(measurement) => measurements.push(measurement),
+                // Production locale nulle sur ce créneau → intensité indéfinie
+                // (comme `range_regional`).
+                Err(SourceError::NoData(_)) => {}
+                Err(err) => tracing::warn!(
+                    region = region.slug(),
+                    error = %err,
+                    "enregistrement ODRÉ régional (export) invalide ignoré"
+                ),
+            }
+        }
+        Ok(measurements)
     }
 }
 
@@ -495,11 +592,49 @@ mod tests {
     #[test]
     fn archive_source_selects_dataset() {
         let client = OdreClient::new().expect("client");
-        assert_eq!(client.archive_dataset, "eco2mix-national-cons-def");
+        assert_eq!(client.archive_source, ArchiveSource::Consolidated);
+        assert_eq!(client.archive_source.dataset(), "eco2mix-national-cons-def");
+        assert_eq!(
+            client.archive_source.regional_dataset(),
+            "eco2mix-regional-cons-def"
+        );
+
         let client = client.with_archive_source(ArchiveSource::Realtime);
-        assert_eq!(client.archive_dataset, "eco2mix-national-tr");
+        assert_eq!(client.archive_source, ArchiveSource::Realtime);
+        assert_eq!(client.archive_source.dataset(), "eco2mix-national-tr");
+        assert_eq!(
+            client.archive_source.regional_dataset(),
+            "eco2mix-regional-tr"
+        );
+
         let client = client.with_archive_source(ArchiveSource::Consolidated);
-        assert_eq!(client.archive_dataset, "eco2mix-national-cons-def");
+        assert_eq!(client.archive_source.dataset(), "eco2mix-national-cons-def");
+    }
+
+    /// Construction des paramètres de l'export régional : `where` filtre sur
+    /// l'intervalle (`consommation is not null`, comme `range_regional`) et
+    /// `select` liste exactement les colonnes décodées par [`RegionalRecord`]
+    /// (ADR-0003 addendum 2026-09-26).
+    #[test]
+    fn export_regional_query_is_well_formed() {
+        let t0 = OffsetDateTime::from_unix_timestamp(0).unwrap();
+        let range = TimeRange::new(t0, t0 + time::Duration::hours(1)).unwrap();
+        let start = range.start().format(&Rfc3339).unwrap();
+        let end = range.end().format(&Rfc3339).unwrap();
+        let filter = format!(
+            "date_heure >= '{start}' and date_heure < '{end}' and consommation is not null"
+        );
+
+        assert_eq!(
+            filter,
+            "date_heure >= '1970-01-01T00:00:00Z' and date_heure < '1970-01-01T01:00:00Z' \
+             and consommation is not null"
+        );
+        assert_eq!(
+            REGIONAL_EXPORT_SELECT,
+            "date_heure,nature,code_insee_region,consommation,\
+             thermique,nucleaire,eolien,solaire,hydraulique,bioenergies,ech_physiques"
+        );
     }
 
     #[test]
@@ -581,5 +716,81 @@ mod tests {
         assert_eq!(snapshot[0].limit, 50_000);
         assert_eq!(snapshot[0].remaining, 49_977);
         assert!(snapshot[0].reset_unix.is_some());
+    }
+
+    /// Bout en bout, sans réseau réel (même patron que
+    /// `latest_observes_quota_headers_from_response`) : un serveur `axum` local
+    /// répond comme l'export de masse régional d'ODRÉ — un tableau JSON brut de
+    /// 3 enregistrements (région 84 valide, région 84 sans production locale,
+    /// code INSEE inconnu « 94 ») — pointé par `OdreClient::export_regional`
+    /// (item PROD-1, ADR-0003 addendum 2026-09-26). Vérifie que seule la ligne
+    /// valide produit une mesure, région et méthodologie résolues.
+    #[tokio::test]
+    async fn export_regional_resolves_region_and_skips_invalid_rows() {
+        use carbonfr_core::domain::{Methodology, Vintage};
+
+        let app = axum::Router::new().route(
+            "/api/explore/v2.1/catalog/datasets/eco2mix-regional-cons-def/exports/json",
+            axum::routing::get(|| async {
+                axum::Json(serde_json::json!([
+                    {
+                        "date_heure": "2026-06-30T21:30:00+00:00",
+                        "nature": "Données consolidées",
+                        "code_insee_region": "84",
+                        "consommation": 7122,
+                        "thermique": 376,
+                        "nucleaire": 4555,
+                        "eolien": "115",
+                        "solaire": 0,
+                        "hydraulique": 5098,
+                        "bioenergies": 111,
+                        "ech_physiques": -3129
+                    },
+                    {
+                        "date_heure": "2026-06-30T22:00:00+00:00",
+                        "nature": "Données consolidées",
+                        "code_insee_region": "84",
+                        "consommation": 100,
+                        "thermique": 0,
+                        "nucleaire": 0,
+                        "eolien": 0,
+                        "solaire": 0,
+                        "hydraulique": 0,
+                        "bioenergies": 0,
+                        "ech_physiques": 100
+                    },
+                    {
+                        "date_heure": "2026-06-30T21:30:00+00:00",
+                        "nature": "Données consolidées",
+                        "code_insee_region": "94",
+                        "consommation": 500,
+                        "thermique": 10,
+                        "nucleaire": 0,
+                        "eolien": 0,
+                        "solaire": 0,
+                        "hydraulique": 0,
+                        "bioenergies": 0,
+                        "ech_physiques": 500
+                    }
+                ]))
+            }),
+        );
+        let (base_url, _server) = spawn_server(app).await;
+        let client = OdreClient::with_http(reqwest::Client::new(), base_url);
+
+        let t0 = OffsetDateTime::from_unix_timestamp(0).unwrap();
+        let range = TimeRange::new(t0, t0 + time::Duration::hours(1)).unwrap();
+        let measurements = client
+            .export_regional(range)
+            .await
+            .expect("export régional");
+
+        // La 2ᵉ ligne (production locale nulle → NoData) et la 3ᵉ (code INSEE
+        // « 94 », hors périmètre métropolitain) sont ignorées silencieusement.
+        assert_eq!(measurements.len(), 1);
+        let m = &measurements[0];
+        assert_eq!(m.region, Region::AuvergneRhoneAlpes);
+        assert_eq!(m.methodology, Methodology::acv_ademe());
+        assert_eq!(m.vintage, Vintage::Consolidated);
     }
 }

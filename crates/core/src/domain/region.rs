@@ -91,6 +91,21 @@ impl Region {
             .find(|region| region.slug() == slug)
     }
 
+    /// Région métropolitaine correspondant à un [`insee_code`](Region::insee_code),
+    /// ou `None` si absent/inconnu (Corse, DOM-TOM, code mal formé — hors
+    /// périmètre éCO2mix régional, ADR-0003).
+    ///
+    /// Réciproque de `insee_code()` : utilisée par l'adapter ODRÉ pour
+    /// reconstruire la région d'un enregistrement d'export de masse régional
+    /// (`code_insee_region`), qui couvre toutes les régions en un seul
+    /// téléchargement (addendum ADR-0003 2026-09-26). `National` n'a pas de
+    /// code INSEE régional : n'est jamais renvoyé ici.
+    pub fn from_insee_code(code: &str) -> Option<Region> {
+        Region::METROPOLITAN
+            .into_iter()
+            .find(|region| region.insee_code() == Some(code))
+    }
+
     /// Libellé humain.
     pub fn label(self) -> &'static str {
         match self {
@@ -144,5 +159,18 @@ mod tests {
             assert_eq!(Region::from_slug(region.slug()), Some(region));
         }
         assert_eq!(Region::from_slug("atlantide"), None);
+    }
+
+    #[test]
+    fn from_insee_code_roundtrips_every_metropolitan_region() {
+        for region in Region::METROPOLITAN {
+            let code = region
+                .insee_code()
+                .expect("région métropolitaine : code INSEE présent");
+            assert_eq!(Region::from_insee_code(code), Some(region));
+        }
+        // Code inconnu (ex. Corse, hors périmètre) → None, jamais une erreur.
+        assert_eq!(Region::from_insee_code("94"), None);
+        assert_eq!(Region::from_insee_code(""), None);
     }
 }

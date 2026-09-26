@@ -31,6 +31,25 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   hébergée (`https://carbon-fr-api.kovelt.fr`) et une instance locale ;
   Swagger UI (`/docs`) et les générateurs de clients ont désormais une URL de
   base (promis à l'itération I2, livré ici).
+- **Backfill régional** (item PROD-1) — port `Eco2mixArchive::export_regional`
+  (méthode additive à corps par défaut, sans rupture SemVer, ADR-0030),
+  implémenté dans `carbonfr-adapter-odre` : un seul export de masse couvre les
+  12 régions métropolitaines (`code_insee_region` → `Region::from_insee_code`,
+  nouvelle réciproque de `insee_code()`), `select` borné, timeout dédié plus
+  large sur les exports (180 s). `BackfillHistory::execute_regional` réutilise
+  le découpage en tranches du national, sans dérivation cycle de vie (l'export
+  rend déjà des mesures `acv-ademe`). Décodage numérique de `RegionalRecord`
+  désormais tolérant (nombre ou chaîne numérique, `null`/absent → `None` sans
+  erreur — constat prod : `eolien` publié en chaîne dans le consolidé
+  régional). Sous-commande `backfill` : nouvelle variable
+  `CARBONFR_BACKFILL_SCOPE` (`national` défaut, `regional`, `all`). ADR-0003,
+  addendum 2026-09-26 ; `deploy/README.md` §5.
+- **Auto-réparation régionale (désactivée par défaut)** (item PERF-3) —
+  `CARBONFR_SELF_HEAL_REGIONAL` (défaut `0`) étend l'auto-réparation
+  quotidienne à une tranche régionale sur la même fenêtre (+1 export/jour sur
+  `eco2mix-regional-tr` une fois activée). Livrée désactivée : à n'activer en
+  production qu'une fois le quota ODRÉ réel visible sur `/metrics`
+  (item PROD-3).
 
 ### Supervision
 

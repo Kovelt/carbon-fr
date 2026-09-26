@@ -150,24 +150,71 @@ fn parse_vintage(nature: &str) -> Vintage {
     }
 }
 
-/// Un enregistrement du dataset `eco2mix-regional-tr`.
+/// Un enregistrement du dataset `eco2mix-regional-tr` (temps réel) ou
+/// `eco2mix-regional-cons-def` (export de masse, ADR-0003 addendum
+/// 2026-09-26).
 ///
 /// Le thermique fossile est **agrégé** (`thermique`) ; il n'y a pas de
 /// `taux_co2` régional. L'intensité est donc **dérivée** par la méthode
 /// `acv-ademe` (ADR-0008).
+///
+/// `code_insee_region` n'est renseigné (et exploité) que par l'export de masse
+/// régional (`export_regional`, qui couvre toutes les régions à la fois) : les
+/// requêtes `latest`/`range` filtrent déjà par région via `refine`, la région
+/// leur est donc connue par ailleurs.
+///
+/// **Typage numérique tolérant** (constat prod 2026-09-26) : selon le jeu et le
+/// champ, un même champ peut être publié en nombre JSON *ou* en chaîne
+/// numérique (ex. `eolien: "115"` dans le consolidé, `pompage: "-2"` en temps
+/// réel) — [`lenient_f64`] décode les deux, une chaîne vide/non numérique ou un
+/// `null`/champ absent donnant `None` plutôt qu'une erreur de désérialisation.
 #[derive(Debug, Deserialize)]
 pub(crate) struct RegionalRecord {
     pub date_heure: String,
     pub nature: String,
+    #[serde(default)]
+    pub code_insee_region: Option<String>,
+    #[serde(default, deserialize_with = "lenient_f64")]
     pub thermique: Option<f64>,
+    #[serde(default, deserialize_with = "lenient_f64")]
     pub nucleaire: Option<f64>,
+    #[serde(default, deserialize_with = "lenient_f64")]
     pub eolien: Option<f64>,
+    #[serde(default, deserialize_with = "lenient_f64")]
     pub solaire: Option<f64>,
+    #[serde(default, deserialize_with = "lenient_f64")]
     pub hydraulique: Option<f64>,
+    #[serde(default, deserialize_with = "lenient_f64")]
     pub bioenergies: Option<f64>,
+    #[serde(default, deserialize_with = "lenient_f64")]
     pub ech_physiques: Option<f64>,
-    // NB : `pompage` est typé chaîne ("0") dans le dataset régional, et n'entre
-    // pas dans le calcul acv-ademe → non décodé (mix.pompage = 0).
+    // NB : `pompage` n'entre pas dans le calcul acv-ademe → non décodé
+    // (mix.pompage = 0), qu'il soit publié en nombre (consolidé) ou en chaîne
+    // (temps réel).
+}
+
+/// Décodeur tolérant pour un champ numérique ODRÉ publié tantôt en nombre
+/// JSON, tantôt en chaîne (constat prod 2026-09-26, cf. doc de
+/// [`RegionalRecord`]) : nombre → `Some`, chaîne numérique (espaces en trop
+/// tolérés) → `Some` parsée, chaîne vide/non numérique → `None` **sans
+/// erreur** (comme un champ absent ou `null`, cf. `#[serde(default)]` sur
+/// chaque champ appelant).
+fn lenient_f64<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Lenient {
+        Number(f64),
+        Text(String),
+    }
+
+    match Option::<Lenient>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(Lenient::Number(n)) => Ok(Some(n)),
+        Some(Lenient::Text(s)) => Ok(s.trim().parse::<f64>().ok()),
+    }
 }
 
 impl RegionalRecord {
@@ -287,5 +334,112 @@ mod tests {
         }]}"#;
         let err = first(json).into_measurement().unwrap_err();
         assert!(matches!(err, SourceError::Invalid(_)));
+    }
+
+    fn first_regional(json: &str) -> RegionalRecord {
+        serde_json::from_str::<RecordsResponse<RegionalRecord>>(json)
+            .expect("désérialisation régionale")
+            .results
+            .into_iter()
+            .next()
+            .expect("au moins un résultat")
+    }
+
+    #[test]
+    fn lenient_f64_decodes_plain_number() {
+        let json = r#"{"total_count":1,"results":[{
+            "nature":"Données temps réel",
+            "date_heure":"2026-06-30T21:30:00+00:00",
+            "eolien":115
+        }]}"#;
+        assert_eq!(first_regional(json).eolien, Some(115.0));
+    }
+
+    #[test]
+    fn lenient_f64_decodes_numeric_string() {
+        let json = r#"{"total_count":1,"results":[{
+            "nature":"Données consolidées",
+            "date_heure":"2026-06-30T21:30:00+00:00",
+            "eolien":"115"
+        }]}"#;
+        assert_eq!(first_regional(json).eolien, Some(115.0));
+    }
+
+    #[test]
+    fn lenient_f64_treats_null_and_absent_field_as_none() {
+        let json = r#"{"total_count":1,"results":[{
+            "nature":"Données temps réel",
+            "date_heure":"2026-06-30T21:30:00+00:00",
+            "eolien":null
+        }]}"#;
+        let record = first_regional(json);
+        assert_eq!(record.eolien, None);
+        // `hydraulique` totalement absent du JSON.
+        assert_eq!(record.hydraulique, None);
+    }
+
+    #[test]
+    fn lenient_f64_treats_non_numeric_string_as_none_without_error() {
+        let json = r#"{"total_count":1,"results":[{
+            "nature":"Données temps réel",
+            "date_heure":"2026-06-30T21:30:00+00:00",
+            "eolien":"ND"
+        }]}"#;
+        // Ne doit jamais faire échouer la désérialisation du lot.
+        assert_eq!(first_regional(json).eolien, None);
+    }
+
+    /// Enregistrement réel du consolidé régional (région 84, capturé le
+    /// 2026-09-26 — cf. cahier des charges PROD-1) : `eolien` en chaîne,
+    /// `pompage` en nombre (non décodé, cf. commentaire du champ), et des
+    /// champs `tco_*`/`tch_*`/`stockage_batterie`/`eolien_terrestre` inconnus
+    /// du DTO — ignorés silencieusement par serde (pas de
+    /// `deny_unknown_fields`).
+    const REAL_CONSOLIDATED_REGIONAL_SAMPLE: &str = r#"{
+        "total_count": 1,
+        "results": [{
+            "code_insee_region": "84",
+            "libelle_region": "Auvergne-Rhône-Alpes",
+            "nature": "Données consolidées",
+            "date_heure": "2026-06-30T21:30:00+00:00",
+            "consommation": 7122,
+            "thermique": 376,
+            "nucleaire": 4555,
+            "eolien": "115",
+            "solaire": 0,
+            "hydraulique": 5098,
+            "pompage": -4,
+            "bioenergies": 111,
+            "ech_physiques": -3129,
+            "stockage_batterie": 0,
+            "eolien_terrestre": "115",
+            "eolien_offshore": "0",
+            "tco_thermique": "5.3",
+            "tch_thermique": "5.3"
+        }]
+    }"#;
+
+    #[test]
+    fn maps_real_consolidated_regional_record() {
+        let record = first_regional(REAL_CONSOLIDATED_REGIONAL_SAMPLE);
+        assert_eq!(record.code_insee_region.as_deref(), Some("84"));
+        assert_eq!(record.eolien, Some(115.0));
+
+        let region = Region::from_insee_code(record.code_insee_region.as_deref().unwrap())
+            .expect("code INSEE 84 connu");
+        assert_eq!(region, Region::AuvergneRhoneAlpes);
+
+        let m = record.into_measurement(region).expect("mapping régional");
+        assert_eq!(m.region, Region::AuvergneRhoneAlpes);
+        assert_eq!(m.methodology, Methodology::acv_ademe());
+        assert_eq!(m.vintage, Vintage::Consolidated);
+
+        let mix = m.mix.expect("mix présent");
+        assert_eq!(mix.eolien, 115.0);
+        assert_eq!(mix.nucleaire, 4555.0);
+        assert_eq!(mix.hydraulique, 5098.0);
+        assert_eq!(mix.thermique, Some(376.0));
+        // `pompage` n'est jamais décodé pour le régional (cf. `RegionalRecord`).
+        assert_eq!(mix.pompage, 0.0);
     }
 }

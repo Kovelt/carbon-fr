@@ -1565,7 +1565,8 @@ pub(crate) async fn methodologies() -> Json<MethodologiesResponse> {
 pub(crate) struct FactorsQuery {
     /// Méthodologie (`acv-ademe`). Défaut `acv-ademe`.
     methodology: Option<String>,
-    /// Version (défaut : dernière version de la méthode).
+    /// Version (défaut : `1`, comme le reste de l'API ; `2` = vue
+    /// consommation, table incluant les pertes T&D).
     version: Option<u32>,
 }
 
@@ -1589,7 +1590,7 @@ pub(crate) async fn factors(
     let methodology = resolve_methodology(&query.methodology, "acv-ademe")?;
     match methodology.as_str() {
         "acv-ademe" => {
-            let version = query.version.unwrap_or(2);
+            let version = query.version.unwrap_or(1);
             if version == 0 || version > 2 {
                 return Err(ApiError::bad_request(format!(
                     "version inconnue pour acv-ademe : {version} (disponibles : 1, 2)"

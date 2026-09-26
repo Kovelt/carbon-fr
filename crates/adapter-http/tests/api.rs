@@ -2747,3 +2747,68 @@ async fn forecast_usage_endpoints_validate_version() {
         assert_eq!(r.status(), StatusCode::BAD_REQUEST, "uri : {uri}");
     }
 }
+
+/// QUAL-1 (plan I8) : `version` absente sur `/v1/factors` valait `2`
+/// (dernière version), incohérent avec le reste de l'API où l'absence de
+/// `version` vaut `1` (`/v1/intensity/now?methodology=acv-ademe` sert `@1`).
+/// Un client auditant le calcul qu'il vient de lire recevait la mauvaise
+/// table (`td_loss_factor` non appliqué au calcul lu).
+#[tokio::test]
+async fn factors_default_version_is_1() {
+    let default = json_body(get(app(None), "/v1/factors?methodology=acv-ademe").await).await;
+    let explicit =
+        json_body(get(app(None), "/v1/factors?methodology=acv-ademe&version=1").await).await;
+    assert_eq!(default, explicit);
+    assert_eq!(default["methodology_version"], 1);
+    assert!(default["td_loss_factor"].is_null());
+}
+
+#[tokio::test]
+async fn factors_version_2_has_td_loss_factor() {
+    let body = json_body(get(app(None), "/v1/factors?methodology=acv-ademe&version=2").await).await;
+    assert_eq!(body["methodology_version"], 2);
+    assert_eq!(body["td_loss_factor"], 0.072);
+}
+
+#[tokio::test]
+async fn factors_default_methodology_is_acv_ademe() {
+    let response = get(app(None), "/v1/factors").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["methodology"], "acv-ademe");
+    assert_eq!(body["methodology_version"], 1);
+}
+
+#[tokio::test]
+async fn factors_rte_direct_is_400() {
+    for uri in [
+        "/v1/factors?methodology=rte-direct",
+        "/v1/factors?methodology=rte-direct&version=1",
+    ] {
+        let response = get(app(None), uri).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "uri : {uri}");
+        assert_eq!(json_body(response).await["code"], "bad_request");
+    }
+}
+
+#[tokio::test]
+async fn factors_unknown_methodology_is_400() {
+    let response = get(app(None), "/v1/factors?methodology=fantaisie").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(response).await["code"], "bad_request");
+}
+
+#[tokio::test]
+async fn factors_version_out_of_range_is_400() {
+    for version in [0, 3] {
+        let uri = format!("/v1/factors?methodology=acv-ademe&version={version}");
+        let response = get(app(None), &uri).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "uri : {uri}");
+        let body = json_body(response).await;
+        assert_eq!(body["code"], "bad_request");
+        assert_eq!(
+            body["detail"],
+            format!("version inconnue pour acv-ademe : {version} (disponibles : 1, 2)")
+        );
+    }
+}

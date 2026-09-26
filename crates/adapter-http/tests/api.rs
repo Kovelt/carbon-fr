@@ -9,7 +9,8 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use carbonfr_adapter_forecast::ClimatologyForecaster;
 use carbonfr_adapter_http::{
-    AppState, EligibilityRepo, EligibilityRepoAdapter, ForecastState, StreamState, router,
+    AppState, EligibilityRepo, EligibilityRepoAdapter, ForecastState, RouterOptions, SseLimiter,
+    StreamState, router, router_with_options,
 };
 use carbonfr_core::domain::{
     CarbonIntensity, CrossBorderFlow, CrossBorderFlows, CrossBorderSnapshot, ForecastPoint,
@@ -38,6 +39,8 @@ struct FakeRepo {
     api_keys: std::collections::HashSet<String>,
     /// Abonnements webhook en mémoire.
     subs: Arc<Mutex<Vec<carbonfr_core::domain::Subscription>>>,
+    /// Latence artificielle de `latest()` (tests du délai de traitement).
+    latest_delay: Option<std::time::Duration>,
 }
 
 #[async_trait]
@@ -51,6 +54,9 @@ impl IntensityRepository for FakeRepo {
         region: Region,
         methodology_id: &str,
     ) -> Result<Option<Measurement>, RepositoryError> {
+        if let Some(delay) = self.latest_delay {
+            tokio::time::sleep(delay).await;
+        }
         Ok(self
             .measurement
             .clone()
@@ -508,6 +514,225 @@ async fn sse_stream_closes_when_shutdown_token_is_cancelled() {
     .await
     .expect("le flux SSE doit se clore à l'annulation du jeton d'arrêt")
     .unwrap();
+}
+
+/// Routeur dont le flux SSE est plafonné à `max` connexions (le limiteur est
+/// rendu pour lire ses compteurs) et dont le délai de traitement est `timeout`.
+fn app_with_limits(
+    repo: FakeRepo,
+    max_sse: usize,
+    timeout: std::time::Duration,
+) -> (
+    axum::Router,
+    SseLimiter,
+    tokio::sync::broadcast::Sender<carbonfr_core::domain::IntensityUpdate>,
+) {
+    let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1");
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    let limiter = SseLimiter::new(max_sse);
+    let app = router_with_options(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates.clone()).with_sse_limiter(limiter.clone()),
+        None,
+        RouterOptions {
+            request_timeout: timeout,
+        },
+    );
+    (app, limiter, updates)
+}
+
+/// Plafond de connexions SSE (ADR-0014 addendum 2026-09-26, SEC-1/PERF-2) : au
+/// plafond, la connexion suivante reçoit un 503 Problem Details `unavailable`
+/// avec `Retry-After` ; le permis est tenu par le flux et **rendu à la
+/// déconnexion** (abandon de la réponse), pas au retour du handler.
+#[tokio::test]
+async fn sse_cap_rejects_beyond_max_then_frees_on_disconnect() {
+    let (app, limiter, _updates) =
+        app_with_limits(FakeRepo::default(), 1, std::time::Duration::from_secs(5));
+
+    let first = get(app.clone(), "/v1/intensity/stream").await;
+    assert_eq!(first.status(), StatusCode::OK);
+    assert_eq!(limiter.active(), 1);
+
+    let second = get(app.clone(), "/v1/intensity/stream").await;
+    assert_eq!(second.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        second.headers().get("content-type").unwrap(),
+        "application/problem+json"
+    );
+    assert_eq!(second.headers().get("retry-after").unwrap(), "30");
+    assert_eq!(limiter.rejected_total(), 1);
+    let body = json_body(second).await;
+    assert_eq!(body["code"], "unavailable");
+    assert_eq!(body["status"], 503);
+
+    // La réponse (donc le flux, donc le permis) est abandonnée : la place se
+    // libère aussitôt et une nouvelle connexion passe.
+    drop(first);
+    assert_eq!(limiter.active(), 0);
+    let third = get(app, "/v1/intensity/stream").await;
+    assert_eq!(third.status(), StatusCode::OK);
+    assert_eq!(limiter.active(), 1);
+}
+
+/// Une requête refusée en amont (400 : région inconnue) ne consomme aucun
+/// permis — l'acquisition vient APRÈS la validation.
+#[tokio::test]
+async fn sse_cap_is_not_consumed_by_a_rejected_request() {
+    let (app, limiter, _updates) =
+        app_with_limits(FakeRepo::default(), 1, std::time::Duration::from_secs(5));
+    let response = get(app, "/v1/intensity/stream?region=atlantide").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(limiter.active(), 0);
+    assert_eq!(limiter.rejected_total(), 0);
+}
+
+/// L'arrêt gracieux rend aussi le permis : une fois le flux clos par le jeton
+/// et le corps drainé, plus aucune connexion n'est comptée.
+#[tokio::test]
+async fn sse_cap_is_released_when_shutdown_closes_the_stream() {
+    let repo = FakeRepo::default();
+    let forecast = ForecastState::new(ClimatologyForecaster::new(repo.clone()), "climatology@1");
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    let token = tokio_util::sync::CancellationToken::new();
+    let limiter = SseLimiter::new(2);
+    let app = router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates)
+            .with_shutdown(token.clone())
+            .with_sse_limiter(limiter.clone()),
+        None,
+    );
+    let response = get(app, "/v1/intensity/stream").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(limiter.active(), 1);
+
+    token.cancel();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        to_bytes(response.into_body(), usize::MAX),
+    )
+    .await
+    .expect("le flux doit se clore")
+    .unwrap();
+    assert_eq!(limiter.active(), 0);
+}
+
+/// Délai de traitement (SEC-4) : une lecture plus lente que le délai reçoit un
+/// 503 Problem Details `unavailable` (jamais un 408 à corps vide), sans
+/// `Retry-After` (un délai individuel n'est pas une saturation durable), et
+/// avec les en-têtes CORS (la couche est sous CORS).
+#[tokio::test]
+async fn request_timeout_returns_503_problem_json() {
+    let repo = FakeRepo {
+        measurement: Some(national_measurement()),
+        latest_delay: Some(std::time::Duration::from_millis(300)),
+        ..Default::default()
+    };
+    let (app, _limiter, _updates) = app_with_limits(repo, 10, std::time::Duration::from_millis(30));
+    let response = app
+        .oneshot(
+            Request::get("/v1/intensity/now")
+                .header("origin", "https://example.org")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "application/problem+json"
+    );
+    assert!(response.headers().get("retry-after").is_none());
+    assert_eq!(
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .unwrap(),
+        "*"
+    );
+    let body = json_body(response).await;
+    assert_eq!(body["code"], "unavailable");
+    assert!(body["detail"].as_str().unwrap().contains("délai"), "{body}");
+}
+
+/// Le délai couvre aussi la **lecture du corps** : un POST dont le corps arrive
+/// trop lentement (slowloris sur le corps, sous la limite de taille) est coupé
+/// en 503 — l'extracteur JSON tourne à l'intérieur du futur borné.
+#[tokio::test]
+async fn request_timeout_covers_a_slow_request_body() {
+    let (app, _limiter, _updates) = app_with_limits(
+        FakeRepo::default(),
+        10,
+        std::time::Duration::from_millis(30),
+    );
+    let slow_body = Body::from_stream(futures_util::stream::once(async {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        Ok::<_, std::convert::Infallible>(axum::body::Bytes::from_static(b"{}"))
+    }));
+    let response = app
+        .oneshot(
+            Request::post("/v1/webhooks")
+                .header("content-type", "application/json")
+                .header("authorization", "Bearer cfr_test")
+                .body(slow_body)
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = json_body(response).await;
+    assert_eq!(body["code"], "unavailable");
+}
+
+/// Le délai de traitement ne borne que l'**établissement** de la réponse : un
+/// flux SSE ouvert bien au-delà du délai continue de recevoir des événements.
+/// Garde-fou contre un futur remplacement par une couche qui envelopperait le
+/// corps (`ResponseBodyTimeoutLayer`…), qui tuerait le SSE en silence.
+#[tokio::test]
+async fn request_timeout_leaves_open_sse_alone() {
+    use tokio_stream::StreamExt;
+
+    let (app, _limiter, updates) = app_with_limits(
+        FakeRepo::default(),
+        10,
+        std::time::Duration::from_millis(20),
+    );
+    let response = get(app, "/v1/intensity/stream").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Bien plus long que le délai de traitement : le flux doit survivre.
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    updates
+        .send(carbonfr_core::domain::IntensityUpdate::from_measurement(
+            &national_measurement(),
+        ))
+        .unwrap();
+
+    let mut data = response.into_body().into_data_stream();
+    let chunk = tokio::time::timeout(std::time::Duration::from_secs(2), data.next())
+        .await
+        .expect("le flux SSE doit encore être vivant après le délai de traitement")
+        .expect("un événement attendu")
+        .unwrap();
+    let text = String::from_utf8_lossy(&chunk);
+    assert!(text.contains("event: intensity"), "{text}");
+}
+
+/// `Retry-After` n'apparaît que sur les refus temporaires explicites : jamais
+/// sur un 404 ou un 400 ordinaire (non-régression du champ ajouté à `ApiError`).
+#[tokio::test]
+async fn ordinary_errors_carry_no_retry_after() {
+    let not_found = get(app(None), "/v1/intensity/now").await;
+    assert_eq!(not_found.status(), StatusCode::NOT_FOUND);
+    assert!(not_found.headers().get("retry-after").is_none());
+
+    let bad_request = get(app(None), "/v1/intensity/now?region=atlantide").await;
+    assert_eq!(bad_request.status(), StatusCode::BAD_REQUEST);
+    assert!(bad_request.headers().get("retry-after").is_none());
 }
 
 #[tokio::test]

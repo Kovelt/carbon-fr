@@ -238,6 +238,7 @@ dependencies = [
  "tokio-util",
  "tower",
  "tower-http 0.7.1",
+ "tracing",
  "utoipa",
 ]
 
@@ -1763,6 +1764,8 @@ dependencies = [
  "carbonfr-adapter-webhook",
  "carbonfr-core",
  "carbonfr-eligibility",
+ "hyper",
+ "hyper-util",
  "rand 0.10.3",
  "rustls",
  "time",

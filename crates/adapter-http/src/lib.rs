@@ -339,6 +339,110 @@ impl<F> ForecastState<F> {
     }
 }
 
+/// Plafond par défaut de connexions SSE **simultanées** (ADR-0014 addendum
+/// 2026-09-26, item SEC-1/PERF-2 du plan I8). Volontairement généreux : le
+/// risque d'un plafond trop bas (couper des clients légitimes) est pire que
+/// celui d'un plafond trop haut ; on resserre métriques à l'appui
+/// (`carbonfr_sse_connections_*`), jamais à l'aveugle.
+pub const DEFAULT_SSE_MAX_CONNECTIONS: usize = 300;
+
+/// `Retry-After` (secondes) joint au 503 « plafond de connexions SSE atteint ».
+/// Aligné sur le palier de backoff du SDK Rust (1 → 30 s) : un client patient
+/// réessaie vite, sans salve de reconnexions immédiates si le plafond reste
+/// tendu (un créneau SSE se libère rarement en moins de quelques secondes).
+pub(crate) const SSE_CAP_RETRY_AFTER_SECS: u32 = 30;
+
+/// Plafond de connexions SSE simultanées (`GET /v1/intensity/stream`), global au
+/// processus — ADR-0014 addendum 2026-09-26. Même motif que la borne des
+/// livraisons webhook (`Semaphore::new(50)` dans la composition root) : un
+/// sémaphore, un permis par connexion ouverte, **refus immédiat** au-delà
+/// (503 avec `Retry-After`) plutôt qu'une file d'attente — un flux SSE est
+/// long par nature, mettre une connexion en attente d'un créneau reviendrait
+/// à bloquer un handler HTTP sans borne.
+///
+/// Le permis est **tenu par le flux de la réponse** (cf. `hold_permit` dans
+/// `handlers.rs`) et rendu quand ce flux est abandonné : fermeture par le
+/// client (FIN TCP, vu aussitôt par hyper), arrêt gracieux (`take_until` sur le
+/// jeton), ou échec d'écriture si le client a disparu **sans** fermer (coupure
+/// réseau, veille) — le keep-alive SSE de 15 s garantit une écriture régulière,
+/// mais son échec n'est constaté qu'à l'épuisement des retransmissions TCP du
+/// noyau (≈ 15 min avec `tcp_retries2 = 15`, défaut Linux ; aucune option
+/// `SO_KEEPALIVE`/`TCP_USER_TIMEOUT` n'est posée sur les sockets acceptées).
+/// Un tel « permis fantôme » est donc compté jusqu'à un quart d'heure :
+/// dimensionner le plafond en conséquence, et surveiller
+/// `carbonfr_sse_connections_active` avant de le resserrer.
+///
+/// Sans état par-client : le plafond n'est **pas** un sous-quota par IP ou par
+/// clé (le tier hébergé, ADR-0015, borne le débit des requêtes, pas les
+/// connexions tenues ouvertes). `Clone` bon marché (`Arc` interne) : la
+/// composition root en garde une copie pour l'exposition `/metrics`.
+#[derive(Clone)]
+pub struct SseLimiter {
+    inner: std::sync::Arc<SseLimiterInner>,
+}
+
+struct SseLimiterInner {
+    semaphore: std::sync::Arc<tokio::sync::Semaphore>,
+    max: usize,
+    rejected_total: std::sync::atomic::AtomicU64,
+}
+
+impl SseLimiter {
+    /// Limiteur à `max` connexions simultanées. Un plafond nul n'aurait aucun
+    /// sens (toute connexion refusée) : `0` est relevé à `1` — la composition
+    /// root refuse de toute façon la valeur à la configuration.
+    pub fn new(max: usize) -> Self {
+        let max = max.max(1);
+        Self {
+            inner: std::sync::Arc::new(SseLimiterInner {
+                semaphore: std::sync::Arc::new(tokio::sync::Semaphore::new(max)),
+                max,
+                rejected_total: std::sync::atomic::AtomicU64::new(0),
+            }),
+        }
+    }
+
+    /// Plafond configuré.
+    pub fn max(&self) -> usize {
+        self.inner.max
+    }
+
+    /// Connexions SSE actuellement ouvertes (permis pris).
+    pub fn active(&self) -> usize {
+        self.inner
+            .max
+            .saturating_sub(self.inner.semaphore.available_permits())
+    }
+
+    /// Connexions refusées (503) depuis le démarrage parce que le plafond était
+    /// atteint.
+    pub fn rejected_total(&self) -> u64 {
+        self.inner
+            .rejected_total
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Tente de prendre un permis, **sans attendre**. `None` (et compteur de
+    /// refus incrémenté) si le plafond est atteint.
+    pub(crate) fn try_acquire(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        match std::sync::Arc::clone(&self.inner.semaphore).try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => {
+                self.inner
+                    .rejected_total
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                None
+            }
+        }
+    }
+}
+
+impl Default for SseLimiter {
+    fn default() -> Self {
+        Self::new(DEFAULT_SSE_MAX_CONNECTIONS)
+    }
+}
+
 /// État des endpoints de **streaming** (ADR-0014 §2) : un canal de diffusion
 /// (`broadcast`) alimenté par le poller. Chaque connexion SSE s'y abonne. Pas de
 /// repository ni d'état par-client — la posture anonyme/sans état est préservée.
@@ -356,6 +460,10 @@ pub struct StreamState {
     /// `serve`, le flux ne peut donc jamais se terminer de lui-même. Défaut :
     /// jeton jamais annulé (tests, usages sans arrêt orchestré).
     pub(crate) shutdown: tokio_util::sync::CancellationToken,
+    /// Plafond de connexions SSE simultanées (ADR-0014 addendum 2026-09-26).
+    /// Défaut : [`DEFAULT_SSE_MAX_CONNECTIONS`] ; la composition root injecte le
+    /// sien (`CARBONFR_SSE_MAX_CONNECTIONS`) et en garde une copie pour `/metrics`.
+    pub(crate) sse_limiter: SseLimiter,
 }
 
 impl StreamState {
@@ -365,6 +473,7 @@ impl StreamState {
         Self {
             updates,
             shutdown: tokio_util::sync::CancellationToken::new(),
+            sse_limiter: SseLimiter::default(),
         }
     }
 
@@ -374,6 +483,41 @@ impl StreamState {
     pub fn with_shutdown(mut self, token: tokio_util::sync::CancellationToken) -> Self {
         self.shutdown = token;
         self
+    }
+
+    /// Remplace le plafond de connexions SSE par défaut (composition root :
+    /// `CARBONFR_SSE_MAX_CONNECTIONS` ; tests : plafond minuscule).
+    pub fn with_sse_limiter(mut self, limiter: SseLimiter) -> Self {
+        self.sse_limiter = limiter;
+        self
+    }
+}
+
+/// Délai par défaut de traitement d'une requête (`CARBONFR_REQUEST_TIMEOUT_SECS`),
+/// item SEC-4 du plan I8 : 2 × le `statement_timeout` Postgres par défaut
+/// (`CARBONFR_DB_STATEMENT_TIMEOUT_MS` = 30 000 ms) pour que la base tranche
+/// **d'abord** une requête lente (erreur précise) et que ce filet générique ne
+/// joue qu'en dernier ressort. ⚠️ Relever le `statement_timeout` sans relever
+/// ce délai en proportion réintroduit la course.
+pub const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Réglages **transverses** du routeur, hors états métier (cf. [`router_with_options`]).
+/// `Default` = les valeurs servies par [`router`].
+#[derive(Clone, Copy, Debug)]
+pub struct RouterOptions {
+    /// Borne le traitement complet d'une requête — auth/quota, lecture du corps,
+    /// handler — au-delà de laquelle le client reçoit un 503 Problem Details
+    /// (code `unavailable`). **N'affecte jamais un flux SSE ouvert** : seul le
+    /// temps d'établir la réponse est borné, pas la durée du corps (cf. le
+    /// middleware `request_timeout`).
+    pub request_timeout: std::time::Duration,
+}
+
+impl Default for RouterOptions {
+    fn default() -> Self {
+        Self {
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
+        }
     }
 }
 
@@ -396,6 +540,34 @@ pub fn router<R, F>(
     forecast: ForecastState<F>,
     stream: StreamState,
     auth: Option<AuthState>,
+) -> Router
+where
+    R: IntensityRepository
+        + CrossBorderRepository
+        + WeatherRepository
+        + SpotPriceRepository
+        + VisitCounter
+        + ApiKeyRepository
+        + SubscriptionRepository
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    F: ForecastModel + Clone + Send + Sync + 'static,
+{
+    router_with_options(state, forecast, stream, auth, RouterOptions::default())
+}
+
+/// [`router`] avec des réglages transverses explicites ([`RouterOptions`]) —
+/// utilisé par la composition root (variables d'environnement) et par les tests
+/// qui ont besoin d'un délai minuscule. Le corps du routeur vit ici ; [`router`]
+/// n'est qu'un raccourci avec les valeurs par défaut.
+pub fn router_with_options<R, F>(
+    state: AppState<R>,
+    forecast: ForecastState<F>,
+    stream: StreamState,
+    auth: Option<AuthState>,
+    options: RouterOptions,
 ) -> Router
 where
     R: IntensityRepository
@@ -488,6 +660,22 @@ where
     if let Some(auth) = auth {
         app = app.layer(axum::middleware::from_fn_with_state(auth, enforce));
     }
+    // Délai de traitement (SEC-4, plan I8) : posé juste SOUS la couche CORS,
+    // donc AU-DESSUS d'`enforce`, de la trace, du cache et de la limite de corps
+    // — il borne la requête complète, lecture du corps ET auth/quota compris :
+    // la résolution d'une clé API non encore en cache (`enforce`) est un accès
+    // Postgres, précisément le genre d'attente qu'on veut borner (défense en
+    // profondeur, en plus du `statement_timeout`). Son 503 traverse CORS et
+    // reste lisible en navigateur. Le préflight `OPTIONS`, lui, n'atteint
+    // jamais cette couche : CORS (plus externe) y répond sans déléguer, cf.
+    // ci-dessous. Conséquence assumée : `TraceLayer` étant à l'intérieur, le
+    // 503 de délai n'est pas classé par elle — le middleware le journalise
+    // lui-même en `error` (méthode, chemin). Un flux SSE ouvert n'est pas
+    // concerné (cf. `request_timeout`).
+    app = app.layer(axum::middleware::from_fn_with_state(
+        options.request_timeout,
+        request_timeout,
+    ));
     // CORS **permissif** : l'API sert de la donnée publique en lecture et se
     // veut dev-first (cf. carbonintensity.org.uk). Toute origine peut donc lire
     // les réponses depuis un navigateur — nécessaire pour qu'un site tiers (dont
@@ -547,6 +735,47 @@ async fn cache_control(
         );
     }
     response
+}
+
+/// Borne le **traitement** d'une requête (SEC-4, plan I8) : au-delà de `limit`,
+/// le futur de la requête est abandonné et le client reçoit un 503 Problem
+/// Details (code `unavailable`), journalisé ici en `error` — le niveau que
+/// `TraceLayer` (à l'intérieur de cette couche, donc jamais résolue dans ce
+/// cas) applique à tout 5xx. Écrit à la main plutôt qu'avec
+/// `tower_http::timeout::TimeoutLayer` (408 à corps vide) pour rester dans le
+/// contrat RFC 9457 de toute l'API — y compris le 404 de repli.
+///
+/// **Portée, volontairement limitée à l'établissement de la réponse** :
+/// `next.run(request)` se résout dès que le handler renvoie son objet
+/// `Response` — pour `GET /v1/intensity/stream`, dès que `Sse::new(...)` est
+/// construit. Le corps (le flux SSE, infini par construction) n'est jamais
+/// tiré par ce middleware : un flux ouvert n'est **jamais** coupé par ce délai,
+/// quelle que soit sa durée de vie (test `request_timeout_leaves_open_sse_alone`).
+/// Ne pas remplacer par `tower_http::timeout::{ResponseBodyTimeoutLayer,
+/// ResponseBodyDeadlineLayer}`, qui enveloppent le corps et tueraient le SSE.
+async fn request_timeout(
+    axum::extract::State(limit): axum::extract::State<std::time::Duration>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_owned();
+    match tokio::time::timeout(limit, next.run(request)).await {
+        Ok(response) => response,
+        Err(_elapsed) => {
+            tracing::error!(
+                %method,
+                path,
+                status = 503,
+                timeout_secs = limit.as_secs(),
+                "requête interrompue : délai de traitement dépassé"
+            );
+            axum::response::IntoResponse::into_response(ApiError::unavailable(format!(
+                "traitement interrompu après {} s (délai maximal de requête)",
+                limit.as_secs()
+            )))
+        }
+    }
 }
 
 /// Fallback du routeur : tout chemin qui ne correspond à aucune route déclarée

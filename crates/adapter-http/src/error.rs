@@ -26,6 +26,12 @@ pub struct ApiError {
     code: &'static str,
     title: &'static str,
     detail: String,
+    /// En-tête `Retry-After` (secondes) à joindre à la réponse — seulement pour
+    /// les refus **temporaires** où le client a intérêt à réessayer plus tard
+    /// (plafond de connexions SSE, ADR-0014 addendum 2026-09-26). `None` pour
+    /// toutes les autres erreurs : l'en-tête ne doit jamais apparaître sur un
+    /// 400/404 ordinaire.
+    retry_after: Option<u32>,
 }
 
 impl ApiError {
@@ -35,6 +41,7 @@ impl ApiError {
             code: "bad_request",
             title: "Requête invalide",
             detail: detail.into(),
+            retry_after: None,
         }
     }
 
@@ -44,6 +51,7 @@ impl ApiError {
             code: "no_data",
             title: "Donnée absente",
             detail: detail.into(),
+            retry_after: None,
         }
     }
 
@@ -53,6 +61,7 @@ impl ApiError {
             code: "unauthorized",
             title: "Non autorisé",
             detail: detail.into(),
+            retry_after: None,
         }
     }
 
@@ -63,7 +72,15 @@ impl ApiError {
             code: "unavailable",
             title: "Service indisponible",
             detail: detail.into(),
+            retry_after: None,
         }
+    }
+
+    /// Joint un en-tête `Retry-After: <secs>` (RFC 9110 §10.2.3) à la réponse :
+    /// pour un refus temporaire (503) où réessayer plus tard a un sens.
+    pub(crate) fn with_retry_after(mut self, secs: u32) -> Self {
+        self.retry_after = Some(secs);
+        self
     }
 
     /// Rejet d'extracteur de **corps** : conserve le statut de la réjection
@@ -76,6 +93,7 @@ impl ApiError {
             code: "bad_request",
             title: "Requête invalide",
             detail: detail.into(),
+            retry_after: None,
         }
     }
 
@@ -86,6 +104,7 @@ impl ApiError {
             code: "internal",
             title: "Erreur interne",
             detail: "erreur interne".to_string(),
+            retry_after: None,
         }
     }
 }
@@ -152,7 +171,13 @@ pub(crate) fn problem_response(
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        problem_response(self.status, self.code, self.title, self.detail)
+        let mut response = problem_response(self.status, self.code, self.title, self.detail);
+        if let Some(secs) = self.retry_after {
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from(secs));
+        }
+        response
     }
 }
 

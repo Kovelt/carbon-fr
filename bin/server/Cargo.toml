@@ -25,6 +25,10 @@ carbonfr-adapter-webhook = { workspace = true }
 carbonfr-adapter-gbdt = { workspace = true }
 carbonfr-eligibility = { workspace = true }
 axum = { workspace = true }
+# Boucle d'accept HTTP/1.1 maison (`serve_http`) : timeout de lecture des
+# en-têtes + arrêt gracieux hyper-util (SEC-4, plan I8 — cf. Cargo.toml racine).
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 # Bootstrap : installe le provider crypto `ring` de rustls une seule fois, au
 # tout début de `main()`, avant que le moindre adapter ne construise un
 # `reqwest::Client` (cf. commentaire du bloc `rustls` dans le Cargo.toml
@@ -48,3 +52,5 @@ time = { workspace = true, features = ["parsing"] }
 [dev-dependencies]
 # Fakes de ports (watcher de webhooks) dans les tests du binaire.
 async-trait = { workspace = true }
+# Tests TCP réels de la boucle d'accept (`AsyncReadExt`/`AsyncWriteExt`).
+tokio = { workspace = true, features = ["io-util"] }

@@ -33,6 +33,8 @@ Cadrer une release : `git tag v0.3.3 && git push origin v0.3.3` (le workflow vé
 
 Dans tous les cas : **API derrière un reverse proxy TLS** + `CARBONFR_TRUST_PROXY=1` (pour lire l'IP réelle du client via le **dernier segment** de `X-Forwarded-For`, que le proxy ajoute). `X-Real-Ip` n'est **pas** lu par défaut (audit 2026-08 : beaucoup de proxys — dont Caddy sans `header_up` — relaient l'en-tête client tel quel, donc spoofable) : pour l'utiliser, définir `CARBONFR_REAL_IP_HEADER=x-real-ip` **et** s'assurer que le proxy écrase cet en-tête (cf. le `header_up` du [`Caddyfile`](Caddyfile)). Sans proxy de confiance, laisser `CARBONFR_TRUST_PROXY=0` (l'en-tête est spoofable). Cf. [`.env.example`](../.env.example).
 
+Sans reverse proxy en amont, le serveur pose déjà, en défense en profondeur, un timeout de lecture des en-têtes/inactivité keep-alive de 30 s (`CARBONFR_HEADER_READ_TIMEOUT_SECS`), un timeout de traitement de requête de 60 s (`CARBONFR_REQUEST_TIMEOUT_SECS`), un plafond de 300 connexions SSE simultanées (`CARBONFR_SSE_MAX_CONNECTIONS`) et un plafond brut de 10 000 connexions TCP servies en parallèle (`CARBONFR_MAX_CONNECTIONS`, au-delà l'accept attend) — cf. [`.env.example`](../.env.example) pour ces quatre variables.
+
 ## 2. Production Kovelt — derrière Traefik (org)
 
 L'instance hébergée (`carbon-fr-api.kovelt.fr`) tourne **comme un service de la stack Kovelt** (Traefik d'organisation, PostgreSQL dédié en conteneur). Caddy/systemd ci-dessus ne sont **pas** utilisés là : Traefik fait le TLS et pose `X-Forwarded-For`/`X-Real-Ip`.
@@ -59,6 +61,8 @@ labels:
 ```
 
 Avec, côté service, **`CARBONFR_TRUST_PROXY=1`** (Traefik est le proxy de confiance) et un **`CARBONFR_VISIT_SALT`** secret (sinon le serveur refuse de démarrer en mode proxy). Les migrations s'appliquent au démarrage ; sondes `GET /health` (liveness) et `GET /health/ready` (vérifie la base).
+
+- Traefik met les connexions amont en pool (`forwardingTimeouts.idleConnTimeout`, 90 s par défaut) : poser **`CARBONFR_HEADER_READ_TIMEOUT_SECS=120`** côté service (> ce délai), pour que ce soit Traefik qui ferme les connexions inactives, jamais le serveur (sinon une requête peut tomber sur une connexion de pool que le serveur vient de fermer).
 
 ### Restreindre `/metrics` (exploitation, non public)
 
@@ -92,9 +96,12 @@ Deux couches complémentaires, **à relier à un canal de notification** (sans l
    - `CarbonfrDown` — scrape en échec depuis 5 min ;
    - `CarbonfrIngestionErrors` — plus de 10 échecs d'ingestion en 15 min ;
    - `CarbonfrDataStale` — dernière mesure nationale connue de plus de 2 h (poller qui « réussit » en boucle sans rien de neuf, ou source ODRÉ en panne) ;
-   - `CarbonfrOdreQuotaLow` / `CarbonfrOdreQuotaExhausted` — quota **réel** ODRÉ (par jeu de données) sous 10 % / épuisé (ADR-0022 addendum 2026-09-26, PROD-3).
+   - `CarbonfrOdreQuotaLow` / `CarbonfrOdreQuotaExhausted` — quota **réel** ODRÉ (par jeu de données) sous 10 % / épuisé (ADR-0022 addendum 2026-09-26, PROD-3) ;
+   - `CarbonfrSseNearCap` / `CarbonfrSseRejected` — plafond de connexions SSE presque atteint (> 80 % pendant 10 min) / au moins un refus (503) en 15 min (ADR-0014 addendum 2026-09-26, SEC-1/PERF-2).
 
    Ces deux dernières règles lisent les jauges `carbonfr_odre_quota_{limit,remaining,reset_timestamp_seconds,observed_timestamp_seconds}`, labellisées `dataset="…"` — une par jeu de données ODRÉ interrogé (national temps réel, régional, export…). Elles reflètent les en-têtes de quota renvoyés par ODRÉ lui-même, **pas** un comptage d'appels initiés : le quota est remis à zéro le 1er du mois, et il est compté **par client (IP)** — ces jauges donnent donc le quota de l'instance qui scrape `/metrics` (celui d'un déploiement self-hosted sur une autre IP est indépendant).
+
+   Les métriques `carbonfr_sse_connections_active` (gauge), `carbonfr_sse_connections_max` (gauge, = `CARBONFR_SSE_MAX_CONNECTIONS`) et `carbonfr_sse_connections_rejected_total` (counter) suivent le plafond de connexions SSE simultanées sur `/v1/intensity/stream`. `CarbonfrSseNearCap` sert à **relever le plafond avant** qu'un client légitime reçoive un 503 — mesurer avant de resserrer, comme pour le quota ODRÉ ci-dessus.
 
    ```yaml
    # prometheus.yml (extrait)

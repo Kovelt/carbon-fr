@@ -112,7 +112,10 @@ The webhook methods (`list_webhooks`, `create_webhook`, `delete_webhook`) requir
   broadcast channel) couldn't replay missed updates anyway. **Events can be lost during an
   outage** — a reconnect resumes the live feed, it does not backfill what was missed while
   disconnected. Reconnection is silent: on success, `Stream::next()` simply yields the next
-  event, with no intermediate `Err`.
+  event, with no intermediate `Err`. With reconnection on (the default), an error status
+  received at connect time — for example the `503` the server returns once it hits its SSE
+  connection cap (`Retry-After: 30`) — is absorbed by the backoff and never surfaces as an
+  error; with `Reconnect::Disabled`, it surfaces immediately as `CarbonFrError::Api`.
 
 ## TLS: no reliance on a process-wide crypto provider default
 

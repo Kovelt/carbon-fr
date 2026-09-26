@@ -107,5 +107,95 @@ Aucun compte, aucun stockage par-utilisateur. C'est une **décision**, et un ato
 
 - REST exact : params de `/v1/schedule` vs endpoints séparés ; forme de la liste par seuil.
 - Mécanisme interne de notification poller→API (`LISTEN`/`NOTIFY` vs canal mémoire) selon la forme du poller (intégré vs `bin/poller`, ADR-0007).
-- Limites SSE : timeout, nombre max de connexions, *heartbeat*.
+- Limites SSE : timeout, nombre max de connexions, *heartbeat* — tranchée, cf. addendum 2026-09-26.
 - Contrat de `greenest_slots` : l'hypothèse d'interruptibilité parfaite doit être explicite.
+
+## Addendum (2026-09-26) — limites SSE : plafond de connexions, timeouts, heartbeat
+
+Clôt la question ouverte « Limites SSE : timeout, nombre max de connexions,
+*heartbeat* » ci-dessus (item I8 du plan, SEC-1/PERF-2/SEC-4).
+
+### Décision
+
+**Plafond global de connexions, pas de durée de vie de flux.** Un
+`tokio::sync::Semaphore` (type public `SseLimiter`, `carbonfr-adapter-http`)
+porté par `StreamState` : le handler de `GET /v1/intensity/stream` tente
+`try_acquire_owned()` **après** la validation des paramètres (un 400 ne
+consomme rien) et **avant** l'abonnement au canal `broadcast`. Défaut **300**
+connexions (`CARBONFR_SSE_MAX_CONNECTIONS`). Au-delà : `503`
+`application/problem+json`, code stable `unavailable` (réutilisé, pas de
+nouveau code), en-tête `Retry-After: 30`, documenté dans l'OpenAPI (réponse
+503 ajoutée sur ce seul chemin, snapshot régénéré).
+
+Le permis est **tenu par le flux lui-même** (combinateur `hold_permit` : il
+vit dans le stream de la réponse), avec deux régimes de libération : (1)
+fermeture propre par le client — FIN TCP détectée quasi immédiatement par
+hyper via lecture concurrente — ou arrêt gracieux du serveur (le
+`take_until(shutdown)` existant termine le flux) ; (2) client disparu **sans**
+FIN (coupure réseau, veille, NAT qui expire) — le keep-alive SSE (~15 s,
+`KeepAlive::default()` d'axum, inchangé) garantit une écriture régulière, mais
+son échec n'est constaté qu'à l'épuisement des retransmissions TCP du noyau,
+soit **≈ 15 min** avec `tcp_retries2 = 15` (défaut Linux) : aucune option
+`SO_KEEPALIVE`/`TCP_USER_TIMEOUT` n'est posée sur les sockets acceptées (le
+keepalive TCP n'agirait de toute façon pas tant que des octets restent non
+acquittés). Un « permis fantôme » est donc compté jusqu'à un quart d'heure —
+même ordre de grandeur que pour tout serveur SSE derrière un proxy Go. Plafond
+**global au processus**, pas par IP ni par clé — le plan demandait un seuil
+généreux ; le dimensionner en tenant compte de ces fantômes et resserrer
+seulement métriques à l'appui (cf. Observabilité).
+
+**Pas de durée de vie maximale forcée d'un flux SSE**, décision explicite :
+elle couperait le SDK TypeScript (aucune reconnexion à ce jour, item DX-2
+d'I9) en silence, sans bénéfice de sécurité supplémentaire — seule la
+*concurrence* est plafonnée, pas la durée. Le *heartbeat* (part de cette
+même question ouverte) était déjà couvert par `Sse::keep_alive(KeepAlive::default())`
+(~15 s) et reste inchangé.
+
+Les timeouts de requête et de lecture d'en-têtes livrés dans la même PR
+(ADR-0014 non concerné directement, cf. `CHANGELOG.md` et
+`deploy/README.md` §1/§2) **n'affectent jamais un flux SSE déjà ouvert** : le
+timeout de requête borne le futur qui construit la réponse (résolu dès
+`Sse::new(...)`, pas le corps du flux) ; le timeout d'en-têtes hyper ne
+s'arme qu'entre deux requêtes d'une connexion, jamais pendant l'écriture
+d'un corps de réponse.
+
+### Observabilité
+
+Métriques Prometheus (`bin/server/src/metrics.rs`, miroir du motif
+`QuotaGauge`/`render_odre_quota` : `SseGauge`/`render_sse`) :
+`carbonfr_sse_connections_active` (gauge), `carbonfr_sse_connections_max`
+(gauge, = le plafond configuré) et `carbonfr_sse_connections_rejected_total`
+(counter). Deux alertes dans `deploy/prometheus/alerts.yml` :
+`CarbonfrSseNearCap` (> 80 % du plafond pendant 10 min, `warning`) et
+`CarbonfrSseRejected` (au moins un refus en 15 min, `warning`) — la première
+sert à **relever le plafond avant** qu'un client légitime reçoive un 503
+(mesurer avant de resserrer, même principe que le quota ODRÉ de l'addendum
+ADR-0022 2026-09-26).
+
+### Comportements clients (vérifiés, sans changement de SDK dans cette PR)
+
+- **`EventSource` navigateur natif** : ne reconnecte **jamais** sur un statut
+  non-200 à la connexion (spec WHATWG : `readyState` passe à `CLOSED`) — un
+  503 de plafond est une fin définitive pour un dashboard `EventSource` nu,
+  sauf reconnexion applicative.
+- **SDK Rust** (`carbonfr-sdk`) : reconnexion active par défaut (backoff
+  fixe puis exponentiel, 1 → 30 s, tentatives illimitées) → un 503 à la
+  connexion est **absorbé silencieusement** dans le backoff, jamais remonté
+  comme erreur tant que la reconnexion est active ; avec
+  `Reconnect::Disabled`, `CarbonFrError::Api { status: 503 }` sort
+  immédiatement. Le SDK ne lit pas `Retry-After` (son palier de 30 s
+  coïncide avec la valeur envoyée).
+- **SDK TypeScript** (`@carbon-fr/sdk`) : jette une `CarbonFrError` (503,
+  `code: "unavailable"`) et ne reconnecte pas — la reconnexion automatique
+  est l'item DX-2 de l'itération I9 du plan, pas encore livrée.
+
+### Pistes non retenues
+
+- **Sous-quota par IP ou par clé API** : écarté pour cette PR — à envisager
+  seulement si `carbonfr_sse_connections_rejected_total` montre un abus
+  (une source concentrant les refus), pas par anticipation.
+- **`TCP_USER_TIMEOUT` sur les sockets acceptées** (bornerait la détection
+  d'un client disparu sans FIN à quelques dizaines de secondes au lieu de
+  ~15 min) : option noyau Linux non testable hermétiquement, écartée pour
+  l'instant ; à envisager si `carbonfr_sse_connections_active` reste durablement
+  au-dessus du nombre de clients réels (permis fantômes visibles).

@@ -921,7 +921,7 @@
           "usage"
         ],
         "summary": "`GET /v1/intensity/stream` — flux **live** (Server-Sent Events) des mises à\njour du read-model, poussées à la cadence du poller (ADR-0014 §2).",
-        "description": "Le client ouvre la connexion (`text/event-stream`) ; le serveur émet un\névénement `intensity` à chaque nouvelle mesure. Filtres optionnels `region`\net `below`. Sans état par-client : la posture anonyme est préservée.",
+        "description": "Le client ouvre la connexion (`text/event-stream`) ; le serveur émet un\névénement `intensity` à chaque nouvelle mesure. Filtres optionnels `region`\net `below`. Sans état par-client : la posture anonyme est préservée.\n\nPlafond global de connexions simultanées (ADR-0014 addendum 2026-09-26) :\nau-delà, `503` Problem Details (`unavailable`) avec `Retry-After` ; la place\nest rendue à la déconnexion du client.",
         "operationId": "intensity_stream",
         "parameters": [
           {
@@ -950,6 +950,26 @@
           },
           "400": {
             "description": "Région invalide",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Plafond de connexions SSE simultanées atteint — réessayer après le délai `Retry-After` (secondes)",
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "format": "int32",
+                  "minimum": 0
+                },
+                "description": "Secondes à attendre avant une nouvelle tentative de connexion"
+              }
+            },
             "content": {
               "application/problem+json": {
                 "schema": {

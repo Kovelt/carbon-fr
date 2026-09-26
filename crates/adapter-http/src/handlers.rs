@@ -1219,6 +1219,10 @@ pub(crate) struct StreamQuery {
 /// Le client ouvre la connexion (`text/event-stream`) ; le serveur émet un
 /// événement `intensity` à chaque nouvelle mesure. Filtres optionnels `region`
 /// et `below`. Sans état par-client : la posture anonyme est préservée.
+///
+/// Plafond global de connexions simultanées (ADR-0014 addendum 2026-09-26) :
+/// au-delà, `503` Problem Details (`unavailable`) avec `Retry-After` ; la place
+/// est rendue à la déconnexion du client.
 #[utoipa::path(
     get,
     path = "/v1/intensity/stream",
@@ -1226,6 +1230,8 @@ pub(crate) struct StreamQuery {
     responses(
         (status = 200, description = "Flux SSE d'événements `intensity` (text/event-stream)"),
         (status = 400, description = "Région invalide", body = ProblemDetails, content_type = "application/problem+json"),
+        (status = 503, description = "Plafond de connexions SSE simultanées atteint — réessayer après le délai `Retry-After` (secondes)", body = ProblemDetails, content_type = "application/problem+json",
+            headers(("Retry-After" = u32, description = "Secondes à attendre avant une nouvelle tentative de connexion"))),
     ),
     tag = "usage"
 )]
@@ -1257,6 +1263,17 @@ pub(crate) async fn intensity_stream(
     }
     let below = query.below;
 
+    // Plafond de connexions (SEC-1/PERF-2) : APRÈS la validation (un 400 ne
+    // consomme aucun permis) et AVANT l'abonnement au canal. Refus immédiat,
+    // jamais d'attente : un flux SSE est long par nature.
+    let permit = state.sse_limiter.try_acquire().ok_or_else(|| {
+        ApiError::unavailable(format!(
+            "plafond de connexions SSE simultanées atteint ({}) — réessayer plus tard",
+            state.sse_limiter.max()
+        ))
+        .with_retry_after(crate::SSE_CAP_RETRY_AFTER_SECS)
+    })?;
+
     let rx = state.updates.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(move |result| {
         // Un abonné en retard (`Lagged`) saute les événements manqués.
@@ -1283,8 +1300,34 @@ pub(crate) async fn intensity_stream(
     // partagent plusieurs noms de combinateurs.
     let stream =
         futures_util::StreamExt::take_until(stream, state.shutdown.clone().cancelled_owned());
+    // Le permis voyage avec le flux : rendu quand le corps de la réponse est
+    // abandonné (déconnexion du client ou clôture ci-dessus), jamais avant.
+    let stream = hold_permit(stream, permit);
 
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+/// Attache un permis du plafond SSE au flux de la réponse : le permis est
+/// **possédé par la closure** du combinateur, donc libéré exactement quand le
+/// flux (et avec lui le corps de la réponse) est droppé — fermeture par le
+/// client (FIN TCP, vu aussitôt par hyper), clôture par le jeton d'arrêt, ou
+/// échec d'écriture si le client a disparu **sans** fermer (coupure réseau) :
+/// dans ce dernier cas, la détection dépend des retransmissions TCP du noyau
+/// (≈ 15 min avec `tcp_retries2` par défaut sous Linux), pas du keep-alive SSE
+/// de 15 s — cf. `SseLimiter`.
+///
+/// ⚠️ La ligne `let _held = &permit;` est ce qui force la capture du permis par
+/// la closure `move` : la supprimer (ou ne plus envelopper le flux) libérerait
+/// le permis dès le retour du handler, avant même le premier événement — le
+/// plafond ne compterait plus rien. Test : `sse_cap_rejects_beyond_max_then_frees_on_disconnect`.
+fn hold_permit<S: tokio_stream::Stream>(
+    stream: S,
+    permit: tokio::sync::OwnedSemaphorePermit,
+) -> impl tokio_stream::Stream<Item = S::Item> {
+    tokio_stream::StreamExt::map(stream, move |item| {
+        let _held = &permit;
+        item
+    })
 }
 
 /// Authentifie la requête par clé API et renvoie l'**empreinte** de la clé

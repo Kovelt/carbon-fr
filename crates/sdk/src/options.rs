@@ -152,7 +152,8 @@ pub struct FactorsOptions {
     /// Méthodologie (seule `acv-ademe` publie une table de facteurs
     /// aujourd'hui). Défaut `acv-ademe`.
     pub methodology: Option<Methodology>,
-    /// Version (défaut : dernière version de la méthode).
+    /// Version (défaut : `1`, comme le reste de l'API ; `2` = vue
+    /// consommation, table incluant les pertes T&D).
     pub version: Option<u32>,
 }
 

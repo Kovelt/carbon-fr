@@ -8,6 +8,14 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Corrigé
+
+- **`/v1/factors` : défaut `version=1`** — le paramètre `version` absent vaut
+  désormais `1` comme partout ailleurs dans l'API (auparavant `2`,
+  incohérent avec `/v1/intensity/now?methodology=acv-ademe` qui sert la v1 :
+  la table auditée ne correspondait pas au calcul servi). `?version=2` reste
+  disponible. Tests ajoutés (aucun n'existait sur cette route).
+
 ### Documentation
 
 - Plan à jour : alertes e-mail Uptime Kuma actives (canal par défaut sur les

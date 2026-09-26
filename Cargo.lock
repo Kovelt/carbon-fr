@@ -260,6 +260,7 @@ name = "carbonfr-adapter-odre"
 version = "0.9.5"
 dependencies = [
  "async-trait",
+ "axum",
  "carbonfr-core",
  "reqwest",
  "rustls",

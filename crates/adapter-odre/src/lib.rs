@@ -18,14 +18,17 @@
 //! l'API paginée).
 
 mod dto;
+pub mod quota;
 
 use async_trait::async_trait;
 use carbonfr_core::domain::{LoadRecord, Measurement, Region, TimeRange};
 use carbonfr_core::ports::{ConsumptionSource, Eco2mixArchive, Eco2mixSource, SourceError};
 use serde::de::DeserializeOwned;
+use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use dto::{ConsumptionRecord, NationalRecord, RecordsResponse, RegionalRecord};
+pub use quota::{DatasetQuota, QuotaTracker};
 
 /// URL de base de l'API Explore d'ODRÉ.
 const DEFAULT_BASE_URL: &str = "https://odre.opendatasoft.com";
@@ -73,6 +76,11 @@ pub struct OdreClient {
     base_url: String,
     /// Jeu exporté par [`Eco2mixArchive`] (backfill) : consolidé par défaut.
     archive_dataset: &'static str,
+    /// Observation opportuniste du quota ODRÉ réel par jeu de données (ADR-0022
+    /// addendum 2026-09-26). Partagé entre les clones (`Arc` interne) : un
+    /// même traceur peut être branché sur plusieurs clients du même processus
+    /// via [`with_quota_tracker`](Self::with_quota_tracker).
+    quota: quota::QuotaTracker,
 }
 
 /// Jeu de données éCO2mix national exporté par le backfill ([`Eco2mixArchive`]).
@@ -123,6 +131,7 @@ impl OdreClient {
             http,
             base_url: base_url.into(),
             archive_dataset: ArchiveSource::default().dataset(),
+            quota: quota::QuotaTracker::new(),
         }
     }
 
@@ -131,6 +140,20 @@ impl OdreClient {
     pub fn with_archive_source(mut self, source: ArchiveSource) -> Self {
         self.archive_dataset = source.dataset();
         self
+    }
+
+    /// Branche un [`QuotaTracker`](quota::QuotaTracker) externe (partagé entre
+    /// plusieurs clients du même processus, ex. poller + auto-réparation dans
+    /// `bin/server`) à la place de celui créé par défaut.
+    pub fn with_quota_tracker(mut self, tracker: quota::QuotaTracker) -> Self {
+        self.quota = tracker;
+        self
+    }
+
+    /// Dernières observations connues du quota ODRÉ réel (opportuniste, cf.
+    /// module [`quota`]).
+    pub fn quota(&self) -> &quota::QuotaTracker {
+        &self.quota
     }
 
     fn records_url(&self, dataset: &str) -> String {
@@ -152,6 +175,14 @@ impl OdreClient {
             .send()
             .await
             .map_err(|e| SourceError::Unavailable(format!("requête ODRÉ : {e}")))?;
+
+        // Observation opportuniste du quota réel (ADR-0022 addendum 2026-09-26) :
+        // AVANT le contrôle de statut, à dessein — un 429 (quota dépassé) porte les
+        // mêmes en-têtes `x-ratelimit-dataset-*` (souvent `remaining: 0`), c'est le
+        // cas le plus utile à capter. Lire les en-têtes ne consomme pas le corps —
+        // 0 appel HTTP de plus, quelle que soit l'issue de la requête.
+        self.quota
+            .observe(dataset, resp.headers(), OffsetDateTime::now_utc());
 
         if !resp.status().is_success() {
             return Err(SourceError::Unavailable(format!(
@@ -199,6 +230,11 @@ impl OdreClient {
             .send()
             .await
             .map_err(|e| SourceError::Unavailable(format!("export ODRÉ : {e}")))?;
+
+        // Cf. `fetch` : observation opportuniste AVANT le contrôle de statut, mêmes
+        // en-têtes de quota sur l'export que sur `records` (y compris sur un 429).
+        self.quota
+            .observe(dataset, resp.headers(), OffsetDateTime::now_utc());
 
         if !resp.status().is_success() {
             return Err(SourceError::Unavailable(format!(
@@ -486,5 +522,64 @@ mod tests {
             OdreClient::region_refine(Region::National),
             Err(SourceError::NoData(Region::National))
         ));
+    }
+
+    /// Démarre `app` sur `127.0.0.1:<port éphémère>` et rend l'URL de base
+    /// (`http://127.0.0.1:<port>`) ainsi que le `JoinHandle` de la tâche
+    /// serveur (abandonnée — donc annulée — à la fin du test avec le runtime
+    /// `#[tokio::test]`, pas besoin d'arrêt explicite). Même approche que
+    /// `crates/adapter-webhook`.
+    async fn spawn_server(app: axum::Router) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind du serveur de test");
+        let addr = listener.local_addr().expect("adresse locale");
+        let handle = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{addr}"), handle)
+    }
+
+    /// Bout en bout, sans réseau réel : un serveur `axum` local répond comme
+    /// ODRÉ (en-têtes de quota + corps `records` minimal), un `OdreClient`
+    /// pointé dessus fait un appel public normal (`latest`), et on vérifie que
+    /// le quota a bien été observé — 0 appel ODRÉ réel, aucune dépendance
+    /// réseau externe.
+    #[tokio::test]
+    async fn latest_observes_quota_headers_from_response() {
+        let app = axum::Router::new().route(
+            "/api/explore/v2.1/catalog/datasets/eco2mix-national-tr/records",
+            axum::routing::get(|| async {
+                let mut headers = axum::http::HeaderMap::new();
+                headers.insert("x-ratelimit-dataset-limit", "50000".parse().unwrap());
+                headers.insert("x-ratelimit-dataset-remaining", "49977".parse().unwrap());
+                headers.insert(
+                    "x-ratelimit-dataset-reset",
+                    "2026-10-01 00:00:00+00:00".parse().unwrap(),
+                );
+                headers.insert("x-ratelimit-limit", "10000000".parse().unwrap());
+                headers.insert("x-ratelimit-remaining", "9999959".parse().unwrap());
+                (
+                    headers,
+                    axum::Json(serde_json::json!({ "total_count": 0, "results": [] })),
+                )
+            }),
+        );
+        let (base_url, _server) = spawn_server(app).await;
+
+        let client = OdreClient::with_http(reqwest::Client::new(), base_url);
+
+        // Résultats vides → `latest` échoue avec `SourceError::NoData` : sans
+        // conséquence, seule l'observation du quota nous intéresse ici (les
+        // en-têtes sont lus AVANT que le corps ne soit consommé).
+        let result = client.latest(Region::National).await;
+        assert!(matches!(result, Err(SourceError::NoData(Region::National))));
+
+        let snapshot = client.quota().snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].dataset, NATIONAL_DATASET);
+        assert_eq!(snapshot[0].limit, 50_000);
+        assert_eq!(snapshot[0].remaining, 49_977);
+        assert!(snapshot[0].reset_unix.is_some());
     }
 }

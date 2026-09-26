@@ -93,6 +93,7 @@ use carbonfr_adapter_http::{
     StreamState, key_fingerprint, router,
 };
 use carbonfr_adapter_meteo::OpenMeteoClient;
+use carbonfr_adapter_odre::quota::{DatasetQuota, QuotaTracker};
 use carbonfr_adapter_odre::{ArchiveSource, OdreClient};
 use carbonfr_adapter_postgres::PgIntensityRepository;
 use carbonfr_adapter_webhook::HttpNotifier;
@@ -113,7 +114,7 @@ use carbonfr_core::ports::{
     SpotPriceRepository, SpotPriceSource, SubscriptionRepository, WeatherForecastSource,
     WeatherRepository, WebhookDelivery,
 };
-use metrics::Metrics;
+use metrics::{Metrics, QuotaGauge, render_odre_quota};
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, Month, OffsetDateTime};
 use tokio::net::TcpListener;
@@ -185,9 +186,18 @@ async fn run_server() -> anyhow::Result<()> {
 
     let repo = connect_repo(&config.database_url).await?;
 
+    // Quota ODRÉ réel (ADR-0022 addendum 2026-09-26, PROD-3) : un traceur unique
+    // pour le processus serveur, partagé par les DEUX clients ODRÉ qu'il
+    // construit (poller + auto-réparation) — pas celui de la sous-commande
+    // `backfill`, un processus séparé sans `/metrics`. Observation opportuniste
+    // (en-têtes déjà reçus), 0 appel ODRÉ supplémentaire.
+    let odre_quota = QuotaTracker::new();
+
     // Poller unique : un seul composant tape les sources amont, l'API sert
     // depuis la base. ODRÉ (intensité + charge) et Open-Meteo (prévision météo).
-    let source = OdreClient::new().context("initialisation du client ODRÉ")?;
+    let source = OdreClient::new()
+        .context("initialisation du client ODRÉ")?
+        .with_quota_tracker(odre_quota.clone());
     let weather = OpenMeteoClient::new().context("initialisation du client Open-Meteo")?;
     // ENTSO-E : optionnel (ADR-0010) — seulement si `CARBONFR_ENTSOE_TOKEN` est
     // défini. Sans token, `acv-ademe@2` reste calculable mais sans donnée d'import.
@@ -242,7 +252,8 @@ async fn run_server() -> anyhow::Result<()> {
     let self_heal = spawn_self_heal(
         OdreClient::new()
             .context("initialisation du client ODRÉ (auto-réparation)")?
-            .with_archive_source(ArchiveSource::Realtime),
+            .with_archive_source(ArchiveSource::Realtime)
+            .with_quota_tracker(odre_quota.clone()),
         repo.clone(),
         config.self_heal_days,
     );
@@ -312,9 +323,15 @@ async fn run_server() -> anyhow::Result<()> {
     // `/metrics` (hors contrat `/v1`, comme `/health`) : exposition Prometheus en
     // texte, pas du JSON versionné → fusionnée ici plutôt que dans le routeur de
     // l'adapter. En prod, restreindre l'accès au scrapeur côté reverse proxy.
+    // État à deux champs (`Clone` dérivé) : les compteurs/jauges faits main
+    // (`Metrics`) + le traceur de quota ODRÉ réel (`QuotaTracker`), tous deux
+    // bon marché à cloner (`Arc` interne) — cf. `MetricsState`.
     let metrics_router = axum::Router::new()
         .route("/metrics", axum::routing::get(serve_metrics))
-        .with_state(metrics);
+        .with_state(MetricsState {
+            metrics,
+            quota: odre_quota,
+        });
     // Tier hébergé (ADR-0015) : middleware clés API + quota, **opt-in**. Désactivé
     // par défaut → l'API reste anonyme et sans limite (parité self-hosting).
     // Appliqué PAR le routeur, sous sa couche CORS (audit 2026-08 : posé ici en
@@ -385,17 +402,40 @@ async fn run_server() -> anyhow::Result<()> {
     serve_result
 }
 
+/// État du routeur `/metrics` : les compteurs/jauges maison (`Metrics`) et le
+/// traceur de quota ODRÉ réel (`QuotaTracker`, ADR-0022 addendum 2026-09-26).
+/// `Clone` (dérivé) : les deux champs sont bon marché à cloner (`Arc` interne).
+#[derive(Clone)]
+struct MetricsState {
+    metrics: Metrics,
+    quota: QuotaTracker,
+}
+
 /// `GET /metrics` — exposition Prometheus (text format 0.0.4). Hors du contrat
-/// `/v1` (endpoint d'exploitation, comme `/health`).
+/// `/v1` (endpoint d'exploitation, comme `/health`). Rend d'abord les
+/// métriques maison, puis les jauges de quota ODRÉ réel (vide si aucune
+/// observation encore faite).
 async fn serve_metrics(
-    axum::extract::State(metrics): axum::extract::State<Metrics>,
+    axum::extract::State(state): axum::extract::State<MetricsState>,
 ) -> impl axum::response::IntoResponse {
+    let snapshot = state.quota.snapshot();
+    let gauges: Vec<QuotaGauge<'_>> = snapshot
+        .iter()
+        .map(|q: &DatasetQuota| QuotaGauge {
+            dataset: &q.dataset,
+            limit: q.limit,
+            remaining: q.remaining,
+            reset_unix: q.reset_unix,
+            observed_unix: q.observed_unix,
+        })
+        .collect();
+    let body = state.metrics.render() + &render_odre_quota(&gauges);
     (
         [(
             axum::http::header::CONTENT_TYPE,
             "text/plain; version=0.0.4; charset=utf-8",
         )],
-        metrics.render(),
+        body,
     )
 }
 

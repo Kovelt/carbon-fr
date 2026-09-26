@@ -50,3 +50,25 @@ groups:
         annotations:
           summary: "Donnée carbon-fr figée (dernière mesure nationale de plus de 2 h)"
           description: "La source ODRÉ ne publie plus, ou la collecte ne récupère plus rien de neuf : l'API sert une donnée de plus de 2 h."
+
+      # Quota ODRÉ réel (ADR-0022 addendum 2026-09-26, PROD-3) : par jeu de
+      # données, lu sur les en-têtes ODRÉ (pas un proxy). Prérequis du
+      # comblement régional (PROD-1/PERF-3) : visibilité avant de densifier le
+      # poll sur `eco2mix-regional-tr`.
+      - alert: CarbonfrOdreQuotaLow
+        expr: carbonfr_odre_quota_remaining / carbonfr_odre_quota_limit < 0.10
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Quota ODRÉ bas pour le jeu {{ $labels.dataset }}"
+          description: "Moins de 10 % du quota mensuel restant sur {{ $labels.dataset }} depuis plus de 30 min — surveiller la fréquence de poll avant épuisement."
+
+      - alert: CarbonfrOdreQuotaExhausted
+        expr: carbonfr_odre_quota_remaining == 0
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Quota ODRÉ épuisé pour le jeu {{ $labels.dataset }}"
+          description: "Le quota mensuel ODRÉ (par jeu et par IP) est à 0 sur {{ $labels.dataset }} depuis plus de 15 min — la collecte de ce jeu échouera jusqu'à la remise à zéro (carbonfr_odre_quota_reset_timestamp_seconds)."

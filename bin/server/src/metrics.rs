@@ -6,8 +6,15 @@
 //! - **fraîcheur du poller** : si `now − last_success` dépasse l'intervalle de
 //!   poll, l'ingestion est en panne (donnée gelée) → alerte la plus importante ;
 //! - **volume & erreurs** d'ingestion ;
-//! - **appels amont** par source : proxy du **quota ODRÉ** (50 000/mois) et des
-//!   autres API, sans rien stocker de plus.
+//! - **appels amont** par source : `carbonfr_upstream_requests_total`, un
+//!   **proxy** (appels initiés) pour ODRÉ et les autres API amont ;
+//! - **quota ODRÉ réel** (ADR-0022 addendum 2026-09-26) : depuis
+//!   `carbonfr-adapter-odre` (module `quota`), les en-têtes de quota renvoyés
+//!   par ODRÉ lui-même (par jeu de données, 50 000/mois) — [`render_odre_quota`],
+//!   séparée de [`Metrics`] pour garder ce module indépendant des types de
+//!   l'adapter (la composition root fait la conversion). Le proxy ci-dessus
+//!   reste la seule visibilité pour Open-Meteo/ENTSO-E, qui n'exposent pas ce
+//!   genre d'en-tête.
 //!
 //! La latence HTTP est déjà tracée par `TraceLayer` ; on n'embarque donc aucun
 //! histogramme (ni crate de métriques) — cohérent avec l'ethos zéro-dépendance
@@ -197,6 +204,108 @@ impl Metrics {
     }
 }
 
+/// Une observation de quota ODRÉ à rendre en jauges (miroir découplé de
+/// `carbonfr_adapter_odre::quota::DatasetQuota` — ce module ne dépend d'aucun
+/// adapter, cf. doc de tête).
+pub struct QuotaGauge<'a> {
+    pub dataset: &'a str,
+    pub limit: u64,
+    pub remaining: u64,
+    pub reset_unix: Option<i64>,
+    pub observed_unix: i64,
+}
+
+/// Rend les jauges du **quota ODRÉ réel** (ADR-0022 addendum 2026-09-26), une
+/// par jeu de données observé. Chaînes vide si `entries` est vide (rien à
+/// exposer avant la première observation). Chaque métrique a son
+/// `# HELP`/`# TYPE` une seule fois, puis une ligne par jeu ; `reset_unix`
+/// absent → la ligne `..._reset_timestamp_seconds` de ce jeu est omise (pas de
+/// `0` trompeur : `0` est un horodatage Unix valide, contrairement aux jauges
+/// de fraîcheur de [`Metrics`] où `0` signifie « jamais »).
+pub fn render_odre_quota(entries: &[QuotaGauge<'_>]) -> String {
+    if entries.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::with_capacity(256 * entries.len());
+
+    let _ = writeln!(
+        out,
+        "# HELP carbonfr_odre_quota_limit Plafond mensuel du quota ODRÉ par jeu de données (x-ratelimit-dataset-limit).\n\
+         # TYPE carbonfr_odre_quota_limit gauge"
+    );
+    for e in entries {
+        let _ = writeln!(
+            out,
+            "carbonfr_odre_quota_limit{{dataset=\"{}\"}} {}",
+            escape_label(e.dataset),
+            e.limit
+        );
+    }
+
+    let _ = writeln!(
+        out,
+        "# HELP carbonfr_odre_quota_remaining Appels restants avant remise à zéro du quota ODRÉ par jeu de données (x-ratelimit-dataset-remaining).\n\
+         # TYPE carbonfr_odre_quota_remaining gauge"
+    );
+    for e in entries {
+        let _ = writeln!(
+            out,
+            "carbonfr_odre_quota_remaining{{dataset=\"{}\"}} {}",
+            escape_label(e.dataset),
+            e.remaining
+        );
+    }
+
+    let with_reset: Vec<(&str, i64)> = entries
+        .iter()
+        .filter_map(|e| e.reset_unix.map(|reset| (e.dataset, reset)))
+        .collect();
+    if !with_reset.is_empty() {
+        let _ = writeln!(
+            out,
+            "# HELP carbonfr_odre_quota_reset_timestamp_seconds Horodatage Unix de la prochaine remise à zéro du quota ODRÉ par jeu de données (x-ratelimit-dataset-reset).\n\
+             # TYPE carbonfr_odre_quota_reset_timestamp_seconds gauge"
+        );
+        for (dataset, reset) in with_reset {
+            let _ = writeln!(
+                out,
+                "carbonfr_odre_quota_reset_timestamp_seconds{{dataset=\"{}\"}} {reset}",
+                escape_label(dataset),
+            );
+        }
+    }
+
+    let _ = writeln!(
+        out,
+        "# HELP carbonfr_odre_quota_observed_timestamp_seconds Horodatage Unix de la dernière observation du quota ODRÉ par jeu de données.\n\
+         # TYPE carbonfr_odre_quota_observed_timestamp_seconds gauge"
+    );
+    for e in entries {
+        let _ = writeln!(
+            out,
+            "carbonfr_odre_quota_observed_timestamp_seconds{{dataset=\"{}\"}} {}",
+            escape_label(e.dataset),
+            e.observed_unix
+        );
+    }
+
+    out
+}
+
+/// Échappe `\`, `"` et le saut de ligne dans une valeur de label Prometheus,
+/// comme l'exige le format texte 0.0.4. En pratique, `dataset` est toujours une
+/// constante littérale choisie par notre propre code (`NATIONAL_DATASET`,
+/// `REGIONAL_DATASET`… dans `carbonfr-adapter-odre`), jamais une valeur lue
+/// dans la réponse HTTP d'ODRÉ — mais échapper reste bon marché et évite une
+/// dépendance implicite à cette invariante si l'origine change un jour.
+fn escape_label(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,5 +343,71 @@ mod tests {
         assert!(out.contains("carbonfr_poller_last_flows_timestamp_seconds 1718002700"));
         // Chaque métrique a son TYPE.
         assert_eq!(out.matches("# TYPE ").count(), 9);
+    }
+
+    #[test]
+    fn render_odre_quota_empty_is_empty_string() {
+        assert_eq!(render_odre_quota(&[]), "");
+    }
+
+    #[test]
+    fn render_odre_quota_renders_one_line_per_dataset() {
+        let entries = [
+            QuotaGauge {
+                dataset: "eco2mix-national-tr",
+                limit: 50_000,
+                remaining: 49_977,
+                reset_unix: Some(1_790_000_000),
+                observed_unix: 1_789_000_000,
+            },
+            QuotaGauge {
+                dataset: "eco2mix-regional-tr",
+                limit: 50_000,
+                remaining: 22_422,
+                reset_unix: None,
+                observed_unix: 1_789_000_100,
+            },
+        ];
+
+        let out = render_odre_quota(&entries);
+
+        assert!(out.contains("carbonfr_odre_quota_limit{dataset=\"eco2mix-national-tr\"} 50000"));
+        assert!(out.contains("carbonfr_odre_quota_limit{dataset=\"eco2mix-regional-tr\"} 50000"));
+        assert!(
+            out.contains("carbonfr_odre_quota_remaining{dataset=\"eco2mix-national-tr\"} 49977")
+        );
+        assert!(
+            out.contains("carbonfr_odre_quota_remaining{dataset=\"eco2mix-regional-tr\"} 22422")
+        );
+        // Reset : seul le jeu qui en a un est rendu (pas de ligne pour l'autre).
+        assert!(out.contains(
+            "carbonfr_odre_quota_reset_timestamp_seconds{dataset=\"eco2mix-national-tr\"} 1790000000"
+        ));
+        assert!(!out.contains(
+            "carbonfr_odre_quota_reset_timestamp_seconds{dataset=\"eco2mix-regional-tr\"}"
+        ));
+        assert!(out.contains(
+            "carbonfr_odre_quota_observed_timestamp_seconds{dataset=\"eco2mix-national-tr\"} 1789000000"
+        ));
+        assert!(out.contains(
+            "carbonfr_odre_quota_observed_timestamp_seconds{dataset=\"eco2mix-regional-tr\"} 1789000100"
+        ));
+        // 4 métriques déclarées (limit, remaining, reset, observed).
+        assert_eq!(out.matches("# TYPE ").count(), 4);
+    }
+
+    #[test]
+    fn render_odre_quota_escapes_label_value() {
+        let entries = [QuotaGauge {
+            dataset: "weird\"dataset\\name",
+            limit: 1,
+            remaining: 1,
+            reset_unix: None,
+            observed_unix: 0,
+        }];
+
+        let out = render_odre_quota(&entries);
+
+        assert!(out.contains("dataset=\"weird\\\"dataset\\\\name\""));
     }
 }

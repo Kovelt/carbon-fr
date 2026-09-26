@@ -6,7 +6,18 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.9.6] - 2026-09-26
+
+Premières livraisons de l'itération I8 du [plan](docs/plan-iterations.md) :
+**historique régional `acv-ademe` comblable par export de masse** (périmètre
+`regional` de la sous-commande `backfill`, auto-réparation régionale livrée
+désactivée), **quota ODRÉ réel** visible dans `/metrics` avec ses alertes,
+`/v1/factors` cohérent avec le reste de l'API, champ `servers` de l'OpenAPI.
+Version *patch* : `carbonfr-core` ne gagne que des ajouts compatibles
+(`Eco2mixArchive::export_regional` à corps par défaut, `Region::from_insee_code`),
+vérifiés par `cargo-semver-checks` en CI ; elle est republiée en 0.9.6 avec
+`carbonfr-eligibility`. Aucune migration, aucun changement de `/v1` hors le
+défaut de `/v1/factors` (cf. Corrigé).
 
 ### Corrigé
 

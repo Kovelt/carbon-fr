@@ -240,6 +240,121 @@ async fn read_current_without_data_errors() {
     assert!(get.execute(Region::Bretagne).await.is_err());
 }
 
+/// `execute_all` passe ici par le corps **par défaut** de
+/// `IntensityRepository::latest_all` (le fake ne le redéfinit pas) : national
+/// d'abord puis l'ordre de `Region::METROPOLITAN`, dernier point par région,
+/// régions sans donnée omises, méthodologies isolées (liste vide, pas d'erreur).
+#[tokio::test]
+async fn read_current_all_lists_regions_in_canonical_order_and_skips_missing() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let repo = InMemoryRepo::default();
+    repo.upsert_many(&[
+        measurement(t0, Region::Bretagne, 20.0, Vintage::Tr),
+        measurement(
+            t0 + Duration::minutes(15),
+            Region::Bretagne,
+            22.0,
+            Vintage::Tr,
+        ),
+        measurement(t0, Region::AuvergneRhoneAlpes, 30.0, Vintage::Tr),
+        measurement(t0, Region::National, 40.0, Vintage::Tr),
+    ])
+    .await
+    .unwrap();
+
+    let all = GetCurrentIntensity::new(repo.clone(), "rte-direct")
+        .execute_all()
+        .await
+        .unwrap();
+    let regions: Vec<Region> = all.iter().map(|m| m.region).collect();
+    assert_eq!(
+        regions,
+        [
+            Region::National,
+            Region::AuvergneRhoneAlpes,
+            Region::Bretagne
+        ]
+    );
+    assert_eq!(all[2].intensity.value(), 22.0, "le plus récent par région");
+
+    let none = GetCurrentIntensity::new(repo, "acv-ademe")
+        .execute_all()
+        .await
+        .unwrap();
+    assert!(none.is_empty());
+}
+
+/// Garantie du port : une erreur du backend sur UNE région fait échouer tout
+/// `latest_all` (jamais de liste partielle silencieuse) — exercée sur le corps
+/// par défaut via un repository dont `latest` échoue pour la Bretagne.
+#[tokio::test]
+async fn read_current_all_propagates_a_backend_error() {
+    #[derive(Clone)]
+    struct FailingBretagne(InMemoryRepo);
+
+    #[async_trait]
+    impl IntensityRepository for FailingBretagne {
+        async fn upsert_many(&self, m: &[Measurement]) -> Result<usize, RepositoryError> {
+            self.0.upsert_many(m).await
+        }
+        async fn latest(
+            &self,
+            region: Region,
+            methodology_id: &str,
+        ) -> Result<Option<Measurement>, RepositoryError> {
+            if region == Region::Bretagne {
+                return Err(RepositoryError::Backend("panne simulée".into()));
+            }
+            self.0.latest(region, methodology_id).await
+        }
+        async fn range(
+            &self,
+            region: Region,
+            methodology_id: &str,
+            range: TimeRange,
+        ) -> Result<Vec<Measurement>, RepositoryError> {
+            self.0.range(region, methodology_id, range).await
+        }
+        async fn stats(
+            &self,
+            region: Region,
+            methodology_id: &str,
+            range: TimeRange,
+        ) -> Result<Option<IntensityStats>, RepositoryError> {
+            self.0.stats(region, methodology_id, range).await
+        }
+        async fn rollup(
+            &self,
+            region: Region,
+            methodology_id: &str,
+            range: TimeRange,
+            granularity: Granularity,
+        ) -> Result<Vec<RollupBucket>, RepositoryError> {
+            self.0
+                .rollup(region, methodology_id, range, granularity)
+                .await
+        }
+        async fn refresh_rollups(&self) -> Result<(), RepositoryError> {
+            self.0.refresh_rollups().await
+        }
+    }
+
+    let repo = FailingBretagne(InMemoryRepo::default());
+    repo.upsert_many(&[measurement(
+        OffsetDateTime::UNIX_EPOCH,
+        Region::National,
+        40.0,
+        Vintage::Tr,
+    )])
+    .await
+    .unwrap();
+    let err = GetCurrentIntensity::new(repo, "rte-direct")
+        .execute_all()
+        .await
+        .expect_err("l'erreur d'une région doit faire échouer tout l'appel");
+    assert!(matches!(err, ApplicationError::Repository(_)), "{err}");
+}
+
 #[tokio::test]
 async fn ingest_derives_and_stores_acv_ademe() {
     let t0 = OffsetDateTime::UNIX_EPOCH;

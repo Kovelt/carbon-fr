@@ -340,9 +340,15 @@ impl PriceBreakdown {
     }
 }
 
-/// Parts de production par filière, à partir d'un mix (productions négatives
-/// bornées à 0 ; pompage et échanges exclus — pas des productions primaires).
-fn mix_shares(mix: &GenerationMix) -> Vec<MixShare> {
+/// Parts de production par filière, à partir d'un mix : productions négatives
+/// bornées à 0, filières à production nulle **omises**, pompage et échanges
+/// exclus (pas des productions primaires). `Thermique` (agrégat fossile) si le
+/// mix est régional, sinon gaz/charbon/fioul détaillés — jamais les deux.
+///
+/// Un seul calcul pour deux usages : le contexte explicatif de `/v1/price`
+/// ([`PriceContext::shares`]) et le champ `shares` de `/v1/mix` (plan I8,
+/// PROD-API-4) — les deux routes ne peuvent pas diverger.
+pub fn mix_shares(mix: &GenerationMix) -> Vec<MixShare> {
     let mut entries = vec![
         (Filiere::Nucleaire, mix.nucleaire),
         (Filiere::Hydraulique, mix.hydraulique),

@@ -1,4 +1,4 @@
-//! Paramètres optionnels des 25 méthodes REST de `crate::methods` (le
+//! Paramètres optionnels des 27 méthodes REST de `crate::methods` (le
 //! flux SSE a les siens, `crate::stream::IntensityStreamOptions`) — un struct
 //! `#[derive(Default)]` à champs publics par méthode qui a au moins un
 //! paramètre réellement optionnel, sur le patron déjà posé par
@@ -28,6 +28,17 @@ pub struct IntensityNowOptions {
     pub methodology: Option<Methodology>,
     /// Version de la méthode (`acv-ademe` : `1` = production (défaut),
     /// `2` = consommation, national).
+    pub version: Option<u32>,
+}
+
+/// `GET /v1/intensity/now/all` — pas de région : toutes.
+#[derive(Debug, Clone, Default)]
+pub struct IntensityNowAllOptions {
+    /// Méthodologie. Défaut `rte-direct` (national seulement → une entrée) ;
+    /// `acv-ademe` pour national + 12 régions.
+    pub methodology: Option<Methodology>,
+    /// Version de la méthode (`acv-ademe` : `1` seulement ici — la vue
+    /// consommation `2` n'existe qu'au national, via `intensity_now`).
     pub version: Option<u32>,
 }
 

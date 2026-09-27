@@ -1,4 +1,4 @@
-//! Tests hermétiques des 25 méthodes REST (`crate::methods` — le flux SSE a
+//! Tests hermétiques des 27 méthodes REST (`crate::methods` — le flux SSE a
 //! les siens dans `src/stream.rs`) : un serveur `axum` local par test
 //! (patron déjà posé par `client.rs`/`stream.rs`, `crates/adapter-webhook`)
 //! vérifie (a) la méthode HTTP et le chemin reçus, (b) certains paramètres de
@@ -421,6 +421,101 @@ async fn schedule_slots_sends_required_count_and_caps_response() {
 }
 
 // --- Mix ---------------------------------------------------------------
+
+#[tokio::test]
+async fn intensity_now_all_decodes_regions_and_sends_methodology() {
+    let (base_url, captured, _server) = spawn(
+        Method::GET,
+        "/v1/intensity/now/all",
+        FixtureResponse::json(fixture("intensity_now_all.json")),
+    )
+    .await;
+
+    let resp = client(&base_url)
+        .intensity_now_all(IntensityNowAllOptions {
+            methodology: Some(Methodology::AcvAdeme),
+            version: None,
+        })
+        .await
+        .expect("réponse 200");
+
+    let req = captured.take();
+    assert_eq!(req.path, "/v1/intensity/now/all");
+    let params = req.query_params();
+    assert_eq!(
+        params.get("methodology").map(String::as_str),
+        Some("acv-ademe")
+    );
+    assert!(!params.contains_key("version"));
+    assert_eq!(resp.methodology, Methodology::AcvAdeme);
+    assert_eq!(resp.methodology_version, 1);
+    assert_eq!(resp.count, 3);
+    assert_eq!(resp.regions.len(), 3);
+    assert_eq!(resp.regions[0].region, Region::National);
+    assert_eq!(resp.regions[1].region, Region::Bretagne);
+    assert_eq!(resp.regions[2].methodology, Methodology::AcvAdeme);
+}
+
+#[tokio::test]
+async fn regions_decodes_catalog() {
+    let (base_url, captured, _server) = spawn(
+        Method::GET,
+        "/v1/regions",
+        FixtureResponse::json(fixture("regions.json")),
+    )
+    .await;
+
+    let resp = client(&base_url).regions().await.expect("réponse 200");
+
+    assert_eq!(captured.take().path, "/v1/regions");
+    assert_eq!(resp.regions.len(), 13);
+    assert_eq!(resp.regions[0].slug, Region::National);
+    assert!(resp.regions[0].national);
+    assert!(resp.regions[0].insee_code.is_none());
+    let bretagne = resp
+        .regions
+        .iter()
+        .find(|r| r.slug == Region::Bretagne)
+        .expect("bretagne");
+    assert_eq!(bretagne.label, "Bretagne");
+    assert_eq!(bretagne.insee_code.as_deref(), Some("53"));
+    assert!(!bretagne.national);
+}
+
+/// `shares` se décode et somme à 1 ; un serveur plus ancien qui l'omet donne
+/// une liste vide, jamais une erreur de désérialisation.
+#[tokio::test]
+async fn mix_decodes_shares_and_tolerates_their_absence() {
+    let (base_url, _captured, _server) = spawn(
+        Method::GET,
+        "/v1/mix",
+        FixtureResponse::json(fixture("mix.json")),
+    )
+    .await;
+    let resp = client(&base_url)
+        .mix(MixOptions::default())
+        .await
+        .expect("réponse 200");
+    assert!(!resp.shares.is_empty());
+    let total: f64 = resp.shares.iter().map(|s| s.share).sum();
+    assert!((total - 1.0).abs() < 1e-9, "{total}");
+    let nucleaire = resp
+        .shares
+        .iter()
+        .find(|s| s.filiere == "nucleaire")
+        .expect("nucléaire");
+    assert_eq!(nucleaire.label, "Nucléaire");
+    assert!((nucleaire.output_mw - 38967.0).abs() < f64::EPSILON);
+
+    let legacy = r#"{"region":"national","timestamp":"2026-09-25T04:00:00Z","unit":"MW","mix":{"nucleaire":38967.0,"gaz":2666.0,"charbon":0.0,"fioul":37.0,"hydraulique":2980.0,"eolien":3075.0,"solaire":0.0,"bioenergies":1011.0,"pompage":-21.0,"echanges":-11221.0}}"#;
+    let (base_url, _captured, _server) =
+        spawn(Method::GET, "/v1/mix", FixtureResponse::json(legacy)).await;
+    let resp = client(&base_url)
+        .mix(MixOptions::default())
+        .await
+        .expect("réponse 200 (serveur ancien)");
+    assert!(resp.shares.is_empty());
+}
 
 #[tokio::test]
 async fn mix_decodes_national_body_without_thermique() {

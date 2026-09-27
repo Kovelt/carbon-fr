@@ -3,8 +3,9 @@
 
 use carbonfr_core::domain::{
     COST_REFERENCE_DISCLAIMER, CostEstimate, CostTechnology, CrossBorderSnapshot, ForecastPoint,
-    GenerationMix, GreenWindow, IntensityStats, Measurement, Neighbor, PriceBreakdown,
-    RenewableModel, RollupBucket, VisitStats, WeatherForecast, cost_reference_catalog,
+    GenerationMix, GreenWindow, IntensityStats, Measurement, MixShare, Neighbor, PriceBreakdown,
+    Region, RenewableModel, RollupBucket, VisitStats, WeatherForecast, cost_reference_catalog,
+    mix_shares,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -798,6 +799,13 @@ pub(crate) struct MixResponse {
     timestamp: String,
     unit: &'static str,
     mix: MixBody,
+    /// Parts de **production** par filière (`share` dans `[0, 1]`, somme = 1),
+    /// dérivées de `mix` (plan I8, PROD-API-4) : filières à production nulle
+    /// omises, `pompage` et `echanges` toujours exclus (pas des productions) ;
+    /// `thermique` (agrégat fossile) pour un mix régional, sinon gaz/charbon/
+    /// fioul détaillés. Même calcul que le contexte de `/v1/price`. Les valeurs
+    /// MW brutes complètes restent dans `mix`.
+    shares: Vec<MixShareBody>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -839,6 +847,10 @@ impl MixResponse {
                 echanges: mix.echanges,
                 thermique: mix.thermique,
             },
+            shares: mix_shares(mix)
+                .iter()
+                .map(MixShareBody::from_share)
+                .collect(),
         })
     }
 }
@@ -955,6 +967,83 @@ pub(crate) struct MethodologyInfo {
     /// ADR de référence.
     adr: &'static str,
     description: &'static str,
+}
+
+/// Réponse de `GET /v1/intensity/now/all` : la dernière mesure de **chaque**
+/// région disposant d'une donnée, pour une méthodologie (plan I8, PROD-API-2).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct IntensityAllResponse {
+    /// Méthodologie servie — raccourci garanti identique au champ `methodology`
+    /// de chaque entrée de `regions` (un seul appel, une seule méthode ; seul
+    /// `vintage` peut varier d'une entrée à l'autre).
+    methodology: String,
+    methodology_version: u32,
+    /// Nombre d'entrées : 1 en `rte-direct` (national seulement), jusqu'à 13 en
+    /// `acv-ademe` — une région sans donnée est omise, jamais renvoyée vide.
+    count: usize,
+    /// National d'abord, puis les 12 régions dans l'ordre de `/v1/regions`.
+    regions: Vec<IntensityResponse>,
+}
+
+impl IntensityAllResponse {
+    pub(crate) fn from_measurements(
+        methodology: &str,
+        methodology_version: u32,
+        measurements: &[Measurement],
+    ) -> Result<Self, time::error::Format> {
+        let regions = measurements
+            .iter()
+            .map(IntensityResponse::from_measurement)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            methodology: methodology.to_string(),
+            methodology_version,
+            count: regions.len(),
+            regions,
+        })
+    }
+}
+
+/// Une région servie (`RegionsResponse::regions`).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct RegionInfo {
+    /// Slug stable : la valeur du paramètre `region` (ex. `bretagne`).
+    #[schema(example = "bretagne")]
+    slug: &'static str,
+    /// Libellé humain.
+    #[schema(example = "Bretagne")]
+    label: &'static str,
+    /// Code INSEE de la région métropolitaine ; `null` pour `national`.
+    #[schema(example = "53")]
+    insee_code: Option<&'static str>,
+    /// `true` pour la maille nationale — défaut du paramètre `region` des
+    /// lectures ponctuelles ; sans filtre, `/v1/intensity/stream` pousse au
+    /// contraire toutes les régions.
+    national: bool,
+}
+
+/// Réponse de `GET /v1/regions` — catalogue **statique** des régions servies
+/// (plan I8, PROD-API-5) : national puis les 12 régions métropolitaines, dans
+/// l'ordre de `Region::METROPOLITAN` (le même que `/v1/intensity/now/all`).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct RegionsResponse {
+    regions: Vec<RegionInfo>,
+}
+
+impl RegionsResponse {
+    pub(crate) fn catalog() -> Self {
+        Self {
+            regions: std::iter::once(Region::National)
+                .chain(Region::METROPOLITAN)
+                .map(|region| RegionInfo {
+                    slug: region.slug(),
+                    label: region.label(),
+                    insee_code: region.insee_code(),
+                    national: region == Region::National,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Réponse de `GET /v1/methodologies` — catalogue des méthodes + versions.
@@ -1144,6 +1233,8 @@ struct PriceContextBody {
     marginal_technology: Option<MarginalTechnologyBody>,
 }
 
+/// Part d'une filière dans la production domestique — partagée par le contexte
+/// de `/v1/price` et le champ `shares` de `/v1/mix` (un seul composant OpenAPI).
 #[derive(Serialize, ToSchema)]
 struct MixShareBody {
     filiere: &'static str,
@@ -1151,6 +1242,17 @@ struct MixShareBody {
     /// Part dans la production domestique, dans `[0, 1]`.
     share: f64,
     output_mw: f64,
+}
+
+impl MixShareBody {
+    fn from_share(s: &MixShare) -> Self {
+        Self {
+            filiere: s.filiere.slug(),
+            label: s.filiere.label(),
+            share: s.share,
+            output_mw: s.output_mw,
+        }
+    }
 }
 
 /// Technologie marginale **estimée** (ordre de mérite domestique, ADR-0023).
@@ -1184,12 +1286,7 @@ impl PriceResponse {
             .context
             .shares
             .iter()
-            .map(|s| MixShareBody {
-                filiere: s.filiere.slug(),
-                label: s.filiere.label(),
-                share: s.share,
-                output_mw: s.output_mw,
-            })
+            .map(MixShareBody::from_share)
             .collect();
         let marginal_technology = b.context.marginal.map(|m| MarginalTechnologyBody {
             filiere: m.filiere.slug(),

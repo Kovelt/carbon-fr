@@ -26,10 +26,11 @@ use utoipa::IntoParams;
 use crate::dto::{
     CostReferenceResponse, CreateWebhookRequest, CreatedWebhookResponse, EligibilityBody,
     ExchangesHistoryResponse, ExchangesResponse, FactorsResponse, ForecastResponse,
-    GreenestWindowResponse, HistoryResponse, IntensityResponse, MethodologiesResponse, MixResponse,
-    PriceHistoryResponse, PriceResponse, RenewableResponse, RulesetsResponse, ScheduleResponse,
-    SlotsResponse, StatsResponse, StreamEventBody, VisitStatsResponse, WeatherHistoryResponse,
-    WeatherResponse, WebhookListResponse,
+    GreenestWindowResponse, HistoryResponse, IntensityAllResponse, IntensityResponse,
+    MethodologiesResponse, MixResponse, PriceHistoryResponse, PriceResponse, RegionsResponse,
+    RenewableResponse, RulesetsResponse, ScheduleResponse, SlotsResponse, StatsResponse,
+    StreamEventBody, VisitStatsResponse, WeatherHistoryResponse, WeatherResponse,
+    WebhookListResponse,
 };
 use crate::error::{ApiError, ProblemDetails, ValidatedJson, ValidatedQuery};
 use crate::{AppState, ForecastState};
@@ -61,6 +62,7 @@ const DEFAULT_WINDOW_MINUTES: u32 = 60;
 #[into_params(parameter_in = Query)]
 pub(crate) struct RegionQuery {
     /// Slug de région (ex. `bretagne`). National par défaut.
+    #[param(schema_with = region_param_default_national)]
     region: Option<String>,
     /// Méthodologie : `rte-direct` (national) ou `acv-ademe`. Défaut `rte-direct`.
     methodology: Option<String>,
@@ -83,6 +85,57 @@ fn resolve_region(slug: &Option<String>) -> Result<Region, ApiError> {
         Some(slug) => Region::from_slug(slug)
             .ok_or_else(|| ApiError::bad_request(format!("région inconnue : {slug}"))),
     }
+}
+
+/// Schéma OpenAPI du paramètre `region` (plan I8, PROD-API-5) : chaîne à
+/// valeurs **énumérées**, dérivées de [`Region`] au moment de la construction
+/// du document — jamais une liste figée à part : une région ajoutée au domaine
+/// apparaît d'elle-même. Posé par `#[param(schema_with = …)]`, qui remplace le
+/// schéma **et** court-circuite la description tirée du commentaire `///` du
+/// champ : la description est donc portée ici, une fonction par formulation
+/// (défaut national, filtre du flux SSE, prix national seulement). Le type du
+/// champ reste `Option<String>` : la validation (`resolve_region`, 400) et ses
+/// messages ne changent pas.
+fn region_schema(
+    description: &str,
+    slugs: impl IntoIterator<Item = &'static str>,
+) -> utoipa::openapi::schema::Object {
+    utoipa::openapi::schema::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::schema::Type::String)
+        .enum_values(Some(slugs))
+        .description(Some(description))
+        .build()
+}
+
+/// Les 13 slugs servis, national d'abord (ordre de `/v1/regions`).
+fn all_region_slugs() -> impl Iterator<Item = &'static str> {
+    std::iter::once(Region::National)
+        .chain(Region::METROPOLITAN)
+        .map(Region::slug)
+}
+
+/// `region` des lectures d'intensité, de prévision et de scheduling.
+fn region_param_default_national() -> utoipa::openapi::schema::Object {
+    region_schema(
+        "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
+        all_region_slugs(),
+    )
+}
+
+/// `region` du flux SSE : filtre optionnel.
+fn region_param_stream_filter() -> utoipa::openapi::schema::Object {
+    region_schema(
+        "Slug de région à suivre (cf. `/v1/regions`). Sans filtre, toutes les régions sont poussées.",
+        all_region_slugs(),
+    )
+}
+
+/// `region` des routes de prix : national uniquement (le TRV est national).
+fn region_param_national_only() -> utoipa::openapi::schema::Object {
+    region_schema(
+        "Région. **National uniquement** (le TRV est national) ; tout autre slug → 400.",
+        ["national"],
+    )
 }
 
 /// Méthodologies servies (ADR-0005/0008/0010) — valide `?methodology=`
@@ -188,6 +241,65 @@ where
     let use_case = GetCurrentIntensity::new(state.repo.clone(), methodology);
     let measurement = use_case.execute(region).await?;
     Ok(Json(IntensityResponse::from_measurement(&measurement)?))
+}
+
+/// Paramètres de `GET /v1/intensity/now/all` — pas de `region` : toutes.
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct AllRegionsQuery {
+    /// Méthodologie : `rte-direct` (national seulement → une entrée) ou
+    /// `acv-ademe` (national + 12 régions). Défaut `rte-direct`.
+    methodology: Option<String>,
+    /// Version de la méthode. `acv-ademe` : `1` seulement — la vue consommation
+    /// (`2`) n'existe qu'au national, via `/v1/intensity/now`.
+    version: Option<u32>,
+}
+
+/// `GET /v1/intensity/now/all` — dernière intensité de **chaque** région en un
+/// appel (plan I8, PROD-API-2) : une requête au read-model pour national + 12
+/// régions, au lieu de 13 appels à `/v1/intensity/now`.
+///
+/// Liste **vide** (200) si aucune région n'a de donnée — idiome des réponses
+/// liste (`/v1/intensity/date`), pas le 404 de la ressource singulière ; une
+/// région sans donnée est omise. `rte-direct` (défaut) n'existe qu'au
+/// national : passer `methodology=acv-ademe` pour les 13 entrées.
+#[utoipa::path(
+    get,
+    path = "/v1/intensity/now/all",
+    params(AllRegionsQuery),
+    responses(
+        (status = 200, description = "Dernière mesure par région (national d'abord ; liste vide si aucune donnée)", body = IntensityAllResponse),
+        (status = 400, description = "Méthodologie ou version invalide", body = ProblemDetails, content_type = "application/problem+json"),
+    ),
+    tag = "intensité"
+)]
+pub(crate) async fn intensity_now_all<R>(
+    State(state): State<AppState<R>>,
+    ValidatedQuery(query): ValidatedQuery<AllRegionsQuery>,
+) -> Result<Json<IntensityAllResponse>, ApiError>
+where
+    R: IntensityRepository + Clone + Send + Sync + 'static,
+{
+    let methodology = resolve_methodology(&query.methodology, &state.methodology)?;
+    check_version(&methodology, query.version)?;
+    // La vue consommation (`acv-ademe@2`, ADR-0010) est calculée à la lecture,
+    // au national seulement : pas de « toutes régions » possible — message
+    // dédié plutôt que `reject_consumption_version` (qui renvoie vers la
+    // prévision).
+    if wants_consumption(&methodology, query.version) {
+        return Err(ApiError::bad_request(
+            "acv-ademe version=2 (consommation) n'existe qu'au national : utiliser \
+             /v1/intensity/now",
+        ));
+    }
+    let measurements = GetCurrentIntensity::new(state.repo.clone(), methodology.clone())
+        .execute_all()
+        .await?;
+    Ok(Json(IntensityAllResponse::from_measurements(
+        &methodology,
+        query.version.unwrap_or(1),
+        &measurements,
+    )?))
 }
 
 /// `GET /v1/mix` — mix de production de la dernière mesure.
@@ -409,6 +521,7 @@ pub(crate) struct HistoryQuery {
     #[param(required)]
     to: Option<String>,
     /// Slug de région. National par défaut.
+    #[param(schema_with = region_param_default_national)]
     region: Option<String>,
     /// Méthodologie. Défaut `rte-direct`.
     methodology: Option<String>,
@@ -521,6 +634,7 @@ pub(crate) struct StatsQuery {
     #[param(required)]
     to: Option<String>,
     /// Slug de région. National par défaut.
+    #[param(schema_with = region_param_default_national)]
     region: Option<String>,
     /// Pas d'agrégation de la série : `hour` ou `day`. Optionnel.
     interval: Option<String>,
@@ -665,6 +779,7 @@ fn resolve_forecast_window(
 #[into_params(parameter_in = Query)]
 pub(crate) struct ForecastQuery {
     /// Slug de région. National par défaut.
+    #[param(schema_with = region_param_default_national)]
     region: Option<String>,
     /// Méthodologie à prévoir. Défaut `rte-direct`.
     methodology: Option<String>,
@@ -750,6 +865,7 @@ where
 #[into_params(parameter_in = Query)]
 pub(crate) struct GreenestWindowQuery {
     /// Slug de région. National par défaut.
+    #[param(schema_with = region_param_default_national)]
     region: Option<String>,
     /// Méthodologie à prévoir. Défaut `rte-direct`.
     methodology: Option<String>,
@@ -965,6 +1081,7 @@ fn estimator_label(estimator: WindowEstimator) -> &'static str {
 #[derive(Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct ScheduleQuery {
+    #[param(schema_with = region_param_default_national)]
     region: Option<String>,
     methodology: Option<String>,
     /// Version de la méthode. Validée : une version inconnue — ou `acv-ademe`
@@ -1060,6 +1177,7 @@ where
 #[derive(Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct SlotsQuery {
+    #[param(schema_with = region_param_default_national)]
     region: Option<String>,
     methodology: Option<String>,
     /// Version de la méthode. Validée : une version inconnue — ou `acv-ademe`
@@ -1133,6 +1251,7 @@ where
 #[derive(Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub(crate) struct BelowQuery {
+    #[param(schema_with = region_param_default_national)]
     region: Option<String>,
     methodology: Option<String>,
     /// Version de la méthode. Validée : une version inconnue — ou `acv-ademe`
@@ -1207,6 +1326,7 @@ where
 #[into_params(parameter_in = Query)]
 pub(crate) struct StreamQuery {
     /// Slug de région à suivre. Sans filtre, toutes les régions sont poussées.
+    #[param(schema_with = region_param_stream_filter)]
     region: Option<String>,
     /// Ne pousser que les mises à jour d'intensité **strictement sous** ce seuil
     /// (gCO₂eq/kWh) — pour un événement « créneau vert imminent ».
@@ -1602,6 +1722,20 @@ pub(crate) async fn methodologies() -> Json<MethodologiesResponse> {
     Json(MethodologiesResponse::catalog())
 }
 
+/// `GET /v1/regions` — catalogue **statique** des régions servies (slug,
+/// libellé, code INSEE) : les valeurs acceptées par le paramètre `region`
+/// (plan I8, PROD-API-5). National d'abord, puis les 12 régions
+/// métropolitaines, dans l'ordre de `/v1/intensity/now/all`.
+#[utoipa::path(
+    get,
+    path = "/v1/regions",
+    responses((status = 200, description = "Régions servies (13 entrées)", body = RegionsResponse)),
+    tag = "régions"
+)]
+pub(crate) async fn regions() -> Json<RegionsResponse> {
+    Json(RegionsResponse::catalog())
+}
+
 /// Paramètre de `GET /v1/factors`.
 #[derive(Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -1668,6 +1802,7 @@ fn require_national(region: &Option<String>) -> Result<(), ApiError> {
 #[into_params(parameter_in = Query)]
 pub(crate) struct PriceQuery {
     /// Région. **National uniquement** (le TRV est national) ; autre slug → 400.
+    #[param(schema_with = region_param_national_only)]
     region: Option<String>,
 }
 
@@ -1712,6 +1847,7 @@ pub(crate) struct PriceHistoryQuery {
     #[param(required)]
     to: Option<String>,
     /// Région. **National uniquement**.
+    #[param(schema_with = region_param_national_only)]
     region: Option<String>,
 }
 

@@ -85,7 +85,7 @@ Budget indicatif : ~14 appels ODRÉ par cycle (1 national + 12 régions + 1 char
 **Ports sortants** (le domaine *demande*, l'infra *fournit*) :
 
 - `Eco2mixSource` / `Eco2mixArchive` — récupérer la donnée RTE (dernier point, plage ; export de masse pour le backfill).
-- `IntensityRepository` — lire/écrire les mesures (chaud + historique ; upsert conditionnel au millésime, rollups).
+- `IntensityRepository` — lire/écrire les mesures (chaud + historique ; upsert conditionnel au millésime, rollups ; dernière mesure d'une région ou de **toutes** en un appel, `latest_all`).
 - `ForecastModel` — produire une prévision (rend des `ForecastPoint` avec intervalle).
 - `ConsumptionRepository` / `ConsumptionSource` — charge réalisée/prévue (entrée du futur ML).
 - `WeatherRepository` / `WeatherForecastSource` — météo (vent 100 m + irradiance, Open-Meteo).

@@ -77,7 +77,9 @@ cargo add carbonfr-core
 | Endpoint | Nature | Statut |
 | --- | --- | --- |
 | `GET /v1/intensity/now` | Intensité courante (national + 12 régions) | ✅ |
-| `GET /v1/mix` | Mix de production par filière | ✅ |
+| `GET /v1/intensity/now/all` | Intensité courante de **toutes** les régions en un appel (`?methodology=acv-ademe` pour les 13 ; national seul en `rte-direct`) | ✅ |
+| `GET /v1/mix` | Mix de production par filière (MW) + parts de production `shares` | ✅ |
+| `GET /v1/regions` | Catalogue des régions servies (slug, libellé, code INSEE) — les valeurs de `?region=` | ✅ |
 | `GET /v1/exchanges` | Échanges transfrontaliers par frontière (flux signé + carbone du voisin, ENTSO-E) | ✅ |
 | `GET /v1/exchanges/date?from=&to=` | Série historique des échanges transfrontaliers | ✅ |
 | `GET /v1/weather` · `/weather/date` | Météo nationale (vent 100 m + irradiance, Open-Meteo CC-BY) | ✅ |
@@ -95,7 +97,7 @@ cargo add carbonfr-core
 | `POST`/`GET`/`DELETE /v1/webhooks` | Abonnements webhook signés (clé API requise), désactivés automatiquement après une série de livraisons échouées (`status`) puis purgés après `CARBONFR_WEBHOOK_PURGE_DAYS` jours (défaut 30) | ✅ |
 | `GET /v1/stats` · `POST /v1/stats/visit` | Compteur de consultation (IP jamais stockée, empreinte salée) | ✅ |
 
-Les endpoints d'**intensité** (`/intensity/now`, `/intensity/date`, `/intensity/stats`, `/mix`) acceptent `?region=<slug>` (national par défaut) et `?methodology=<id>` : **`rte-direct`** (estimation RTE, combustion directe — défaut, **national uniquement**) ou **`acv-ademe`** (cycle de vie ADEME, national + 12 régions, ADR-0008) ; `&version=2` (vue consommation, national) est acceptée par `/intensity/*` mais **refusée par `/mix`** (`400` : le mix servi est celui de production). Les endpoints de prix, coût, échanges, météo, renouvelable et catalogue (`/price`, `/cost-reference`, `/exchanges`, `/weather`, `/renewable`, `/methodologies`, `/factors`) sont **nationaux** (`/price` renvoie `400` hors national).
+Les endpoints d'**intensité** (`/intensity/now`, `/intensity/date`, `/intensity/stats`, `/mix`) acceptent `?region=<slug>` (national par défaut ; slugs listés par `/v1/regions` et énumérés dans l'OpenAPI) et `?methodology=<id>` : **`rte-direct`** (estimation RTE, combustion directe — défaut, **national uniquement**) ou **`acv-ademe`** (cycle de vie ADEME, national + 12 régions, ADR-0008) ; `&version=2` (vue consommation, national) est acceptée par `/intensity/*` mais **refusée par `/mix`** (`400` : le mix servi est celui de production). Les endpoints de prix, coût, échanges, météo, renouvelable et catalogue (`/price`, `/cost-reference`, `/exchanges`, `/weather`, `/renewable`, `/methodologies`, `/factors`) sont **nationaux** (`/price` renvoie `400` hors national).
 
 `/intensity/greenest-window` accepte en plus **`?eligibility=rfnbo|low-carbon`** (overlay « électrolyseur », ADR-0025/0026) : chaque créneau de la fenêtre est annoté de son éligibilité au regard du cadre choisi — `rfnbo` (part renouvelable ≥ 90 % **ou** prix day-ahead ≤ 20 €/MWh, Règl. UE 2023/1184) ou `low-carbon` (intensité ≤ seuil **indicatif** dérivé de l'acte délégué 2025/2359) — en réponse **additive** (rien ne change sans le paramètre), avec verdicts `pass`/`fail`/`indeterminate` et disclaimer de neutralité. Le catalogue des rulesets versionnés est servi par `/v1/eligibility/rulesets`. Aucune des quatre méthodes de comptabilisation de l'électricité réseau définies par l'annexe du 2025/2359 n'est mise en œuvre par carbon-fr — ni par ce seuil indicatif, ni par la prévision, ni par la technologie marginale **estimée** de `/v1/price` : l'alignement et les écarts, méthode par méthode (les méthodes horaires (b)/(d) exigent une donnée publiée par le GRT, (a) repose sur la Table 5 officielle, (c) sur un comptage d'heures pleine charge non implémenté), sont documentés dans l'[addendum O1 de l'ADR-0026](docs/adr/0026-methodologie-overlays-eligibilite.md).
 

@@ -32,6 +32,7 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
     ),
     paths(
         crate::handlers::intensity_now,
+        crate::handlers::intensity_now_all,
         crate::handlers::intensity_date,
         crate::handlers::intensity_stats,
         crate::handlers::mix,
@@ -41,6 +42,7 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::handlers::weather_date,
         crate::handlers::renewable,
         crate::handlers::methodologies,
+        crate::handlers::regions,
         crate::handlers::eligibility_rulesets,
         crate::handlers::factors,
         crate::handlers::price,
@@ -62,6 +64,7 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
     ),
     components(schemas(
         crate::dto::IntensityResponse,
+        crate::dto::IntensityAllResponse,
         crate::dto::HistoryResponse,
         crate::dto::StatsResponse,
         crate::dto::MixResponse,
@@ -72,6 +75,8 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::dto::RenewableResponse,
         crate::dto::MethodologiesResponse,
         crate::dto::MethodologyInfo,
+        crate::dto::RegionsResponse,
+        crate::dto::RegionInfo,
         crate::dto::FactorsResponse,
         crate::dto::FactorEntry,
         crate::dto::PriceResponse,
@@ -104,6 +109,7 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         (name = "météo", description = "Météo nationale (Open-Meteo CC-BY 4.0, ADR-0012/0018)"),
         (name = "renouvelable", description = "Dérivation renouvelable météo→production (ADR-0018)"),
         (name = "méthodologie", description = "Méthodes de calcul & facteurs (ADR-0010)"),
+        (name = "régions", description = "Catalogue des régions servies (national + 12 régions, ADR-0008)"),
         (name = "éligibilité", description = "Éligibilité électrolyseur RFNBO / bas-carbone (ADR-0025/0026, neutre)"),
         (name = "prix", description = "Prix de l'électricité & couche LCOE (ADR-0023/0024)"),
         (name = "prévision", description = "Prévision d'intensité (ADR-0009)"),
@@ -120,7 +126,58 @@ pub(crate) fn document() -> OpenApiDoc {
     // Version de l'API = version de la crate (ADR-0019, version unique de
     // workspace). Évite tout placeholder figé visible sur `/docs`.
     doc.info.version = env!("CARGO_PKG_VERSION").to_string();
+    restore_parameter_descriptions(&mut doc);
     doc
+}
+
+/// Remonte au niveau du **paramètre** la description portée par son schéma.
+///
+/// `#[param(schema_with = …)]` (paramètre `region`, plan I8 : enum dérivé de
+/// `Region`) fait générer par utoipa 6 un `Parameter` **sans** `description`
+/// — la branche `schema_with` de la macro court-circuite la description tirée
+/// du commentaire `///` ; seule celle de l'`Object` retourné subsiste
+/// (`schema.description`). Or Swagger UI et la plupart des générateurs de
+/// clients lisent `parameter.description`. On la recopie donc, pour tout
+/// paramètre qui en manque et dont le schéma inline en porte une — sans rien
+/// écraser d'existant.
+fn restore_parameter_descriptions(doc: &mut OpenApiDoc) {
+    use utoipa::openapi::path::Operation;
+    use utoipa::openapi::{RefOr, Schema};
+
+    fn fix(operation: &mut Operation) {
+        let Some(parameters) = operation.parameters.as_mut() else {
+            return;
+        };
+        for parameter in parameters.iter_mut() {
+            let RefOr::T(parameter) = parameter else {
+                continue;
+            };
+            if parameter.description.is_some() {
+                continue;
+            }
+            if let Some(RefOr::T(Schema::Object(object))) = parameter.schema.as_ref() {
+                parameter.description = object.description.clone();
+            }
+        }
+    }
+
+    for item in doc.paths.paths.values_mut() {
+        for operation in [
+            item.get.as_mut(),
+            item.put.as_mut(),
+            item.post.as_mut(),
+            item.delete.as_mut(),
+            item.options.as_mut(),
+            item.head.as_mut(),
+            item.patch.as_mut(),
+            item.trace.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            fix(operation);
+        }
+    }
 }
 
 /// `GET /v1/openapi.json` — la spécification OpenAPI.
@@ -167,9 +224,11 @@ mod tests {
         let doc = document();
         for path in [
             "/v1/intensity/now",
+            "/v1/intensity/now/all",
             "/v1/intensity/date",
             "/v1/intensity/stats",
             "/v1/mix",
+            "/v1/regions",
             "/v1/exchanges",
             "/v1/exchanges/date",
             "/v1/weather",
@@ -238,6 +297,82 @@ mod tests {
         );
     }
 
+    /// Paramètre `region` documenté en **enum** (plan I8, PROD-API-5), avec la
+    /// description propre à chaque contexte — `schema_with` court-circuite la
+    /// description du commentaire `///`, ce test garantit qu'elle n'est pas
+    /// perdue : 13 valeurs et défaut national sur les lectures, filtre du flux
+    /// SSE, `national` seul sur les prix.
+    #[test]
+    fn region_parameter_is_an_enum_with_contextual_descriptions() {
+        let doc = serde_json::to_value(document()).expect("sérialisation OpenAPI");
+        let region_param = |path: &str| -> serde_json::Value {
+            doc["paths"][path]["get"]["parameters"]
+                .as_array()
+                .unwrap_or_else(|| panic!("paramètres de {path}"))
+                .iter()
+                .find(|p| p["name"] == "region")
+                .unwrap_or_else(|| panic!("paramètre region de {path}"))
+                .clone()
+        };
+
+        let now = region_param("/v1/intensity/now");
+        let values = now["schema"]["enum"].as_array().expect("enum");
+        assert_eq!(values.len(), 13);
+        assert_eq!(values[0], "national");
+        assert!(values.contains(&serde_json::json!("bretagne")));
+        assert!(now["required"] != true, "region reste optionnel");
+        assert!(
+            now["schema"]["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("National par défaut")
+        );
+        // Recopiée au niveau du paramètre (`restore_parameter_descriptions`),
+        // là où Swagger UI et les générateurs de clients la lisent.
+        assert_eq!(now["description"], now["schema"]["description"]);
+        // Les paramètres sans `schema_with` gardent leur propre description.
+        let methodology = doc["paths"]["/v1/intensity/now"]["get"]["parameters"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "methodology")
+            .cloned()
+            .expect("paramètre methodology");
+        assert!(
+            methodology["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("rte-direct")
+        );
+
+        let stream = region_param("/v1/intensity/stream");
+        assert_eq!(stream["schema"]["enum"].as_array().expect("enum").len(), 13);
+        assert!(
+            stream["schema"]["description"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("toutes les régions sont poussées")
+        );
+
+        for path in ["/v1/price", "/v1/price/date"] {
+            let price = region_param(path);
+            assert_eq!(price["schema"]["enum"], serde_json::json!(["national"]));
+            assert_eq!(price["description"], price["schema"]["description"]);
+            assert!(
+                price["schema"]["description"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("National uniquement")
+            );
+        }
+
+        // Pas de paramètre `region` sur la route « toutes régions ».
+        let all = doc["paths"]["/v1/intensity/now/all"]["get"]["parameters"]
+            .as_array()
+            .expect("paramètres");
+        assert!(all.iter().all(|p| p["name"] != "region"));
+    }
+
     #[test]
     fn document_lists_servers() {
         let doc = document();
@@ -256,6 +391,9 @@ mod tests {
         let components = doc.components.expect("components");
         for schema in [
             "IntensityResponse",
+            "IntensityAllResponse",
+            "RegionsResponse",
+            "RegionInfo",
             "MixResponse",
             "ExchangesResponse",
             "WeatherResponse",

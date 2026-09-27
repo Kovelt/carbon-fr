@@ -63,6 +63,27 @@ impl IntensityRepository for FakeRepo {
             .filter(|m| m.region == region && m.methodology.id == methodology_id))
     }
 
+    /// Dernier point par région parmi `measurement` + `series` (ordre canonique),
+    /// comme l'override Postgres — le corps par défaut du port est couvert par
+    /// les tests du `core`.
+    async fn latest_all(&self, methodology_id: &str) -> Result<Vec<Measurement>, RepositoryError> {
+        let pool: Vec<&Measurement> = self
+            .measurement
+            .iter()
+            .chain(self.series.iter())
+            .filter(|m| m.methodology.id == methodology_id)
+            .collect();
+        Ok(std::iter::once(Region::National)
+            .chain(Region::METROPOLITAN)
+            .filter_map(|region| {
+                pool.iter()
+                    .filter(|m| m.region == region)
+                    .max_by_key(|m| m.at)
+                    .map(|m| (*m).clone())
+            })
+            .collect())
+    }
+
     async fn range(
         &self,
         region: Region,
@@ -1087,6 +1108,193 @@ async fn mix_returns_generation_breakdown() {
     assert_eq!(body["unit"], "MW");
     assert_eq!(body["mix"]["nucleaire"], 38815.0);
     assert_eq!(body["mix"]["echanges"], -11574.0);
+}
+
+/// `/v1/mix` porte les parts de production (PROD-API-4) : somme = 1, filière à
+/// production nulle omise (`charbon`), pompage/échanges jamais listés (pas des
+/// productions), libellé humain présent ; le bloc `mix` reste inchangé.
+#[tokio::test]
+async fn mix_carries_production_shares() {
+    let response = get(app(Some(national_measurement())), "/v1/mix").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    let shares = body["shares"].as_array().expect("shares");
+    let filieres: Vec<&str> = shares
+        .iter()
+        .map(|s| s["filiere"].as_str().unwrap())
+        .collect();
+    assert!(filieres.contains(&"nucleaire") && filieres.contains(&"gaz"));
+    assert!(!filieres.contains(&"charbon"), "production nulle omise");
+    assert!(!filieres.contains(&"pompage") && !filieres.contains(&"echanges"));
+    assert!(!filieres.contains(&"thermique"), "mix national détaillé");
+    let total: f64 = shares.iter().map(|s| s["share"].as_f64().unwrap()).sum();
+    assert!((total - 1.0).abs() < 1e-9, "{total}");
+    let nucleaire = shares.iter().find(|s| s["filiere"] == "nucleaire").unwrap();
+    assert_eq!(nucleaire["label"], "Nucléaire");
+    assert_eq!(nucleaire["output_mw"], 38815.0);
+    // Le bloc MW brut est intact (dont les valeurs exclues des parts).
+    assert_eq!(body["mix"]["charbon"], 0.0);
+    assert_eq!(body["mix"]["pompage"], -76.0);
+}
+
+/// Mix régional : le fossile agrégé (`thermique`) remplace gaz/charbon/fioul
+/// dans les parts, comme dans le contexte de `/v1/price`.
+#[tokio::test]
+async fn regional_mix_shares_use_aggregated_thermique() {
+    let mut regional = national_measurement();
+    regional.region = Region::Bretagne;
+    regional.methodology = Methodology::acv_ademe();
+    regional.mix = Some(GenerationMix {
+        nucleaire: 0.0,
+        gaz: 0.0,
+        charbon: 0.0,
+        fioul: 0.0,
+        hydraulique: 200.0,
+        eolien: 600.0,
+        solaire: 100.0,
+        bioenergies: 50.0,
+        pompage: 0.0,
+        echanges: 900.0,
+        thermique: Some(50.0),
+    });
+    let response = get(
+        app(Some(regional)),
+        "/v1/mix?region=bretagne&methodology=acv-ademe",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    let shares = body["shares"].as_array().expect("shares");
+    let thermique = shares.iter().find(|s| s["filiere"] == "thermique").unwrap();
+    assert_eq!(thermique["label"], "Thermique fossile");
+    assert!((thermique["share"].as_f64().unwrap() - 0.05).abs() < 1e-9);
+    assert!(
+        shares
+            .iter()
+            .all(|s| s["filiere"] != "gaz" && s["filiere"] != "echanges")
+    );
+}
+
+/// Mesure `acv-ademe` d'une région, pour les tests « toutes régions ».
+fn acv_measurement(region: Region, at: OffsetDateTime, g: f64) -> Measurement {
+    let mut m = national_measurement();
+    m.region = region;
+    m.at = at;
+    m.intensity = CarbonIntensity::new(g).unwrap();
+    m.methodology = Methodology::acv_ademe();
+    m
+}
+
+/// `/v1/intensity/now/all` (PROD-API-2) : une entrée par région ayant une
+/// donnée, national d'abord puis l'ordre de `/v1/regions`, dernier point par
+/// région, méthodologie racine identique à celle de chaque entrée, `count`.
+#[tokio::test]
+async fn intensity_now_all_lists_regions_in_canonical_order() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let repo = FakeRepo {
+        measurement: Some(national_measurement()),
+        series: vec![
+            acv_measurement(Region::Occitanie, t0, 30.0),
+            acv_measurement(Region::Bretagne, t0, 20.0),
+            acv_measurement(Region::Bretagne, t0 + Duration::minutes(15), 22.0),
+            acv_measurement(Region::National, t0, 40.0),
+        ],
+        ..Default::default()
+    };
+    let response = get(build(repo), "/v1/intensity/now/all?methodology=acv-ademe").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .headers()
+            .contains_key(axum::http::header::CACHE_CONTROL)
+    );
+    let body = json_body(response).await;
+    assert_eq!(body["methodology"], "acv-ademe");
+    assert_eq!(body["methodology_version"], 1);
+    assert_eq!(body["count"], 3);
+    let regions = body["regions"].as_array().unwrap();
+    let slugs: Vec<&str> = regions
+        .iter()
+        .map(|r| r["region"].as_str().unwrap())
+        .collect();
+    assert_eq!(slugs, ["national", "bretagne", "occitanie"]);
+    assert_eq!(regions[1]["intensity"]["value"], 22.0);
+    assert!(regions.iter().all(|r| r["methodology"] == "acv-ademe"
+        && r["methodology_version"] == 1
+        && r["intensity"]["unit"] == "gCO2eq/kWh"));
+}
+
+/// Sans `methodology`, le défaut `rte-direct` (national seulement) donne une
+/// seule entrée ; sans aucune donnée, une liste vide en 200 (idiome liste).
+#[tokio::test]
+async fn intensity_now_all_defaults_to_national_and_empties_without_data() {
+    let response = get(app(Some(national_measurement())), "/v1/intensity/now/all").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["methodology"], "rte-direct");
+    assert_eq!(body["count"], 1);
+    assert_eq!(body["regions"][0]["region"], "national");
+
+    let response = get(app(None), "/v1/intensity/now/all").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["count"], 0);
+    assert_eq!(body["regions"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn intensity_now_all_rejects_consumption_and_unknown_methodology() {
+    let response = get(
+        app(Some(national_measurement())),
+        "/v1/intensity/now/all?methodology=acv-ademe&version=2",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = json_body(response).await;
+    assert!(
+        body["detail"]
+            .as_str()
+            .unwrap()
+            .contains("/v1/intensity/now"),
+        "{body}"
+    );
+
+    let response = get(app(None), "/v1/intensity/now/all?methodology=atlantide").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let response = get(app(None), "/v1/intensity/now/all?version=3").await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+/// `/v1/regions` (PROD-API-5) : catalogue statique de 13 entrées, national
+/// d'abord (sans code INSEE), cacheable.
+#[tokio::test]
+async fn regions_catalog_lists_national_and_twelve_regions() {
+    let response = get(app(None), "/v1/regions").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("public, max-age=60")
+    );
+    let body = json_body(response).await;
+    let regions = body["regions"].as_array().unwrap();
+    assert_eq!(regions.len(), 13);
+    assert_eq!(regions[0]["slug"], "national");
+    assert_eq!(regions[0]["label"], "National");
+    assert!(regions[0]["insee_code"].is_null());
+    assert_eq!(regions[0]["national"], true);
+    let bretagne = regions.iter().find(|r| r["slug"] == "bretagne").unwrap();
+    assert_eq!(bretagne["label"], "Bretagne");
+    assert_eq!(bretagne["insee_code"], "53");
+    assert_eq!(bretagne["national"], false);
+    let slugs: Vec<&str> = regions
+        .iter()
+        .map(|r| r["slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(slugs[1], "auvergne-rhone-alpes");
+    assert_eq!(slugs[12], "provence-alpes-cote-d-azur");
 }
 
 #[tokio::test]

@@ -315,9 +315,26 @@
           {
             "name": "region",
             "in": "query",
+            "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
+              "enum": [
+                "national",
+                "auvergne-rhone-alpes",
+                "bourgogne-franche-comte",
+                "bretagne",
+                "centre-val-de-loire",
+                "grand-est",
+                "hauts-de-france",
+                "ile-de-france",
+                "normandie",
+                "nouvelle-aquitaine",
+                "occitanie",
+                "pays-de-la-loire",
+                "provence-alpes-cote-d-azur"
+              ]
             }
           },
           {
@@ -429,10 +446,26 @@
           {
             "name": "region",
             "in": "query",
-            "description": "Slug de région. National par défaut.",
+            "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
+              "enum": [
+                "national",
+                "auvergne-rhone-alpes",
+                "bourgogne-franche-comte",
+                "bretagne",
+                "centre-val-de-loire",
+                "grand-est",
+                "hauts-de-france",
+                "ile-de-france",
+                "normandie",
+                "nouvelle-aquitaine",
+                "occitanie",
+                "pays-de-la-loire",
+                "provence-alpes-cote-d-azur"
+              ]
             }
           },
           {
@@ -492,10 +525,26 @@
           {
             "name": "region",
             "in": "query",
-            "description": "Slug de région. National par défaut.",
+            "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
+              "enum": [
+                "national",
+                "auvergne-rhone-alpes",
+                "bourgogne-franche-comte",
+                "bretagne",
+                "centre-val-de-loire",
+                "grand-est",
+                "hauts-de-france",
+                "ile-de-france",
+                "normandie",
+                "nouvelle-aquitaine",
+                "occitanie",
+                "pays-de-la-loire",
+                "provence-alpes-cote-d-azur"
+              ]
             }
           },
           {
@@ -585,10 +634,26 @@
           {
             "name": "region",
             "in": "query",
-            "description": "Slug de région. National par défaut.",
+            "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
+              "enum": [
+                "national",
+                "auvergne-rhone-alpes",
+                "bourgogne-franche-comte",
+                "bretagne",
+                "centre-val-de-loire",
+                "grand-est",
+                "hauts-de-france",
+                "ile-de-france",
+                "normandie",
+                "nouvelle-aquitaine",
+                "occitanie",
+                "pays-de-la-loire",
+                "provence-alpes-cote-d-azur"
+              ]
             }
           },
           {
@@ -755,10 +820,26 @@
           {
             "name": "region",
             "in": "query",
-            "description": "Slug de région (ex. `bretagne`). National par défaut.",
+            "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
+              "enum": [
+                "national",
+                "auvergne-rhone-alpes",
+                "bourgogne-franche-comte",
+                "bretagne",
+                "centre-val-de-loire",
+                "grand-est",
+                "hauts-de-france",
+                "ile-de-france",
+                "normandie",
+                "nouvelle-aquitaine",
+                "occitanie",
+                "pays-de-la-loire",
+                "provence-alpes-cote-d-azur"
+              ]
             }
           },
           {
@@ -816,6 +897,60 @@
         }
       }
     },
+    "/v1/intensity/now/all": {
+      "get": {
+        "tags": [
+          "intensité"
+        ],
+        "summary": "`GET /v1/intensity/now/all` — dernière intensité de **chaque** région en un\nappel (plan I8, PROD-API-2) : une requête au read-model pour national + 12\nrégions, au lieu de 13 appels à `/v1/intensity/now`.",
+        "description": "Liste **vide** (200) si aucune région n'a de donnée — idiome des réponses\nliste (`/v1/intensity/date`), pas le 404 de la ressource singulière ; une\nrégion sans donnée est omise. `rte-direct` (défaut) n'existe qu'au\nnational : passer `methodology=acv-ademe` pour les 13 entrées.",
+        "operationId": "intensity_now_all",
+        "parameters": [
+          {
+            "name": "methodology",
+            "in": "query",
+            "description": "Méthodologie : `rte-direct` (national seulement → une entrée) ou\n`acv-ademe` (national + 12 régions). Défaut `rte-direct`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version de la méthode. `acv-ademe` : `1` seulement — la vue consommation\n(`2`) n'existe qu'au national, via `/v1/intensity/now`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dernière mesure par région (national d'abord ; liste vide si aucune donnée)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntensityAllResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Méthodologie ou version invalide",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/intensity/stats": {
       "get": {
         "tags": [
@@ -845,10 +980,26 @@
           {
             "name": "region",
             "in": "query",
-            "description": "Slug de région. National par défaut.",
+            "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
+              "enum": [
+                "national",
+                "auvergne-rhone-alpes",
+                "bourgogne-franche-comte",
+                "bretagne",
+                "centre-val-de-loire",
+                "grand-est",
+                "hauts-de-france",
+                "ile-de-france",
+                "normandie",
+                "nouvelle-aquitaine",
+                "occitanie",
+                "pays-de-la-loire",
+                "provence-alpes-cote-d-azur"
+              ]
             }
           },
           {
@@ -927,10 +1078,26 @@
           {
             "name": "region",
             "in": "query",
-            "description": "Slug de région à suivre. Sans filtre, toutes les régions sont poussées.",
+            "description": "Slug de région à suivre (cf. `/v1/regions`). Sans filtre, toutes les régions sont poussées.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Slug de région à suivre (cf. `/v1/regions`). Sans filtre, toutes les régions sont poussées.",
+              "enum": [
+                "national",
+                "auvergne-rhone-alpes",
+                "bourgogne-franche-comte",
+                "bretagne",
+                "centre-val-de-loire",
+                "grand-est",
+                "hauts-de-france",
+                "ile-de-france",
+                "normandie",
+                "nouvelle-aquitaine",
+                "occitanie",
+                "pays-de-la-loire",
+                "provence-alpes-cote-d-azur"
+              ]
             }
           },
           {
@@ -1013,10 +1180,26 @@
           {
             "name": "region",
             "in": "query",
-            "description": "Slug de région (ex. `bretagne`). National par défaut.",
+            "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
+              "enum": [
+                "national",
+                "auvergne-rhone-alpes",
+                "bourgogne-franche-comte",
+                "bretagne",
+                "centre-val-de-loire",
+                "grand-est",
+                "hauts-de-france",
+                "ile-de-france",
+                "normandie",
+                "nouvelle-aquitaine",
+                "occitanie",
+                "pays-de-la-loire",
+                "provence-alpes-cote-d-azur"
+              ]
             }
           },
           {
@@ -1086,10 +1269,14 @@
           {
             "name": "region",
             "in": "query",
-            "description": "Région. **National uniquement** (le TRV est national) ; autre slug → 400.",
+            "description": "Région. **National uniquement** (le TRV est national) ; tout autre slug → 400.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Région. **National uniquement** (le TRV est national) ; tout autre slug → 400.",
+              "enum": [
+                "national"
+              ]
             }
           }
         ],
@@ -1156,10 +1343,14 @@
           {
             "name": "region",
             "in": "query",
-            "description": "Région. **National uniquement**.",
+            "description": "Région. **National uniquement** (le TRV est national) ; tout autre slug → 400.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Région. **National uniquement** (le TRV est national) ; tout autre slug → 400.",
+              "enum": [
+                "national"
+              ]
             }
           }
         ],
@@ -1180,6 +1371,27 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/regions": {
+      "get": {
+        "tags": [
+          "régions"
+        ],
+        "summary": "`GET /v1/regions` — catalogue **statique** des régions servies (slug,\nlibellé, code INSEE) : les valeurs acceptées par le paramètre `region`\n(plan I8, PROD-API-5). National d'abord, puis les 12 régions\nmétropolitaines, dans l'ordre de `/v1/intensity/now/all`.",
+        "operationId": "regions",
+        "responses": {
+          "200": {
+            "description": "Régions servies (13 entrées)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegionsResponse"
                 }
               }
             }
@@ -1239,9 +1451,26 @@
           {
             "name": "region",
             "in": "query",
+            "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
+              "enum": [
+                "national",
+                "auvergne-rhone-alpes",
+                "bourgogne-franche-comte",
+                "bretagne",
+                "centre-val-de-loire",
+                "grand-est",
+                "hauts-de-france",
+                "ile-de-france",
+                "normandie",
+                "nouvelle-aquitaine",
+                "occitanie",
+                "pays-de-la-loire",
+                "provence-alpes-cote-d-azur"
+              ]
             }
           },
           {
@@ -1368,9 +1597,26 @@
           {
             "name": "region",
             "in": "query",
+            "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
             "required": false,
             "schema": {
-              "type": "string"
+              "type": "string",
+              "description": "Slug de région (ex. `bretagne`, cf. `/v1/regions`). National par défaut.",
+              "enum": [
+                "national",
+                "auvergne-rhone-alpes",
+                "bourgogne-franche-comte",
+                "bretagne",
+                "centre-val-de-loire",
+                "grand-est",
+                "hauts-de-france",
+                "ile-de-france",
+                "normandie",
+                "nouvelle-aquitaine",
+                "occitanie",
+                "pays-de-la-loire",
+                "provence-alpes-cote-d-azur"
+              ]
             }
           },
           {
@@ -2502,6 +2748,39 @@
           }
         }
       },
+      "IntensityAllResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/intensity/now/all` : la dernière mesure de **chaque**\nrégion disposant d'une donnée, pour une méthodologie (plan I8, PROD-API-2).",
+        "required": [
+          "methodology",
+          "methodology_version",
+          "count",
+          "regions"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "description": "Nombre d'entrées : 1 en `rte-direct` (national seulement), jusqu'à 13 en\n`acv-ademe` — une région sans donnée est omise, jamais renvoyée vide.",
+            "minimum": 0
+          },
+          "methodology": {
+            "type": "string",
+            "description": "Méthodologie servie — raccourci garanti identique au champ `methodology`\nde chaque entrée de `regions` (un seul appel, une seule méthode ; seul\n`vintage` peut varier d'une entrée à l'autre)."
+          },
+          "methodology_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "regions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IntensityResponse"
+            },
+            "description": "National d'abord, puis les 12 régions dans l'ordre de `/v1/regions`."
+          }
+        }
+      },
       "IntensityResponse": {
         "type": "object",
         "description": "Réponse de `GET /v1/intensity/now`.",
@@ -2740,7 +3019,8 @@
           "region",
           "timestamp",
           "unit",
-          "mix"
+          "mix",
+          "shares"
         ],
         "properties": {
           "mix": {
@@ -2748,6 +3028,13 @@
           },
           "region": {
             "type": "string"
+          },
+          "shares": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MixShareBody"
+            },
+            "description": "Parts de **production** par filière (`share` dans `[0, 1]`, somme = 1),\ndérivées de `mix` (plan I8, PROD-API-4) : filières à production nulle\nomises, `pompage` et `echanges` toujours exclus (pas des productions) ;\n`thermique` (agrégat fossile) pour un mix régional, sinon gaz/charbon/\nfioul détaillés. Même calcul que le contexte de `/v1/price`. Les valeurs\nMW brutes complètes restent dans `mix`."
           },
           "timestamp": {
             "type": "string"
@@ -2759,6 +3046,7 @@
       },
       "MixShareBody": {
         "type": "object",
+        "description": "Part d'une filière dans la production domestique — partagée par le contexte\nde `/v1/price` et le champ `shares` de `/v1/mix` (un seul composant OpenAPI).",
         "required": [
           "filiere",
           "label",
@@ -2993,6 +3281,54 @@
             "type": "string",
             "description": "Type de problème (URI). `about:blank` quand `status` + `code` suffisent\n(RFC 9457 §4.2.1) — pas d'URI à déréférencer.",
             "example": "about:blank"
+          }
+        }
+      },
+      "RegionInfo": {
+        "type": "object",
+        "description": "Une région servie (`RegionsResponse::regions`).",
+        "required": [
+          "slug",
+          "label",
+          "national"
+        ],
+        "properties": {
+          "insee_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Code INSEE de la région métropolitaine ; `null` pour `national`.",
+            "example": "53"
+          },
+          "label": {
+            "type": "string",
+            "description": "Libellé humain.",
+            "example": "Bretagne"
+          },
+          "national": {
+            "type": "boolean",
+            "description": "`true` pour la maille nationale — défaut du paramètre `region` des\nlectures ponctuelles ; sans filtre, `/v1/intensity/stream` pousse au\ncontraire toutes les régions."
+          },
+          "slug": {
+            "type": "string",
+            "description": "Slug stable : la valeur du paramètre `region` (ex. `bretagne`).",
+            "example": "bretagne"
+          }
+        }
+      },
+      "RegionsResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/regions` — catalogue **statique** des régions servies\n(plan I8, PROD-API-5) : national puis les 12 régions métropolitaines, dans\nl'ordre de `Region::METROPOLITAN` (le même que `/v1/intensity/now/all`).",
+        "required": [
+          "regions"
+        ],
+        "properties": {
+          "regions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegionInfo"
+            }
           }
         }
       },
@@ -3647,6 +3983,10 @@
     {
       "name": "méthodologie",
       "description": "Méthodes de calcul & facteurs (ADR-0010)"
+    },
+    {
+      "name": "régions",
+      "description": "Catalogue des régions servies (national + 12 régions, ADR-0008)"
     },
     {
       "name": "éligibilité",

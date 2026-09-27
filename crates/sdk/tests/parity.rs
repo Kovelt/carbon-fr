@@ -36,6 +36,7 @@ const COVERED: &[(&str, &str)] = &[
     ("intensity_below", "CarbonFr::below"),
     ("intensity_date", "CarbonFr::intensity_date"),
     ("intensity_now", "CarbonFr::intensity_now"),
+    ("intensity_now_all", "CarbonFr::intensity_now_all"),
     ("intensity_stats", "CarbonFr::intensity_stats"),
     (
         "intensity_stream",
@@ -47,6 +48,7 @@ const COVERED: &[(&str, &str)] = &[
     ("price", "CarbonFr::price"),
     ("price_date", "CarbonFr::price_history"),
     ("record_visit", "CarbonFr::record_visit"),
+    ("regions", "CarbonFr::regions"),
     ("renewable", "CarbonFr::renewable"),
     ("schedule", "CarbonFr::schedule"),
     ("schedule_slots", "CarbonFr::schedule_slots"),

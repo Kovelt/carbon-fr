@@ -98,7 +98,8 @@ pub trait Eco2mixArchive: Send + Sync {
 /// que si le `vintage` entrant est de qualité supérieure ou égale.
 ///
 /// **Invariant de version (non garanti par le type — audit F17)** : `latest`,
-/// `range`, `stats` et `rollup` ne filtrent que sur `methodology_id` ; le champ
+/// `latest_all`, `range`, `stats` et `rollup` ne filtrent que sur
+/// `methodology_id` ; le champ
 /// [`Methodology::version`](crate::domain::Methodology) n'entre pas dans la
 /// lecture, alors que l'écriture le porte dans sa clé d'unicité `(region, at,
 /// methodology_id, methodology_version)`. C'est **sans risque tant qu'au plus
@@ -112,7 +113,7 @@ pub trait Eco2mixArchive: Send + Sync {
 /// `@2`.
 ///
 /// ⚠️ Si une méthode future persiste un jour deux versions sous le même `id`,
-/// ces 4 signatures devront gagner un paramètre `version` (SQL : `AND
+/// ces 5 signatures devront gagner un paramètre `version` (SQL : `AND
 /// methodology_version = $N`) — et il faudra **d'abord** ajouter une colonne
 /// `methodology_version` aux tables `measurement_rollup_{hourly,daily}` (leur
 /// clé primaire `(region, methodology_id, bucket)` n'en porte pas non plus, une
@@ -131,6 +132,26 @@ pub trait IntensityRepository: Send + Sync {
         region: Region,
         methodology_id: &str,
     ) -> Result<Option<Measurement>, RepositoryError>;
+
+    /// Dernière mesure connue de **chaque** région — national puis les 12
+    /// régions métropolitaines, dans l'ordre de [`Region::METROPOLITAN`] — pour
+    /// une méthodologie ; alimente `GET /v1/intensity/now/all` (plan I8,
+    /// PROD-API-2). Une région sans donnée est simplement **omise** (jamais une
+    /// erreur) ; une erreur du backend fait échouer tout l'appel.
+    ///
+    /// Méthode à corps par défaut : additive au trait (SemVer, ADR-0030) — un
+    /// implémenteur externe qui ne la redéfinit pas continue de compiler et
+    /// obtient 13 appels **séquentiels** à [`latest`](Self::latest). Les adapters
+    /// réels la redéfinissent en une seule requête (Postgres : un aller-retour).
+    async fn latest_all(&self, methodology_id: &str) -> Result<Vec<Measurement>, RepositoryError> {
+        let mut out = Vec::with_capacity(1 + Region::METROPOLITAN.len());
+        for region in std::iter::once(Region::National).chain(Region::METROPOLITAN) {
+            if let Some(measurement) = self.latest(region, methodology_id).await? {
+                out.push(measurement);
+            }
+        }
+        Ok(out)
+    }
 
     /// Mesures sur un intervalle, triées par horodatage croissant.
     async fn range(

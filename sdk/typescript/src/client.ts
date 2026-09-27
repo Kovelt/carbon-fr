@@ -2,23 +2,25 @@ import type {
   CostReferenceResponse,
   CreateWebhookRequest,
   CreatedWebhookResponse,
-  ProblemDetails,
   EligibilityFramework,
   Estimator,
   ExchangesHistoryResponse,
   ExchangesResponse,
   FactorsResponse,
-  PriceHistoryResponse,
-  PriceResponse,
   ForecastResponse,
   GreenestWindowResponse,
   HistoryResponse,
+  IntensityAllResponse,
   IntensityResponse,
   Interval,
-  Methodology,
   MethodologiesResponse,
+  Methodology,
   MixResponse,
+  PriceHistoryResponse,
+  PriceResponse,
+  ProblemDetails,
   Region,
+  RegionsResponse,
   RenewableResponse,
   RulesetsResponse,
   ScheduleResponse,
@@ -104,7 +106,17 @@ export class CarbonFr {
     });
   }
 
-  /** Mix de production de la dernière mesure (MW par filière). */
+  /** Dernière intensité de chaque région en un appel (national d'abord, puis les 12 régions).
+   *  `rte-direct` (défaut) n'existe qu'au national → une seule entrée ; passer
+   *  `methodology: "acv-ademe"` pour les 13. Liste vide (200) si aucune donnée. */
+  intensityNowAll(opts: { methodology?: Methodology; version?: number } = {}) {
+    return this.get<IntensityAllResponse>("/v1/intensity/now/all", {
+      methodology: opts.methodology,
+      version: opts.version,
+    });
+  }
+
+  /** Mix de production de la dernière mesure (MW par filière + parts `shares`). */
   mix(opts: { region?: Region; methodology?: Methodology; version?: number } = {}) {
     return this.get<MixResponse>("/v1/mix", {
       region: opts.region,
@@ -316,6 +328,11 @@ export class CarbonFr {
   /** Catalogue des méthodes de calcul + versions. */
   methodologies() {
     return this.get<MethodologiesResponse>("/v1/methodologies");
+  }
+
+  /** Catalogue des régions servies (slug, libellé, code INSEE) : les valeurs acceptées par `region`. */
+  regions() {
+    return this.get<RegionsResponse>("/v1/regions");
   }
 
   /** Table des facteurs d'émission d'une méthode (vérifiabilité). */

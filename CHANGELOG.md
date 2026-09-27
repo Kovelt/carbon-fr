@@ -8,12 +8,55 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
-Item I8 du [plan](docs/plan-iterations.md) : **plafonner les connexions SSE
-concurrentes + timeout HTTP entrant** (SEC-1, PERF-2, SEC-4). Périmètre :
-`crates/adapter-http` (adapter entrant) et la composition root `bin/server` ;
-`carbonfr-core` intouché. Version *patch*, aucune migration ; contrat `/v1`
-inchangé hors l'ajout d'une réponse `503` documentée sur
-`/v1/intensity/stream`.
+Deux items I8 du [plan](docs/plan-iterations.md) : les **petites victoires API
+additives** (PROD-API-2/4/5 : `/v1/intensity/now/all`, parts dans `/v1/mix`,
+`/v1/regions`, `region` en enum dans l'OpenAPI) et **plafonner les connexions
+SSE concurrentes + timeout HTTP entrant** (SEC-1, PERF-2, SEC-4). Version
+*patch* du serveur, aucune migration. `carbonfr-core` ne gagne que des ajouts
+compatibles (méthode de port
+`IntensityRepository::latest_all` à corps par défaut, `GetCurrentIntensity::
+execute_all`, `mix_shares` public). Contrat `/v1` : deux routes et deux champs
+ajoutés, une réponse `503` documentée en plus sur `/v1/intensity/stream`, rien
+de retiré ni de modifié.
+
+### Ajouté
+
+- **`GET /v1/intensity/now/all`** (PROD-API-2) : la dernière intensité de
+  **chaque** région en un appel — national puis les 12 régions dans l'ordre de
+  `/v1/regions`, une région sans donnée omise, `count` et méthodologie en
+  racine, liste vide (200) si aucune donnée. `rte-direct` (défaut) n'existe
+  qu'au national : passer `methodology=acv-ademe` pour les 13 entrées ;
+  `version=2` (consommation) → 400 (national seulement, via
+  `/v1/intensity/now`). Une seule requête SQL (`unnest … CROSS JOIN LATERAL`,
+  13 recherches indexées, mesurée ~900× plus rapide qu'un `DISTINCT ON` sur
+  la table réelle). La carte `/hydrogene` n'émet plus qu'un appel au lieu de
+  12 (le produit est son propre premier client). `Cache-Control` 60 s.
+- **`/v1/mix` : parts de production `shares`** (PROD-API-4) — tableau racine
+  additif `[{filiere, label, share, output_mw}]`, `share` dans `[0, 1]`
+  (somme = 1), filières à production nulle omises, `pompage`/`echanges`
+  exclus, `thermique` (agrégat fossile) au régional ; **même calcul** que le
+  contexte de `/v1/price` (`mix_shares`, désormais public dans le `core`). Le
+  bloc `mix` (MW bruts) est inchangé — pas de champs `share`/`label` insérés
+  dans `MixBody`, contrairement à la formulation initiale du plan.
+- **`GET /v1/regions`** (PROD-API-5) : catalogue statique des 13 régions
+  servies (`slug`, `label`, `insee_code` — `null` au national —, `national`),
+  national d'abord ; `Cache-Control` 60 s.
+- **OpenAPI** : le paramètre `region` est un **enum** (13 slugs dérivés de
+  `Region`, jamais une liste figée) sur les 12 opérations qui l'acceptent,
+  avec la description propre à chaque contexte (défaut national ; filtre du
+  flux SSE ; `national` seul sur `/v1/price` et `/v1/price/date`). Nouveau tag
+  `régions`. Snapshot régénéré.
+- **SDK TypeScript `@carbon-fr/sdk` 0.3.0** (tag `sdk-v0.3.0` à pousser après
+  merge, publication automatique) : `intensityNowAll()`, `regions()`,
+  `MixResponse.shares?` (optionnel : absent face à un serveur plus ancien),
+  types `IntensityAllResponse`, `MixShare`, `RegionInfo`, `RegionsResponse`.
+- **SDK Rust `carbonfr-sdk` 0.2.0** (tag `rust-sdk-v0.2.0` à pousser après
+  merge) : `intensity_now_all(IntensityNowAllOptions)`, `regions()`,
+  `MixResponse.shares: Vec<MixShareBody>` (`#[serde(default)]`, vide face à un
+  serveur plus ancien) — champ public ajouté à un DTO = *minor* de la crate
+  (ADR-0030 §3, imposé par `cargo-semver-checks`) ; DTO `IntensityAllResponse`,
+  `MixShareBody`, `RegionInfo`, `RegionsResponse` ; parité 28/28 opérations.
+- Collection Bruno : `intensity-now-all`, `regions`, parts dans `mix-national`.
 
 ### Sécurité
 

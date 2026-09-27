@@ -16,7 +16,8 @@
 //! codes d'erreur) fait foi dans `GET /v1/openapi.json` et le README
 //! (§ Fonctionnalités). Le routeur est dans [`router`].
 //!
-//! - **Intensité** : `GET /v1/intensity/now`, `/v1/intensity/date?from=&to=`
+//! - **Intensité** : `GET /v1/intensity/now`, `/v1/intensity/now/all` (les 13
+//!   régions en un appel), `/v1/intensity/date?from=&to=`
 //!   (fenêtre ≤ 366 jours, ≤ 92 jours en `acv-ademe@2`),
 //!   `/v1/intensity/stats?from=&to=[&interval=hour|day]` (résumé exact sur les
 //!   mesures brutes ; série agrégée optionnelle depuis les rollups) ;
@@ -32,7 +33,7 @@
 //! - **Prix & coût** : `GET /v1/price`, `/v1/price/date` (ADR-0023),
 //!   `/v1/cost-reference` (LCOE, ADR-0024).
 //! - **Catalogues** : `GET /v1/methodologies`, `/v1/factors`,
-//!   `/v1/eligibility/rulesets`.
+//!   `/v1/eligibility/rulesets`, `/v1/regions` (slug, libellé, code INSEE).
 //! - **Webhooks** : `POST`/`GET /v1/webhooks`, `DELETE /v1/webhooks/{id}`
 //!   (ADR-0016, **clé API requise**).
 //! - **Compteur de visites** : `GET /v1/stats`, `POST /v1/stats/visit` (IP jamais
@@ -585,6 +586,10 @@ where
 {
     let core = Router::new()
         .route("/v1/intensity/now", get(handlers::intensity_now::<R>))
+        .route(
+            "/v1/intensity/now/all",
+            get(handlers::intensity_now_all::<R>),
+        )
         .route("/v1/intensity/date", get(handlers::intensity_date::<R>))
         .route("/v1/intensity/stats", get(handlers::intensity_stats::<R>))
         .route("/v1/mix", get(handlers::mix::<R>))
@@ -594,6 +599,7 @@ where
         .route("/v1/weather/date", get(handlers::weather_date::<R>))
         .route("/v1/renewable", get(handlers::renewable::<R>))
         .route("/v1/methodologies", get(handlers::methodologies))
+        .route("/v1/regions", get(handlers::regions))
         .route(
             "/v1/eligibility/rulesets",
             get(handlers::eligibility_rulesets),
@@ -693,6 +699,8 @@ where
 /// clé (`/v1/webhooks…`), le compteur de visiteurs (`/v1/stats`) et les sondes.
 const CACHEABLE_PATHS: &[&str] = &[
     "/v1/intensity/now",
+    "/v1/intensity/now/all",
+    "/v1/regions",
     "/v1/intensity/date",
     "/v1/intensity/stats",
     "/v1/mix",

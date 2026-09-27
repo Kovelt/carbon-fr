@@ -293,6 +293,49 @@ pub fn render_odre_quota(entries: &[QuotaGauge<'_>]) -> String {
     out
 }
 
+/// Instantané du plafond de connexions SSE à rendre (miroir découplé de
+/// `carbonfr_adapter_http::SseLimiter`, comme [`QuotaGauge`] pour le quota
+/// ODRÉ — la composition root fait la conversion, ce module ne dépend d'aucun
+/// adapter). ADR-0014 addendum 2026-09-26, item SEC-1/PERF-2 du plan I8.
+pub struct SseGauge {
+    /// Connexions SSE ouvertes (permis pris).
+    pub active: usize,
+    /// Plafond configuré (`CARBONFR_SSE_MAX_CONNECTIONS`).
+    pub max: usize,
+    /// Connexions refusées (503) depuis le démarrage.
+    pub rejected_total: u64,
+}
+
+/// Rend les métriques du **plafond de connexions SSE** : deux jauges
+/// (`active`, `max` — le ratio alimente l'alerte `CarbonfrSseNearCap`) et un
+/// compteur de refus (`CarbonfrSseRejected`). Toujours rendues, même à zéro :
+/// « 0 connexion » est une valeur, pas une absence d'observation.
+pub fn render_sse(gauge: &SseGauge) -> String {
+    let mut out = String::with_capacity(512);
+    let _ = writeln!(
+        out,
+        "# HELP carbonfr_sse_connections_active Connexions SSE (/v1/intensity/stream) actuellement ouvertes.\n\
+         # TYPE carbonfr_sse_connections_active gauge\n\
+         carbonfr_sse_connections_active {}",
+        gauge.active
+    );
+    let _ = writeln!(
+        out,
+        "# HELP carbonfr_sse_connections_max Plafond de connexions SSE simultanées (CARBONFR_SSE_MAX_CONNECTIONS).\n\
+         # TYPE carbonfr_sse_connections_max gauge\n\
+         carbonfr_sse_connections_max {}",
+        gauge.max
+    );
+    let _ = writeln!(
+        out,
+        "# HELP carbonfr_sse_connections_rejected_total Connexions SSE refusées (503) parce que le plafond était atteint.\n\
+         # TYPE carbonfr_sse_connections_rejected_total counter\n\
+         carbonfr_sse_connections_rejected_total {}",
+        gauge.rejected_total
+    );
+    out
+}
+
 /// Échappe `\`, `"` et le saut de ligne dans une valeur de label Prometheus,
 /// comme l'exige le format texte 0.0.4. En pratique, `dataset` est toujours une
 /// constante littérale choisie par notre propre code (`NATIONAL_DATASET`,
@@ -343,6 +386,21 @@ mod tests {
         assert!(out.contains("carbonfr_poller_last_flows_timestamp_seconds 1718002700"));
         // Chaque métrique a son TYPE.
         assert_eq!(out.matches("# TYPE ").count(), 9);
+    }
+
+    #[test]
+    fn render_sse_reports_active_max_and_rejected() {
+        let out = render_sse(&SseGauge {
+            active: 3,
+            max: 300,
+            rejected_total: 7,
+        });
+        assert!(out.contains("# TYPE carbonfr_sse_connections_active gauge"));
+        assert!(out.contains("carbonfr_sse_connections_active 3\n"));
+        assert!(out.contains("# TYPE carbonfr_sse_connections_max gauge"));
+        assert!(out.contains("carbonfr_sse_connections_max 300\n"));
+        assert!(out.contains("# TYPE carbonfr_sse_connections_rejected_total counter"));
+        assert!(out.contains("carbonfr_sse_connections_rejected_total 7\n"));
     }
 
     #[test]

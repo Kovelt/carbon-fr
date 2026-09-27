@@ -99,3 +99,37 @@ Observation **purement opportuniste** : si `limit` ou `remaining` est absent ou 
 ### Déclenchement
 
 Prérequis explicite du **comblement régional** (PROD-1/PERF-3, plan `docs/plan-iterations.md` I8) : toute densification du poll sur `eco2mix-regional-tr` doit désormais pouvoir être vérifiée contre le quota **réel** (et alertée avant épuisement), pas seulement estimée par le proxy d'appels initiés.
+
+## Addendum (2026-09-26) — métriques du plafond SSE
+
+Item I8 « Plafonner les connexions SSE concurrentes + timeout HTTP entrant »
+(SEC-1/PERF-2/SEC-4, décision complète dans l'addendum du même jour de
+l'ADR-0014). **3 métriques ajoutées**, alimentées par `SseLimiter`
+(`carbonfr-adapter-http`) et rendues par la composition root (miroir du
+motif `QuotaGauge`/`render_odre_quota` : `SseGauge`/`render_sse`) :
+
+| Métrique | Type | Usage |
+| --- | --- | --- |
+| `carbonfr_sse_connections_active` | gauge | connexions SSE actuellement ouvertes sur `/v1/intensity/stream` |
+| `carbonfr_sse_connections_max` | gauge | plafond configuré (`CARBONFR_SSE_MAX_CONNECTIONS`, défaut 300) |
+| `carbonfr_sse_connections_rejected_total` | counter | connexions refusées (503) faute de permis disponible |
+
+**2 alertes** (`deploy/prometheus/alerts.yml`) :
+
+- `CarbonfrSseNearCap` — `carbonfr_sse_connections_active / carbonfr_sse_connections_max > 0.8` pendant 10 min, `severity: warning`.
+- `CarbonfrSseRejected` — `increase(carbonfr_sse_connections_rejected_total[15m]) > 0`, `severity: warning`.
+
+**Aucune métrique ajoutée pour les deux timeouts ni pour le plafond brut de
+connexions (`CARBONFR_MAX_CONNECTIONS`)** livrés dans la même PR : le timeout
+de traitement de requête (`CARBONFR_REQUEST_TIMEOUT_SECS`) est journalisé en
+`error` (méthode, chemin, statut) par le middleware lui-même à chaque
+dépassement — la couche `TraceLayer`, plus interne, n'est jamais résolue dans
+ce cas et ne classe donc pas ce 503 —, jugé suffisant vu sa fréquence attendue
+rare ; le timeout de lecture des en-têtes
+(`CARBONFR_HEADER_READ_TIMEOUT_SECS`, boucle d'accept hyper maison) ferme la
+connexion côté hyper **sans journal propre** (les macros de log internes de
+hyper sont compilées à vide sans sa feature `tracing`, non activée ici) — la
+boucle d'accept journalise l'erreur de connexion qui en résulte en `debug`,
+comme toute fin de connexion en erreur (client parti, en-têtes invalides), car
+il agit aussi comme délai d'inactivité keep-alive : une expiration n'est pas
+un incident, seulement une connexion inactive rendue.

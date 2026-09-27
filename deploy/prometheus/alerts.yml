@@ -72,3 +72,24 @@ groups:
         annotations:
           summary: "Quota ODRÉ épuisé pour le jeu {{ $labels.dataset }}"
           description: "Le quota mensuel ODRÉ (par jeu et par IP) est à 0 sur {{ $labels.dataset }} depuis plus de 15 min — la collecte de ce jeu échouera jusqu'à la remise à zéro (carbonfr_odre_quota_reset_timestamp_seconds)."
+
+      # Plafond de connexions SSE (ADR-0014 addendum 2026-09-26, SEC-1/PERF-2) :
+      # prévenir avant qu'un client légitime reçoive un 503, puis signaler tout
+      # refus effectif (plafond déjà atteint).
+      - alert: CarbonfrSseNearCap
+        expr: carbonfr_sse_connections_active / carbonfr_sse_connections_max > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Plafond SSE carbon-fr presque atteint"
+          description: "Plus de 80 % des connexions SSE autorisées (CARBONFR_SSE_MAX_CONNECTIONS) sont utilisées depuis plus de 10 min — envisager de relever le plafond avant qu'un client légitime reçoive un 503."
+
+      - alert: CarbonfrSseRejected
+        expr: increase(carbonfr_sse_connections_rejected_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Connexions SSE refusées (plafond atteint)"
+          description: "Au moins une connexion à /v1/intensity/stream a été refusée (503) sur les 15 dernières minutes : le plafond CARBONFR_SSE_MAX_CONNECTIONS a été atteint."

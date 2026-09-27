@@ -20,8 +20,13 @@ rand = { workspace = true }
 # async-trait sort des dev-dependencies.
 async-trait = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
+# `sync` : canal broadcast + sémaphore du plafond SSE ; `time` : délai de
+# traitement de requête (`tokio::time::timeout`, SEC-4).
+tokio = { workspace = true, features = ["sync", "time"] }
 tokio-stream = { workspace = true }
+# Journal du délai de traitement dépassé (`warn`) — même façade que la couche
+# `TraceLayer` de tower-http déjà en place.
+tracing = { workspace = true }
 # Arrêt gracieux (audit 2026-08) : `CancellationToken` propagé à `StreamState`
 # (clôture des flux SSE) + `take_until` pour borner le flux infini.
 tokio-util = { workspace = true }

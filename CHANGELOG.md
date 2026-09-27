@@ -8,6 +8,75 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+Item I8 du [plan](docs/plan-iterations.md) : **plafonner les connexions SSE
+concurrentes + timeout HTTP entrant** (SEC-1, PERF-2, SEC-4). Périmètre :
+`crates/adapter-http` (adapter entrant) et la composition root `bin/server` ;
+`carbonfr-core` intouché. Version *patch*, aucune migration ; contrat `/v1`
+inchangé hors l'ajout d'une réponse `503` documentée sur
+`/v1/intensity/stream`.
+
+### Sécurité
+
+- **Plafond global de connexions SSE** sur `GET /v1/intensity/stream` : un
+  `tokio::sync::Semaphore` (type public `SseLimiter`) limite les abonnements
+  simultanés, défaut **300** (`CARBONFR_SSE_MAX_CONNECTIONS`). Au-delà, `503`
+  `application/problem+json` (code `unavailable`, réutilisé) avec en-tête
+  `Retry-After: 30`, documenté dans l'OpenAPI (réponse et en-tête, snapshot
+  régénéré). Le permis est tenu par le flux lui-même et libéré à la fermeture
+  par le client, à l'arrêt gracieux, ou — si le client a disparu **sans**
+  fermer (coupure réseau, veille) — à l'échec d'écriture constaté par TCP :
+  ≈ 15 min avec les réglages Linux par défaut (`tcp_retries2`), aucune option
+  `TCP_USER_TIMEOUT` n'étant posée ; dimensionner le plafond en conséquence
+  (les « permis fantômes » se voient dans `carbonfr_sse_connections_active`).
+  Plafond **global au processus**, pas par IP ni par
+  clé — un seuil généreux par défaut, à resserrer seulement métriques à
+  l'appui. Nouvelles métriques Prometheus : `carbonfr_sse_connections_active`
+  (gauge), `carbonfr_sse_connections_max` (gauge), et
+  `carbonfr_sse_connections_rejected_total` (counter) ; deux alertes,
+  `CarbonfrSseNearCap` (> 80 % du plafond pendant 10 min) et
+  `CarbonfrSseRejected` (au moins un refus en 15 min). Comportements clients
+  documentés : un `EventSource` navigateur natif ne reconnecte jamais sur un
+  503 à la connexion (fin définitive du flux, spec WHATWG) ; le **SDK Rust**
+  absorbe silencieusement un 503 dans son backoff tant que la reconnexion
+  est active (immédiat en `CarbonFrError::Api` avec `Reconnect::Disabled`) ;
+  le **SDK TypeScript** jette une `CarbonFrError` (503, `unavailable`) et ne
+  reconnecte pas (item DX-2 d'I9). Aucune durée de vie maximale n'est
+  imposée à un flux SSE ouvert (couperait le SDK TS en silence) : seule la
+  *concurrence* est plafonnée. Ferme la question ouverte « limites SSE » de
+  l'ADR-0014 (addendum daté).
+- **Timeout de traitement de requête** : middleware maison posé sous CORS et
+  au-dessus de l'authentification/quota, défaut **60 s**
+  (`CARBONFR_REQUEST_TIMEOUT_SECS`) = 2 × `CARBONFR_DB_STATEMENT_TIMEOUT_MS`
+  (30 000 ms par défaut), pour que Postgres tranche d'abord une requête
+  lente. Au dépassement, sur **toute route** : `503` `unavailable` (sans
+  `Retry-After`), journalisé en `error` par le middleware lui-même (la couche
+  de trace, plus interne, ne voit pas ce 503). ⚠️ Relever `CARBONFR_DB_STATEMENT_TIMEOUT_MS` sans
+  relever ce timeout en proportion réintroduit une course. Ne coupe **jamais**
+  un flux SSE déjà ouvert (le futur borné se résout à la construction de la
+  réponse, pas à la fin du corps) — propriété couverte par un test.
+  `tower_http::timeout::TimeoutLayer` écarté (corps vide, 408 : contraire au
+  contrat Problem Details du projet).
+- **Timeout de lecture des en-têtes HTTP/1.1** : `axum::serve` (axum 0.8.9)
+  ne posait **aucun timer** hyper, donc le défaut de 30 s de hyper était
+  inactif — aucune borne en prod jusqu'ici. Remplacé par une boucle d'accept
+  maison (`serve_http`) sur `hyper::server::conn::http1::Builder`
+  (`hyper` 1.10.1, `hyper-util` 0.1.20, feature `server-graceful`), défaut
+  **30 s** (`CARBONFR_HEADER_READ_TIMEOUT_SECS`), même filet d'arrêt gracieux
+  de 8 s qu'avant. ⚠️ Ce délai agit aussi comme **timeout d'inactivité
+  keep-alive** entre deux requêtes d'une même connexion (réarmé à chaque
+  requête, ne coupe jamais un flux SSE en cours). Derrière un reverse proxy
+  qui met les connexions amont en pool (Traefik : `idleConnTimeout` 90 s par
+  défaut), choisir une valeur **supérieure** à ce délai (ex. **120 s** en
+  prod Kovelt) pour que ce soit le proxy qui ferme les connexions inactives,
+  jamais le serveur.
+- **Plafond brut de connexions** : la même boucle d'accept prend un créneau
+  par connexion servie (`CARBONFR_MAX_CONNECTIONS`, défaut **10 000**) ; au
+  plafond, l'accept **attend** qu'une connexion se termine (le backlog du
+  noyau absorbe, rien n'est refusé) — borne le nombre de tâches, de
+  descripteurs et la mémoire par connexion, là où le délai d'en-têtes ne
+  borne que la durée d'une connexion muette. Pas de métrique dédiée pour
+  l'instant.
+
 ### Documentation
 
 - Plan I8 à jour après la v0.9.6 : quota ODRÉ, comblement régional (run en

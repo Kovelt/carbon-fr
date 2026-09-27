@@ -119,6 +119,20 @@ tokio-util = "0.7"
 # via axum/hyper ; sans features par défaut (calcul pur, pas d'IO).
 futures-util = { version = "0.3", default-features = false }
 tower-http = { version = "0.7.0", features = ["trace", "cors"] }
+# Boucle d'accept HTTP maison de `bin/server` (SEC-4, plan I8) : `axum::serve`
+# ne pose aucun timer hyper, donc son `header_read_timeout` par défaut est
+# ignoré — on pilote `hyper::server::conn::http1` directement. Déjà transitives
+# via axum, aux mêmes versions que `Cargo.lock` : aucune nouvelle crate. Pas de
+# feature `http2` (HTTP/2 n'est activé nulle part dans l'arbre ; `server-auto`
+# de hyper-util l'activerait et tirerait `h2`).
+hyper = { version = "1.10.1", features = ["server", "http1"] }
+hyper-util = { version = "0.1.20", features = [
+    "tokio",
+    "server",
+    "http1",
+    "server-graceful",
+    "service",
+] }
 quick-xml = { version = "0.42.0", features = ["serialize"] }
 # Analyse d'URL WHATWG (identique à celle de reqwest) — calcul pur, pas d'IO :
 # utilisé par la validation anti-SSRF des webhooks pour voir exactement l'hôte

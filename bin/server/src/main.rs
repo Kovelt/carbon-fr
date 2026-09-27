@@ -38,6 +38,10 @@
 //! |------------------------------|----------------|-----------------------------------|
 //! | `DATABASE_URL`               | — (requis)     | DSN PostgreSQL                    |
 //! | `CARBONFR_BIND`              | `0.0.0.0:8080` | adresse d'écoute de l'API         |
+//! | `CARBONFR_HEADER_READ_TIMEOUT_SECS` | `30`    | délai hyper de lecture des en-têtes HTTP/1.1, **aussi** délai d'inactivité keep-alive entre deux requêtes (réarmé à chaque requête ; connexion fermée sans réponse au dépassement ; un flux SSE en cours n'est jamais concerné), > 0 — SEC-4. Derrière un proxy qui met ses connexions amont en pool (Traefik : `idleConnTimeout` 90 s), poser une valeur **supérieure** (ex. `120`) pour que le proxy ferme en premier |
+//! | `CARBONFR_REQUEST_TIMEOUT_SECS` | `60`        | délai de traitement d'une requête (auth, corps, handler) → 503 `unavailable` au-delà ; n'affecte jamais un flux SSE ouvert ; garder ≥ 2 × `CARBONFR_DB_STATEMENT_TIMEOUT_MS` pour que Postgres tranche d'abord, > 0 — SEC-4 |
+//! | `CARBONFR_MAX_CONNECTIONS`   | `10000`        | plafond brut de connexions TCP servies simultanément (une tâche par connexion) : au-delà, l'accept **attend** qu'une connexion se termine (le backlog du noyau absorbe), rien n'est refusé ; borne mémoire/descripteurs en plus du plafond SSE, 1 à 1 000 000 — SEC-4 |
+//! | `CARBONFR_SSE_MAX_CONNECTIONS` | `300`        | plafond global de connexions SSE simultanées (`/v1/intensity/stream`) → 503 `unavailable` + `Retry-After: 30` au-delà ; jauges `carbonfr_sse_connections_{active,max}`, compteur `carbonfr_sse_connections_rejected_total`, > 0 — SEC-1/PERF-2, ADR-0014 addendum 2026-09-26 |
 //! | `CARBONFR_POLL_SECS`         | `900` (15 min) | période d'ingestion ODRÉ (et TTL des caches de prévision), > 0 |
 //! | `CARBONFR_POLL_WINDOW_HOURS` | `3`            | largeur de la fenêtre glissante relue à chaque cycle (`IngestRecent`, rattrape un retard de publication ODRÉ sans appel supplémentaire), > 0, ADR-0003 addendum 2026-09-25 |
 //! | `CARBONFR_ENTSOE_TOKEN`      | (non défini)   | active l'ingestion ENTSO-E (imports `acv-ademe@2` + prix spot `/v1/price`) |
@@ -91,8 +95,9 @@ use carbonfr_adapter_gbdt::{
     GbdtForecaster, GbdtHyperParams, build_training_examples, train_model,
 };
 use carbonfr_adapter_http::{
-    AppState, AuthConfig, AuthState, EligibilityRepoAdapter, ForecastState, ShareForecastConfig,
-    StreamState, key_fingerprint, router,
+    AppState, AuthConfig, AuthState, DEFAULT_REQUEST_TIMEOUT, DEFAULT_SSE_MAX_CONNECTIONS,
+    EligibilityRepoAdapter, ForecastState, RouterOptions, ShareForecastConfig, SseLimiter,
+    StreamState, key_fingerprint, router_with_options,
 };
 use carbonfr_adapter_meteo::OpenMeteoClient;
 use carbonfr_adapter_odre::quota::{DatasetQuota, QuotaTracker};
@@ -116,12 +121,12 @@ use carbonfr_core::ports::{
     SpotPriceRepository, SpotPriceSource, SubscriptionRepository, WeatherForecastSource,
     WeatherRepository, WebhookDelivery,
 };
-use metrics::{Metrics, QuotaGauge, render_odre_quota};
+use metrics::{Metrics, QuotaGauge, SseGauge, render_odre_quota, render_sse};
 use time::format_description::well_known::Rfc3339;
 use time::{Date, Duration, Month, OffsetDateTime};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -322,7 +327,13 @@ async fn run_server() -> anyhow::Result<()> {
             shutdown.cancel();
         });
     }
-    let stream_state = StreamState::new(updates_tx).with_shutdown(shutdown.clone());
+    // Plafond de connexions SSE (ADR-0014 addendum 2026-09-26) : un limiteur
+    // partagé entre le routeur (qui prend/rend les permis) et `/metrics` (qui
+    // lit actives/plafond/refus).
+    let sse_limiter = SseLimiter::new(config.sse_max_connections);
+    let stream_state = StreamState::new(updates_tx)
+        .with_shutdown(shutdown.clone())
+        .with_sse_limiter(sse_limiter.clone());
     // `/metrics` (hors contrat `/v1`, comme `/health`) : exposition Prometheus en
     // texte, pas du JSON versionné → fusionnée ici plutôt que dans le routeur de
     // l'adapter. En prod, restreindre l'accès au scrapeur côté reverse proxy.
@@ -334,6 +345,7 @@ async fn run_server() -> anyhow::Result<()> {
         .with_state(MetricsState {
             metrics,
             quota: odre_quota,
+            sse: sse_limiter,
         });
     // Tier hébergé (ADR-0015) : middleware clés API + quota, **opt-in**. Désactivé
     // par défaut → l'API reste anonyme et sans limite (parité self-hosting).
@@ -344,7 +356,16 @@ async fn run_server() -> anyhow::Result<()> {
     if auth_state.is_some() {
         info!("tier hébergé activé : auth par clé + quota par minute");
     }
-    let app = router(state, forecast_state, stream_state, auth_state).merge(metrics_router);
+    let app = router_with_options(
+        state,
+        forecast_state,
+        stream_state,
+        auth_state,
+        RouterOptions {
+            request_timeout: config.request_timeout,
+        },
+    )
+    .merge(metrics_router);
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("écoute sur {}", config.bind))?;
@@ -359,14 +380,17 @@ async fn run_server() -> anyhow::Result<()> {
     let mut webhook_watcher = webhook_watcher;
     let mut webhook_purge = webhook_purge;
     let mut self_heal = self_heal;
-    let serve = {
-        let shutdown = shutdown.clone();
-        async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(shutdown.cancelled_owned())
-                .await
-        }
-    };
+    // Boucle d'accept maison plutôt qu'`axum::serve` : seule façon de poser le
+    // délai de lecture des en-têtes (cf. `serve_http`). Même arrêt gracieux.
+    let serve = serve_http(
+        listener,
+        app,
+        HttpServerLimits {
+            header_read_timeout: config.header_read_timeout,
+            max_connections: config.max_connections,
+        },
+        shutdown.clone(),
+    );
     tokio::pin!(serve);
 
     let serve_result = tokio::select! {
@@ -412,6 +436,9 @@ async fn run_server() -> anyhow::Result<()> {
 struct MetricsState {
     metrics: Metrics,
     quota: QuotaTracker,
+    /// Plafond de connexions SSE (ADR-0014 addendum 2026-09-26) — le même
+    /// limiteur que celui du routeur, lu ici pour les jauges `carbonfr_sse_*`.
+    sse: SseLimiter,
 }
 
 /// `GET /metrics` — exposition Prometheus (text format 0.0.4). Hors du contrat
@@ -432,7 +459,12 @@ async fn serve_metrics(
             observed_unix: q.observed_unix,
         })
         .collect();
-    let body = state.metrics.render() + &render_odre_quota(&gauges);
+    let sse = SseGauge {
+        active: state.sse.active(),
+        max: state.sse.max(),
+        rejected_total: state.sse.rejected_total(),
+    };
+    let body = state.metrics.render() + &render_odre_quota(&gauges) + &render_sse(&sse);
     (
         [(
             axum::http::header::CONTENT_TYPE,
@@ -1922,6 +1954,18 @@ struct ServerConfig {
     /// ADR-0003 addendum 2026-09-26). Livré désactivé par défaut : n'activer
     /// qu'une fois le quota ODRÉ réel visible en prod (PROD-3).
     self_heal_regional: bool,
+    /// Délai hyper de lecture des en-têtes HTTP/1.1 — et d'inactivité keep-alive
+    /// entre deux requêtes (`CARBONFR_HEADER_READ_TIMEOUT_SECS`, SEC-4, cf. `serve_http`).
+    header_read_timeout: std::time::Duration,
+    /// Délai de traitement d'une requête (`CARBONFR_REQUEST_TIMEOUT_SECS`, SEC-4,
+    /// cf. `RouterOptions::request_timeout`).
+    request_timeout: std::time::Duration,
+    /// Plafond global de connexions SSE simultanées (`CARBONFR_SSE_MAX_CONNECTIONS`,
+    /// SEC-1/PERF-2, ADR-0014 addendum 2026-09-26).
+    sse_max_connections: usize,
+    /// Plafond brut de connexions TCP servies simultanément
+    /// (`CARBONFR_MAX_CONNECTIONS`, cf. `HttpServerLimits`).
+    max_connections: usize,
 }
 
 impl ServerConfig {
@@ -1952,6 +1996,24 @@ impl ServerConfig {
             std::env::var("CARBONFR_SELF_HEAL_REGIONAL").as_deref(),
             Ok("1") | Ok("true")
         );
+
+        let header_read_timeout = parse_header_read_timeout_secs(
+            std::env::var("CARBONFR_HEADER_READ_TIMEOUT_SECS")
+                .ok()
+                .as_deref(),
+        )?;
+        let request_timeout = parse_request_timeout_secs(
+            std::env::var("CARBONFR_REQUEST_TIMEOUT_SECS")
+                .ok()
+                .as_deref(),
+        )?;
+        let sse_max_connections = parse_sse_max_connections(
+            std::env::var("CARBONFR_SSE_MAX_CONNECTIONS")
+                .ok()
+                .as_deref(),
+        )?;
+        let max_connections =
+            parse_max_connections(std::env::var("CARBONFR_MAX_CONNECTIONS").ok().as_deref())?;
 
         let trust_proxy = matches!(
             std::env::var("CARBONFR_TRUST_PROXY").as_deref(),
@@ -1988,8 +2050,93 @@ impl ServerConfig {
             webhook_purge_days,
             self_heal_days,
             self_heal_regional,
+            header_read_timeout,
+            request_timeout,
+            sse_max_connections,
+            max_connections,
         })
     }
+}
+
+/// Délai par défaut de lecture des en-têtes / d'inactivité keep-alive
+/// (`CARBONFR_HEADER_READ_TIMEOUT_SECS`) : le défaut de hyper — que
+/// `axum::serve` laissait inactif faute de timer. Vise le self-hosting sans
+/// reverse proxy ; derrière un proxy en pool, poser plus (cf. docstring).
+const DEFAULT_HEADER_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Plafond brut par défaut de connexions TCP servies simultanément
+/// (`CARBONFR_MAX_CONNECTIONS`). Large : borne de sûreté (mémoire, descripteurs,
+/// une tâche tokio par connexion), pas un réglage de capacité — bien au-dessus
+/// du plafond SSE et de ce qu'un reverse proxy garde en pool.
+const DEFAULT_MAX_CONNECTIONS: usize = 10_000;
+
+/// Borne haute des deux délais HTTP (secondes) : un jour. Au-delà, un délai
+/// n'a plus de sens (et une valeur énorme ferait déborder l'arithmétique
+/// d'échéance du timer hyper).
+const MAX_HTTP_TIMEOUT_SECS: u64 = 86_400;
+
+/// Borne haute des deux plafonds de connexions.
+const MAX_CONNECTION_CAP: u64 = 1_000_000;
+
+/// Entier lu dans l'environnement, borné à `1..=max`, avec défaut. Même
+/// contrat que `parse_poll_secs` : une valeur illisible, nulle ou hors borne
+/// échoue à la configuration, avec le nom de la variable, plutôt qu'à
+/// l'exécution.
+fn parse_bounded_u64(name: &str, raw: Option<&str>, default: u64, max: u64) -> anyhow::Result<u64> {
+    let value = raw
+        .map(str::parse::<u64>)
+        .transpose()
+        .with_context(|| format!("{name} : entier invalide"))?
+        .unwrap_or(default);
+    anyhow::ensure!(
+        (1..=max).contains(&value),
+        "{name} doit être compris entre 1 et {max}"
+    );
+    Ok(value)
+}
+
+/// `CARBONFR_HEADER_READ_TIMEOUT_SECS` (défaut 30 s, 1 s à 1 j) — cf. `serve_http`.
+fn parse_header_read_timeout_secs(raw: Option<&str>) -> anyhow::Result<std::time::Duration> {
+    parse_bounded_u64(
+        "CARBONFR_HEADER_READ_TIMEOUT_SECS",
+        raw,
+        DEFAULT_HEADER_READ_TIMEOUT.as_secs(),
+        MAX_HTTP_TIMEOUT_SECS,
+    )
+    .map(std::time::Duration::from_secs)
+}
+
+/// `CARBONFR_REQUEST_TIMEOUT_SECS` (défaut 60 s, 1 s à 1 j) — cf. `RouterOptions`.
+fn parse_request_timeout_secs(raw: Option<&str>) -> anyhow::Result<std::time::Duration> {
+    parse_bounded_u64(
+        "CARBONFR_REQUEST_TIMEOUT_SECS",
+        raw,
+        DEFAULT_REQUEST_TIMEOUT.as_secs(),
+        MAX_HTTP_TIMEOUT_SECS,
+    )
+    .map(std::time::Duration::from_secs)
+}
+
+/// `CARBONFR_SSE_MAX_CONNECTIONS` (défaut 300, 1 à 1 000 000) — cf. `SseLimiter`.
+fn parse_sse_max_connections(raw: Option<&str>) -> anyhow::Result<usize> {
+    let value = parse_bounded_u64(
+        "CARBONFR_SSE_MAX_CONNECTIONS",
+        raw,
+        DEFAULT_SSE_MAX_CONNECTIONS as u64,
+        MAX_CONNECTION_CAP,
+    )?;
+    usize::try_from(value).context("CARBONFR_SSE_MAX_CONNECTIONS : valeur trop grande")
+}
+
+/// `CARBONFR_MAX_CONNECTIONS` (défaut 10 000, 1 à 1 000 000) — cf. `HttpServerLimits`.
+fn parse_max_connections(raw: Option<&str>) -> anyhow::Result<usize> {
+    let value = parse_bounded_u64(
+        "CARBONFR_MAX_CONNECTIONS",
+        raw,
+        DEFAULT_MAX_CONNECTIONS as u64,
+        MAX_CONNECTION_CAP,
+    )?;
+    usize::try_from(value).context("CARBONFR_MAX_CONNECTIONS : valeur trop grande")
 }
 
 /// Période du poller (`CARBONFR_POLL_SECS`, défaut 900 s). **Refusée si nulle**
@@ -2567,6 +2714,131 @@ where
 /// Attend **SIGINT (Ctrl-C) ou SIGTERM** pour un arrêt propre. SIGTERM est le
 /// signal envoyé par systemd/Docker à l'arrêt orchestré — sans lui, l'arrêt
 /// gracieux ne s'enclencherait pas en production.
+/// Boucle d'accept HTTP/1.1 maison — remplace `axum::serve(listener, app)
+/// .with_graceful_shutdown(...)` (SEC-4, plan I8 ; ADR-0014 addendum 2026-09-26).
+///
+/// **Pourquoi** : `axum::serve` (0.8.9) construit le builder hyper **sans
+/// timer**, et hyper ignore alors son `header_read_timeout` par défaut (30 s)
+/// — aucune borne sur la lecture des en-têtes ni sur l'inactivité keep-alive,
+/// quelle que soit la configuration. Seule façon de poser ce délai : piloter
+/// `hyper::server::conn::http1` soi-même. Fork assumé, réduit au strict
+/// nécessaire, de la logique interne d'`axum::serve` (un
+/// `TowerToHyperService` et une tâche par connexion, arrêt gracieux) — à
+/// relire à chaque montée majeure d'axum ou de hyper-util ; redevient
+/// supprimable si axum expose un jour ce réglage.
+///
+/// HTTP/1.1 seulement, comme avant (aucune feature `http2` dans l'arbre, pas
+/// de WebSocket/upgrade). Le `header_read_timeout` de hyper est armé chaque
+/// fois que la connexion **attend une requête** : il coupe donc aussi une
+/// connexion keep-alive inactive (réarmé à chaque requête ; une réponse en
+/// cours d'écriture — dont un flux SSE — n'est jamais concernée). Au
+/// dépassement, hyper ferme la connexion sans réponse HTTP.
+///
+/// **Plafond brut de connexions** (`HttpServerLimits::max_connections`) : un
+/// permis par connexion servie, pris **avant** l'`accept` ; au plafond, la
+/// boucle attend qu'une connexion se termine (le backlog du noyau absorbe les
+/// nouvelles, rien n'est refusé ni répondu) — borne le nombre de tâches, de
+/// descripteurs et de mémoire par connexion, là où `header_read_timeout` ne
+/// borne que la durée d'une connexion qui ne parle pas. Le plafond SSE
+/// (`SseLimiter`), lui, protège la ressource logique la plus coûteuse.
+///
+/// **Arrêt** : à l'annulation du jeton, on cesse d'accepter, on relâche le
+/// port, puis on attend le drain des connexions surveillées
+/// (`GracefulShutdown`) : les connexions inactives sont fermées aussitôt, les
+/// flux SSE se ferment par le même jeton (`StreamState::with_shutdown`). Le
+/// filet `SHUTDOWN_GRACE` de l'appelant borne cette attente.
+async fn serve_http(
+    listener: TcpListener,
+    app: axum::Router,
+    limits: HttpServerLimits,
+    shutdown: tokio_util::sync::CancellationToken,
+) -> anyhow::Result<()> {
+    use hyper_util::rt::{TokioIo, TokioTimer};
+    use hyper_util::server::graceful::GracefulShutdown;
+    use hyper_util::service::TowerToHyperService;
+
+    let mut http1 = hyper::server::conn::http1::Builder::new();
+    // `.timer()` OBLIGATOIRE avec `.header_read_timeout()` : hyper panique à la
+    // première connexion si un délai est configuré sans timer.
+    http1
+        .timer(TokioTimer::new())
+        .header_read_timeout(limits.header_read_timeout);
+    let graceful = GracefulShutdown::new();
+    let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(limits.max_connections));
+
+    loop {
+        // Un créneau AVANT d'accepter : au plafond, on laisse la connexion dans
+        // le backlog plutôt que de l'ouvrir pour ne pas la servir.
+        let slot = tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => break,
+            acquired = std::sync::Arc::clone(&slots).acquire_owned() => match acquired {
+                Ok(slot) => slot,
+                // Le sémaphore n'est jamais fermé ; par prudence, on s'arrête.
+                Err(_closed) => break,
+            },
+        };
+        let (socket, _peer) = tokio::select! {
+            biased;
+            _ = shutdown.cancelled() => break,
+            accepted = listener.accept() => match accepted {
+                Ok(pair) => pair,
+                Err(err) => {
+                    // Même politique (et même niveau de journal) qu'`axum::serve` :
+                    // une erreur propre à UNE connexion (client parti avant
+                    // l'accept) est ignorée ; une erreur de ressource
+                    // (descripteurs épuisés…) est journalisée en `error` et
+                    // l'accept marque une pause plutôt que de tourner à vide.
+                    if !is_connection_error(&err) {
+                        error!(error = %err, "acceptation d'une connexion impossible — reprise dans 1 s");
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                    continue;
+                }
+            },
+        };
+        let service = TowerToHyperService::new(app.clone());
+        let connection = http1.serve_connection(TokioIo::new(socket), service);
+        let watched = graceful.watcher().watch(connection);
+        tokio::spawn(async move {
+            // Le créneau vit aussi longtemps que la connexion.
+            let _slot = slot;
+            // Erreurs ordinaires d'une connexion (client parti, en-têtes
+            // invalides, délai de lecture dépassé) : `debug`, jamais bloquant.
+            if let Err(err) = watched.await {
+                debug!(error = %err, "connexion HTTP terminée en erreur");
+            }
+        });
+    }
+
+    drop(listener);
+    info!("arrêt : port relâché, drain des connexions HTTP en cours");
+    graceful.shutdown().await;
+    Ok(())
+}
+
+/// Bornes de la couche transport de [`serve_http`] (SEC-4, plan I8).
+#[derive(Clone, Copy, Debug)]
+struct HttpServerLimits {
+    /// Délai de lecture des en-têtes / d'inactivité keep-alive
+    /// (`CARBONFR_HEADER_READ_TIMEOUT_SECS`).
+    header_read_timeout: std::time::Duration,
+    /// Plafond brut de connexions servies simultanément
+    /// (`CARBONFR_MAX_CONNECTIONS`) ; au-delà, l'accept attend.
+    max_connections: usize,
+}
+
+/// Erreurs d'`accept` propres à une connexion (le client a abandonné avant
+/// qu'on ne la prenne) — ignorées sans pause, comme le fait `axum::serve`.
+fn is_connection_error(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::ConnectionReset
+    )
+}
+
 async fn shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
@@ -2653,11 +2925,299 @@ mod tests {
     }
 
     use super::{
-        ArchiveSource, BackfillScope, INGEST_RECENT_DEFAULT_WINDOW, parse_backfill_scope,
-        parse_backfill_source, parse_poll_secs, parse_poll_window_hours, parse_self_heal_days,
-        parse_webhook_max_failures, parse_webhook_purge_days, revocation_target,
+        ArchiveSource, BackfillScope, HttpServerLimits, INGEST_RECENT_DEFAULT_WINDOW,
+        parse_backfill_scope, parse_backfill_source, parse_header_read_timeout_secs,
+        parse_max_connections, parse_poll_secs, parse_poll_window_hours,
+        parse_request_timeout_secs, parse_self_heal_days, parse_sse_max_connections,
+        parse_webhook_max_failures, parse_webhook_purge_days, revocation_target, serve_http,
         spawn_webhook_watcher,
     };
+
+    /// Bornes HTTP (SEC-1/PERF-2/SEC-4) : défauts documentés, valeur explicite
+    /// respectée, zéro et texte refusés **à la configuration** avec le nom de
+    /// la variable.
+    #[test]
+    fn http_limits_defaults_and_validation() {
+        use std::time::Duration;
+
+        assert_eq!(
+            parse_header_read_timeout_secs(None).unwrap(),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            parse_header_read_timeout_secs(Some("120")).unwrap(),
+            Duration::from_secs(120)
+        );
+        assert_eq!(
+            parse_request_timeout_secs(None).unwrap(),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            parse_request_timeout_secs(Some("90")).unwrap(),
+            Duration::from_secs(90)
+        );
+        assert_eq!(parse_sse_max_connections(None).unwrap(), 300);
+        assert_eq!(parse_sse_max_connections(Some("50")).unwrap(), 50);
+        assert_eq!(parse_max_connections(None).unwrap(), 10_000);
+        assert_eq!(parse_max_connections(Some("1000000")).unwrap(), 1_000_000);
+
+        for (name, result) in [
+            (
+                "CARBONFR_HEADER_READ_TIMEOUT_SECS",
+                parse_header_read_timeout_secs(Some("0")).map(|_| ()),
+            ),
+            (
+                "CARBONFR_HEADER_READ_TIMEOUT_SECS",
+                parse_header_read_timeout_secs(Some("")).map(|_| ()),
+            ),
+            (
+                "CARBONFR_HEADER_READ_TIMEOUT_SECS",
+                parse_header_read_timeout_secs(Some("86401")).map(|_| ()),
+            ),
+            (
+                "CARBONFR_REQUEST_TIMEOUT_SECS",
+                parse_request_timeout_secs(Some("abc")).map(|_| ()),
+            ),
+            (
+                "CARBONFR_REQUEST_TIMEOUT_SECS",
+                parse_request_timeout_secs(Some("")).map(|_| ()),
+            ),
+            (
+                "CARBONFR_SSE_MAX_CONNECTIONS",
+                parse_sse_max_connections(Some("0")).map(|_| ()),
+            ),
+            (
+                "CARBONFR_SSE_MAX_CONNECTIONS",
+                parse_sse_max_connections(Some("-1")).map(|_| ()),
+            ),
+            (
+                "CARBONFR_SSE_MAX_CONNECTIONS",
+                parse_sse_max_connections(Some("")).map(|_| ()),
+            ),
+            (
+                "CARBONFR_MAX_CONNECTIONS",
+                parse_max_connections(Some("1000001")).map(|_| ()),
+            ),
+            (
+                "CARBONFR_MAX_CONNECTIONS",
+                parse_max_connections(Some("0")).map(|_| ()),
+            ),
+        ] {
+            let err = result.expect_err(name);
+            assert!(format!("{err:#}").contains(name), "{err:#}");
+        }
+    }
+
+    /// Routeur minimal pour les tests TCP de la boucle d'accept.
+    fn tiny_app() -> axum::Router {
+        axum::Router::new().route("/health", axum::routing::get(|| async { "ok" }))
+    }
+
+    /// Bornes de test : délai d'en-têtes donné, plafond de connexions large.
+    fn limits(header_read_timeout: std::time::Duration) -> HttpServerLimits {
+        HttpServerLimits {
+            header_read_timeout,
+            max_connections: 64,
+        }
+    }
+
+    /// Démarre `serve_http` sur un port libre de la boucle locale.
+    async fn spawn_serve_http(
+        limits: HttpServerLimits,
+    ) -> (
+        std::net::SocketAddr,
+        tokio_util::sync::CancellationToken,
+        tokio::task::JoinHandle<anyhow::Result<()>>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let handle = tokio::spawn(serve_http(listener, tiny_app(), limits, shutdown.clone()));
+        (addr, shutdown, handle)
+    }
+
+    /// Annule le jeton et attend la fin bornée du serveur (arrêt gracieux).
+    async fn stop(
+        shutdown: tokio_util::sync::CancellationToken,
+        handle: tokio::task::JoinHandle<anyhow::Result<()>>,
+    ) {
+        shutdown.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("le serveur doit s'arrêter en moins de 5 s")
+            .unwrap()
+            .unwrap();
+    }
+
+    const HEALTH_REQUEST: &[u8] = b"GET /health HTTP/1.1\r\nHost: test\r\n\r\n";
+
+    /// Lit une réponse HTTP/1.1 complète (en-têtes + corps selon
+    /// `content-length`) sur une connexion brute.
+    async fn read_http_response(client: &mut tokio::net::TcpStream) -> String {
+        use tokio::io::AsyncReadExt;
+
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 1024];
+        loop {
+            let n =
+                tokio::time::timeout(std::time::Duration::from_secs(3), client.read(&mut chunk))
+                    .await
+                    .expect("réponse attendue avant 3 s")
+                    .unwrap();
+            assert!(n > 0, "connexion fermée avant la fin de la réponse");
+            buf.extend_from_slice(&chunk[..n]);
+            let text = String::from_utf8_lossy(&buf).to_string();
+            if let Some(split) = text.find("\r\n\r\n") {
+                let headers = &text[..split];
+                let body_len: usize = headers
+                    .lines()
+                    .find_map(|l| {
+                        l.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse().unwrap())
+                    })
+                    .unwrap_or(0);
+                if buf.len() >= split + 4 + body_len {
+                    return text;
+                }
+            }
+        }
+    }
+
+    /// Attend la fermeture de la connexion par le serveur (EOF ou reset) sans
+    /// qu'aucun octet ne soit reçu ; panique si elle reste ouverte.
+    async fn expect_closed_without_bytes(client: &mut tokio::net::TcpStream) {
+        use tokio::io::AsyncReadExt;
+
+        let mut buf = [0u8; 256];
+        let read = tokio::time::timeout(std::time::Duration::from_secs(3), client.read(&mut buf))
+            .await
+            .expect("le serveur doit fermer la connexion avant 3 s");
+        match read {
+            // FIN : fermeture propre.
+            Ok(0) => {}
+            Ok(n) => panic!(
+                "aucun octet attendu, reçu : {:?}",
+                String::from_utf8_lossy(&buf[..n])
+            ),
+            // RST : fermeture alors que des octets restaient non lus côté
+            // serveur — c'est aussi une coupure, pas une erreur d'E/S quelconque.
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::UnexpectedEof
+                ) => {}
+            Err(err) => panic!("erreur d'E/S inattendue : {err}"),
+        }
+    }
+
+    /// SEC-4 : un client qui n'achève jamais ses en-têtes est coupé après le
+    /// délai (sans réponse HTTP) — c'est le comportement qu'`axum::serve`
+    /// n'offrait pas (timer hyper jamais posé).
+    #[tokio::test]
+    async fn header_read_timeout_closes_a_client_stuck_in_its_headers() {
+        use tokio::io::AsyncWriteExt;
+
+        let (addr, shutdown, handle) =
+            spawn_serve_http(limits(std::time::Duration::from_millis(200))).await;
+        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        // Ligne de requête + un en-tête, jamais la ligne vide finale.
+        client
+            .write_all(b"GET /health HTTP/1.1\r\nHost: test\r\n")
+            .await
+            .unwrap();
+        expect_closed_without_bytes(&mut client).await;
+
+        stop(shutdown, handle).await;
+    }
+
+    /// Le délai est un délai d'**inactivité** réarmé à chaque requête : deux
+    /// requêtes complètes espacées de moins que le délai passent sur la même
+    /// connexion keep-alive ; une inactivité plus longue la ferme (EOF).
+    #[tokio::test]
+    async fn header_read_timeout_spares_active_keep_alive_then_closes_idle() {
+        use tokio::io::AsyncWriteExt;
+
+        // Délai de 1 s, pause de 100 ms : marge ×10 contre l'ordonnancement
+        // d'une CI chargée ; la fermeture pour inactivité est attendue sous 3 s.
+        let (addr, shutdown, handle) =
+            spawn_serve_http(limits(std::time::Duration::from_secs(1))).await;
+        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+
+        client.write_all(HEALTH_REQUEST).await.unwrap();
+        let first = read_http_response(&mut client).await;
+        assert!(first.starts_with("HTTP/1.1 200"), "{first}");
+        assert!(first.ends_with("ok"), "{first}");
+
+        // Pause bien plus courte que le délai : la connexion doit être réutilisable.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        client.write_all(HEALTH_REQUEST).await.unwrap();
+        let second = read_http_response(&mut client).await;
+        assert!(second.starts_with("HTTP/1.1 200"), "{second}");
+
+        // Inactivité plus longue que le délai : fermeture côté serveur.
+        expect_closed_without_bytes(&mut client).await;
+
+        stop(shutdown, handle).await;
+    }
+
+    /// Plafond brut de connexions : au plafond, la connexion suivante n'est
+    /// pas refusée mais **attend** (backlog) qu'un créneau se libère.
+    #[tokio::test]
+    async fn max_connections_makes_the_excess_client_wait_for_a_free_slot() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (addr, shutdown, handle) = spawn_serve_http(HttpServerLimits {
+            header_read_timeout: std::time::Duration::from_secs(30),
+            max_connections: 1,
+        })
+        .await;
+        let mut first = tokio::net::TcpStream::connect(addr).await.unwrap();
+        first.write_all(HEALTH_REQUEST).await.unwrap();
+        let response = read_http_response(&mut first).await;
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+
+        // Le seul créneau est tenu par la connexion keep-alive ci-dessus : la
+        // seconde se connecte (backlog du noyau) mais n'est pas servie.
+        let mut second = tokio::net::TcpStream::connect(addr).await.unwrap();
+        second.write_all(HEALTH_REQUEST).await.unwrap();
+        let mut buf = [0u8; 64];
+        let waited =
+            tokio::time::timeout(std::time::Duration::from_millis(300), second.read(&mut buf))
+                .await;
+        assert!(
+            waited.is_err(),
+            "la seconde connexion ne doit pas être servie tant que le créneau est pris"
+        );
+
+        // La première se ferme : le créneau se libère, la seconde est servie.
+        drop(first);
+        let response = read_http_response(&mut second).await;
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+
+        stop(shutdown, handle).await;
+    }
+
+    /// Arrêt gracieux conservé : à l'annulation du jeton, une connexion
+    /// keep-alive **inactive** ne retient pas le serveur, et le port est relâché.
+    #[tokio::test]
+    async fn shutdown_token_stops_serve_http_despite_an_idle_connection() {
+        use tokio::io::AsyncWriteExt;
+
+        let (addr, shutdown, handle) =
+            spawn_serve_http(limits(std::time::Duration::from_secs(30))).await;
+        let mut client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        client.write_all(HEALTH_REQUEST).await.unwrap();
+        let response = read_http_response(&mut client).await;
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+
+        stop(shutdown, handle).await;
+        // Le client voit la fermeture, et plus personne n'écoute sur le port.
+        expect_closed_without_bytes(&mut client).await;
+        assert!(tokio::net::TcpStream::connect(addr).await.is_err());
+    }
 
     /// Le watcher enregistre l'issue de chaque livraison avec le seuil configuré
     /// (ADR-0016, addendum 2026-09) — c'est ce qui alimente la désactivation

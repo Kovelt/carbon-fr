@@ -21,15 +21,15 @@ Règle d'or : **on ne pousse jamais directement sur `main`.** Tout changement pa
 | Règle | Effet |
 | --- | --- |
 | **Pull request obligatoire** | Aucun push direct sur `main`. |
-| **Status checks requis (strict)** | Les **5** jobs de la CI doivent être verts **et** la branche à jour avant merge. |
+| **Status checks requis (strict)** | Les **8** jobs de la CI doivent être verts **et** la branche à jour avant merge. |
 | **Historique linéaire** (squash/rebase, pas de *merge commit*) | Un commit par PR sur `main` : historique lisible. |
 | **Conversations résolues** | Aucun fil de revue non résolu au merge. |
 | **Force-push & suppression bloqués** | `main` ne peut être ni réécrit ni supprimé. |
 | **`bypass_actors` vide** | Zéro exception — la règle s'applique au mainteneur admin lui-même. |
 | *Recommandé, non exigé* : commits signés | Intégrité/traçabilité, sans friction GPG/SSH imposée. |
 
-Les **5 status checks requis** (le `context` = le `name:` du job, **pas** son id YAML ; app GitHub Actions `integration_id` 15368) :
-`fmt + clippy`, `cargo-deny (licences + advisories)`, `tests (avec PostgreSQL)`, `build release (artefact déployable)`, `SDK TypeScript (typecheck + build)`. Le `cargo-deny` est la **porte de pureté de licence**, érigée en invariant.
+Les **8 status checks requis** (le `context` = le `name:` du job, **pas** son id YAML ; app GitHub Actions `integration_id` 15368) :
+`fmt + clippy`, `cargo-deny (licences + advisories)`, `tests (avec PostgreSQL)`, `build release (artefact déployable)`, `SDK TypeScript (typecheck + build)` — les cinq d'origine (2026-06-21) — puis, depuis le 2026-09-24, les trois contrôles des crates publiées : `MSRV (Rust 1.88)`, `semver (crates publiables)`, `rustdoc + package (crates publiables)` (procédure : [`docs/brief-claude-code-ruleset-main.md`](docs/brief-claude-code-ruleset-main.md)). Le `cargo-deny` est la **porte de pureté de licence**, érigée en invariant.
 
 > ⚠️ **Piège du status check** : un check ne peut être requis qu'après avoir **tourné au moins une fois**, et son `context` doit correspondre **exactement** au `name:` du job (sinon la règle attend un check qui n'arrive jamais → merge bloqué). On pose donc la CI d'abord, puis le ruleset.
 
@@ -66,17 +66,20 @@ Le workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) s'exécute à
 - **deny** : `cargo deny check` (licences permissives, avis RustSec, sources de confiance — `deny.toml`) ;
 - **test** : `cargo test --workspace` avec un service PostgreSQL (les tests d'intégration appliquent eux-mêmes les migrations) ;
 - **build-release** : `cargo build --release --locked` du binaire `carbonfr-server` (garantit que l'image de prod compile et que le lockfile est cohérent) ;
-- **sdk-typescript** : typecheck + build du SDK `@carbon-fr/sdk` (`sdk/typescript/`).
+- **sdk-typescript** : typecheck + build du SDK `@carbon-fr/sdk` (`sdk/typescript/`) ;
+- **msrv** : `cargo check` des trois crates publiées (`carbonfr-core`, `carbonfr-eligibility`, `carbonfr-sdk`) avec la toolchain épinglée `1.88.0` — le plancher `rust-version` du workspace tient (ADR-0030) ;
+- **semver** : `cargo-semver-checks` de `carbonfr-core`/`carbonfr-eligibility` contre le dernier tag `v*` et de `carbonfr-sdk` contre le dernier tag `rust-sdk-v*` — toute rupture d'API publique sans bump de version fait échouer la PR (règle ADR-0030 §3, outillage §4) ;
+- **rustdoc-package** : `cargo doc -D warnings` (liens morts) puis `cargo package` (sans upload) des trois crates publiées — ce qui part sur crates.io/docs.rs est vérifié avant le tag.
 
-Ces cinq jobs **sont** les **status checks requis** de la protection de `main` (ADR-0027) ; leur `context` correspond exactement au `name:` du job. La CI applique ainsi *mécaniquement* ce que la doc décrit : plus de « on a oublié de lancer clippy ».
+Ces huit jobs **sont** les **status checks requis** de la protection de `main` (ADR-0027) ; leur `context` correspond exactement au `name:` du job. La CI applique ainsi *mécaniquement* ce que la doc décrit : plus de « on a oublié de lancer clippy ». Un neuvième job, `Alerte (scan planifié en échec)`, ne tourne que sur le **scan quotidien** (cron 6 h UTC, qui rejoue le `cargo deny` pour attraper une CVE publiée après le dernier commit) : en cas d'échec, il ouvre ou commente une issue — visible et notifiée — et n'est **pas** un check requis.
 
 ## 6. Versionnage & releases
 
-- **SemVer**, **version unique de workspace** (`[workspace.package] version` dans le `Cargo.toml` racine, héritée par toutes les crates via `version.workspace = true` ; pas de version par crate — ADR-0019). Tag git `vX.Y.Z` par release, qui doit **refléter** cette version (garde-fou CI dans `release.yml`).
+- **SemVer**, **version unique de workspace** (`[workspace.package] version` dans le `Cargo.toml` racine, héritée par les crates via `version.workspace = true` — ADR-0019). Tag git `vX.Y.Z` par release, qui doit **refléter** cette version (garde-fou CI dans `release.yml` et `release-crates.yml`). **Une exception** : `carbonfr-sdk` (SDK Rust) porte sa **propre** version dans `crates/sdk/Cargo.toml`, taguée `rust-sdk-vX.Y.Z` — même garde-fou dans `release-rust-sdk.yml` (addendum ADR-0019, ADR-0031 décision 12).
 - **Phase `0.x`** : tant qu'on est avant la `1.0`, les ruptures internes sont tolérées en *minor* — ça laisse itérer sans drame, tout en restant honnête sur la stabilité.
-- **CHANGELOG.md** au format [Keep a Changelog](https://keepachangelog.com/fr/) : une section par version, regroupée en *Ajouté / Modifié / Corrigé / Supprimé*.
-- **Release = image Docker, pas crates.io.** Les crates ne sont **pas** publiées sur crates.io (le service se distribue en image) : pousser un tag `vX.Y.Z` déclenche [`.github/workflows/release.yml`](.github/workflows/release.yml), qui construit et publie l'image sur **GHCR** (`ghcr.io/kovelt/carbon-fr`, publique) taguée `X.Y.Z` / `X.Y` / `latest`, puis crée la **GitHub Release** associée (notes extraites du CHANGELOG). En prod : épingler une version exacte (rollback = redéployer le tag précédent). Le **SDK TypeScript** suit son propre tag `sdk-v*` ([`release-sdk.yml`](.github/workflows/release-sdk.yml)).
-- **Quatre axes de version découplés** (ADR-0019), à ne jamais confondre : version applicative (code, ce tag), contrat d'API (`/v1`, ADR-0007), méthodologies & modèles portés par la donnée (`rte-direct`, `acv-ademe@1`/`@2`, `climatology@1`…), et SDK (`sdk-v*`). Aucun ne pilote les autres.
+- **CHANGELOG.md** au format [Keep a Changelog](https://keepachangelog.com/fr/) : une section par version, regroupée en catégories Keep a Changelog (*Ajouté / Modifié / Corrigé / Supprimé / Sécurité / Déprécié*) et, selon les PR, en sections thématiques (*Documentation*, *CI*, *Tests*…) ; une section `[Non publié]` en tête, renommée dans la PR qui relève la version.
+- **Release = image Docker pour le service, crates.io pour les bibliothèques.** Pousser un tag `vX.Y.Z` déclenche deux workflows : [`release.yml`](.github/workflows/release.yml), qui construit et publie l'image sur **GHCR** (`ghcr.io/kovelt/carbon-fr`, publique) taguée `X.Y.Z` / `X.Y` / `latest` puis crée la **GitHub Release** associée (notes extraites du CHANGELOG) ; et [`release-crates.yml`](.github/workflows/release-crates.yml), qui publie **`carbonfr-core` et `carbonfr-eligibility` sur crates.io** à la même version, par *Trusted Publishing* (OIDC, aucun jeton stocké — ADR-0030, première publication le 2026-09-24). En prod : épingler une version exacte de l'image (rollback = redéployer le tag précédent). Les deux SDK ont chacun leur tag et leur workflow : **`@carbon-fr/sdk`** (TypeScript) sur `sdk-v*` ([`release-sdk.yml`](.github/workflows/release-sdk.yml), npm, *trusted publishing*) et **`carbonfr-sdk`** (Rust) sur `rust-sdk-v*` ([`release-rust-sdk.yml`](.github/workflows/release-rust-sdk.yml), crates.io). Les autres membres du workspace restent `publish = false`.
+- **Cinq axes de version découplés** (ADR-0019 + addendum 2026-09-23), à ne jamais confondre : version applicative (code, tag `vX.Y.Z`), contrat d'API (`/v1`, ADR-0007), méthodologies & modèles portés par la donnée (`rte-direct`, `acv-ademe@1`/`@2`, `climatology@1`…), SDK TypeScript (`sdk-v*`), et versions crates.io — `carbonfr-core`/`carbonfr-eligibility` **couplées** à la version applicative (un tag `vX.Y.Z` les publie en `X.Y.Z`), `carbonfr-sdk` sur son axe propre (`rust-sdk-v*`). Aucun ne pilote les autres ; en 0.x, une rupture d'API publique d'une crate publiée relève sa version *minor* (ADR-0030 §3, imposé par `cargo-semver-checks`).
 - **Dépréciation** (ADR-0020) : on ne retire **jamais** un élément public (version d'API, endpoint, champ, méthodologie) sans préavis. Une dépréciation s'annonce via les en-têtes HTTP `Deprecation` (RFC 9745) + `Sunset` (RFC 8594), une section *Déprécié* du CHANGELOG et `deprecated: true` dans l'OpenAPI ; retrait au plus tôt après la fenêtre (≥ 6 mois post-1.0, ≥ 30 jours en pré-1.0).
 
 ## 7. Les fichiers de gouvernance
@@ -89,7 +92,8 @@ Ces cinq jobs **sont** les **status checks requis** de la protection de `main` (
 | `CODE_OF_CONDUCT.md` | Code de conduite (Contributor Covenant) | ✅ présent |
 | `docs/ARCHITECTURE.md` + `docs/adr/` | Conception & décisions tracées | ✅ présent |
 | `CLAUDE.md` | Contexte/conventions pour Claude Code | ✅ présent |
-| `.github/workflows/ci.yml` | CI (5 jobs : lint, deny, test, build-release, sdk) | ✅ présent |
+| `.github/workflows/ci.yml` | CI (8 jobs requis : lint, deny, test, build-release, sdk-typescript, msrv, semver, rustdoc-package ; + alerte du scan planifié) | ✅ présent |
+| `.github/workflows/release*.yml` | Publication au tag : image GHCR + GitHub Release (`release.yml`), crates.io (`release-crates.yml`, `release-rust-sdk.yml`), npm (`release-sdk.yml`) | ✅ présent |
 | `GOUVERNANCE.md` | Gouvernance & workflow (ce document) | ✅ présent |
 | `SECURITY.md` | Signalement de faille (en privé) | ✅ présent |
 | `.github/dependabot.yml` | MAJ dépendances + alertes sécurité (cargo, npm, actions) | ✅ présent |

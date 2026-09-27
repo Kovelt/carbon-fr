@@ -30,5 +30,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(thermique) = mix.mix.thermique {
         println!("  thermique     {thermique:>10.1}  (agrégat fossile régional)");
     }
+    // Parts de production (vide face à un serveur plus ancien qui ne les sert pas).
+    for share in &mix.shares {
+        println!("  part {:<14} {:>5.1} %", share.label, share.share * 100.0);
+    }
     Ok(())
 }

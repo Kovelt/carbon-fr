@@ -28,7 +28,7 @@ change (removed/renamed public item, a field added to a public-field struct…) 
 
 ## What this crate covers
 
-Full parity with the 26 `/v1` operations of the TypeScript SDK (`@carbon-fr/sdk`, `health`/
+Full parity with the 28 `/v1` operations of the TypeScript SDK (`@carbon-fr/sdk`, `health`/
 `health_ready` excluded — infra probes, outside the versioned contract):
 
 - **Client**: `CarbonFr` / `CarbonFrBuilder` — base URL, `Bearer` API key, configurable/
@@ -36,11 +36,13 @@ Full parity with the 26 `/v1` operations of the TypeScript SDK (`@carbon-fr/sdk`
   `reqwest::Client`.
 - **Errors**: `CarbonFrError` (`#[non_exhaustive]`) — typed transport/API/decode/timeout/
   config variants, RFC 9457 `application/problem+json` decoding (`ProblemDetails`).
-- **Intensity**: `intensity_now`, `intensity_date`, `intensity_stats`, `below`.
+- **Intensity**: `intensity_now`, `intensity_now_all` (every region in one call), `intensity_date`,
+  `intensity_stats`, `below`.
 - **Forecast & scheduling**: `forecast`, `greenest_window`, `schedule`, `schedule_slots`.
-- **Mix, exchanges, weather, renewable**: `mix`, `exchanges`, `exchanges_history`, `weather`,
+- **Mix, exchanges, weather, renewable**: `mix` (MW per source + production `shares`), `exchanges`, `exchanges_history`, `weather`,
   `weather_history`, `renewable`.
-- **Reference data**: `methodologies`, `factors`, `price`, `price_history`, `cost_reference`,
+- **Reference data**: `methodologies`, `regions` (served regions: slug, label, INSEE code), `factors`,
+  `price`, `price_history`, `cost_reference`,
   `eligibility_rulesets`.
 - **Visit stats**: `visit_stats`, `record_visit`.
 - **Webhooks** (require an API key): `list_webhooks`, `create_webhook`, `delete_webhook`.

@@ -55,7 +55,8 @@ pub use methodology::{Methodology, Vintage};
 pub use metrics::{ErrorAccumulator, ErrorMetrics};
 pub use price::{
     Filiere, MAX_SPOT_STALENESS, MarginalTechnology, MixShare, PriceBreakdown, PriceComponent,
-    PriceComponentKind, PriceContext, SpotPrice, TrvReference, price_breakdown, price_series,
+    PriceComponentKind, PriceContext, SpotPrice, TrvReference, mix_shares, price_breakdown,
+    price_series,
 };
 pub use region::Region;
 pub use renewable::{RenewableModel, RenewableSample, calibrate as calibrate_renewable};

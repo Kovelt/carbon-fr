@@ -78,7 +78,8 @@ const cf = new CarbonFr({
 | Méthode | Endpoint |
 | --- | --- |
 | `intensityNow` | `GET /v1/intensity/now` |
-| `mix` | `GET /v1/mix` |
+| `intensityNowAll` | `GET /v1/intensity/now/all` (les 13 régions en un appel ; `methodology: "acv-ademe"` — `rte-direct` n'existe qu'au national) |
+| `mix` | `GET /v1/mix` (MW par filière + parts `shares`) |
 | `intensityDate` | `GET /v1/intensity/date` |
 | `intensityStats` | `GET /v1/intensity/stats` |
 | `forecast` | `GET /v1/intensity/forecast` |
@@ -88,7 +89,7 @@ const cf = new CarbonFr({
 | `exchanges` · `exchangesHistory` | `GET /v1/exchanges[/date]` |
 | `weather` · `weatherHistory` | `GET /v1/weather[/date]` |
 | `renewable` | `GET /v1/renewable` |
-| `methodologies` · `factors` | méthodes & facteurs |
+| `methodologies` · `factors` · `regions` | méthodes, facteurs & catalogue des régions (`GET /v1/regions`) |
 | `price` · `priceHistory` | `GET /v1/price[/date]` (décomposition TRV, national uniquement — `region` accepté mais toute valeur non nationale renvoie une 400) |
 | `costReference` | `GET /v1/cost-reference` (LCOE, estimation) |
 | `visitStats` · `recordVisit` | compteur RGPD-friendly |

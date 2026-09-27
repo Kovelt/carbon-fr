@@ -76,6 +76,20 @@ pub struct IntensityResponse {
     pub vintage: String,
 }
 
+/// Réponse de `GET /v1/intensity/now/all` — dernière mesure de **chaque**
+/// région disposant d'une donnée, national puis les 12 régions dans l'ordre de
+/// `GET /v1/regions` (une région sans donnée est omise ; liste vide possible).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct IntensityAllResponse {
+    /// Méthodologie servie — identique au champ `methodology` de chaque entrée
+    /// (`rte-direct` n'existe qu'au national : une seule entrée).
+    pub methodology: Methodology,
+    pub methodology_version: u32,
+    /// Nombre d'entrées de `regions` (1 à 13).
+    pub count: u32,
+    pub regions: Vec<IntensityResponse>,
+}
+
 /// Un point de `GET /v1/intensity/date` (`HistoryResponse::data`).
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct HistoryPoint {
@@ -319,6 +333,21 @@ pub struct MixBody {
     pub thermique: Option<f64>,
 }
 
+/// Part d'une filière dans la production (`MixResponse::shares`). Même forme
+/// que [`PriceMixShareBody`] (contexte de `/v1/price`, un seul composant
+/// OpenAPI côté serveur) — type distinct pour ne pas changer celui d'un champ
+/// public déjà publié.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct MixShareBody {
+    /// Slug de filière (`nucleaire`, `thermique`…) — `String`, catalogue
+    /// `#[non_exhaustive]` côté serveur (voir le commentaire de module).
+    pub filiere: String,
+    pub label: String,
+    /// Part dans la production, dans `[0, 1]` (somme = 1).
+    pub share: f64,
+    pub output_mw: f64,
+}
+
 /// Réponse de `GET /v1/mix`.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct MixResponse {
@@ -327,6 +356,11 @@ pub struct MixResponse {
     pub timestamp: OffsetDateTime,
     pub unit: String,
     pub mix: MixBody,
+    /// Parts de production par filière (filières à production nulle omises,
+    /// pompage/échanges exclus, `thermique` agrégé au régional). **Vide** face à
+    /// un serveur plus ancien qui ne sert pas encore ce champ.
+    #[serde(default)]
+    pub shares: Vec<MixShareBody>,
 }
 
 // --- Échanges transfrontaliers (`/v1/exchanges*`) ---------------------------
@@ -454,6 +488,26 @@ pub struct MethodologyInfo {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct MethodologiesResponse {
     pub methodologies: Vec<MethodologyInfo>,
+}
+
+/// Une région servie (`RegionsResponse::regions`).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct RegionInfo {
+    /// Slug stable — la valeur du paramètre `region` ([`Region`] tolère un
+    /// futur slug inconnu via `Region::Other`).
+    pub slug: Region,
+    pub label: String,
+    /// Code INSEE de la région métropolitaine ; `None` pour `national`.
+    pub insee_code: Option<String>,
+    /// `true` pour la maille nationale.
+    pub national: bool,
+}
+
+/// Réponse de `GET /v1/regions` — catalogue statique : national puis les 12
+/// régions métropolitaines (même ordre que `GET /v1/intensity/now/all`).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct RegionsResponse {
+    pub regions: Vec<RegionInfo>,
 }
 
 /// Un facteur d'émission par filière (`FactorsResponse::factors`).

@@ -1,4 +1,4 @@
-//! Les 25 méthodes REST du contrat `/v1` restant après le socle + le flux SSE
+//! Les 27 méthodes REST du contrat `/v1` restant après le socle + le flux SSE
 //! (ADR-0031 décision 8 ; `intensity_stream` vit dans `crate::stream`). Un
 //! seul `impl CarbonFr` : chaque méthode résout l'URL (`CarbonFr::url`),
 //! ajoute ses paramètres de requête (`crate::query::QueryPairsExt`), envoie
@@ -15,15 +15,16 @@ use crate::client::CarbonFr;
 use crate::dto::{
     CostReferenceResponse, CreateWebhookRequest, CreatedWebhookResponse, ExchangesHistoryResponse,
     ExchangesResponse, FactorsResponse, ForecastResponse, GreenestWindowResponse, HistoryResponse,
-    IntensityResponse, MethodologiesResponse, MixResponse, PriceHistoryResponse, PriceResponse,
-    RenewableResponse, RulesetsResponse, ScheduleResponse, SlotsResponse, StatsResponse,
-    VisitStatsResponse, WeatherHistoryResponse, WeatherResponse, WebhookListResponse,
+    IntensityAllResponse, IntensityResponse, MethodologiesResponse, MixResponse,
+    PriceHistoryResponse, PriceResponse, RegionsResponse, RenewableResponse, RulesetsResponse,
+    ScheduleResponse, SlotsResponse, StatsResponse, VisitStatsResponse, WeatherHistoryResponse,
+    WeatherResponse, WebhookListResponse,
 };
 use crate::error::CarbonFrError;
 use crate::options::{
     BelowOptions, CostReferenceOptions, FactorsOptions, ForecastOptions, GreenestWindowOptions,
-    IntensityDateOptions, IntensityNowOptions, IntensityStatsOptions, MixOptions,
-    PriceHistoryOptions, PriceOptions, ScheduleOptions, ScheduleSlotsOptions,
+    IntensityDateOptions, IntensityNowAllOptions, IntensityNowOptions, IntensityStatsOptions,
+    MixOptions, PriceHistoryOptions, PriceOptions, ScheduleOptions, ScheduleSlotsOptions,
 };
 use crate::query::QueryPairsExt;
 use crate::region::Region;
@@ -41,6 +42,24 @@ impl CarbonFr {
             let mut q = url.query_pairs_mut();
             q.opt_str("region", options.region.as_ref().map(Region::as_str))
                 .opt_str("methodology", options.methodology.map(|m| m.as_str()))
+                .opt_display("version", options.version);
+        }
+        self.request_json(self.request_for_url(Method::GET, url))
+            .await
+    }
+
+    /// `GET /v1/intensity/now/all` — dernière intensité de **chaque** région en
+    /// un appel : national puis les 12 régions (ordre de [`Self::regions`]),
+    /// une région sans donnée omise. `rte-direct` (défaut) n'existe qu'au
+    /// national → une seule entrée ; passer `Methodology::AcvAdeme` pour les 13.
+    pub async fn intensity_now_all(
+        &self,
+        options: IntensityNowAllOptions,
+    ) -> Result<IntensityAllResponse, CarbonFrError> {
+        let mut url = self.url("v1/intensity/now/all")?;
+        {
+            let mut q = url.query_pairs_mut();
+            q.opt_str("methodology", options.methodology.map(|m| m.as_str()))
                 .opt_display("version", options.version);
         }
         self.request_json(self.request_for_url(Method::GET, url))
@@ -305,6 +324,14 @@ impl CarbonFr {
     /// (ADR-0010 §7).
     pub async fn methodologies(&self) -> Result<MethodologiesResponse, CarbonFrError> {
         self.request_json(self.request(Method::GET, "v1/methodologies")?)
+            .await
+    }
+
+    /// `GET /v1/regions` — catalogue statique des régions servies (slug,
+    /// libellé, code INSEE ; national d'abord) : les valeurs acceptées par le
+    /// paramètre `region` de toutes les méthodes.
+    pub async fn regions(&self) -> Result<RegionsResponse, CarbonFrError> {
+        self.request_json(self.request(Method::GET, "v1/regions")?)
             .await
     }
 

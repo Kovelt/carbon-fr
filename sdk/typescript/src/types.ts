@@ -67,12 +67,35 @@ export interface GenerationMix {
   thermique?: number;
 }
 
+/** `GET /v1/intensity/now/all` : dernière mesure de chaque région ayant une donnée
+ *  (national d'abord, puis les 12 régions dans l'ordre de `GET /v1/regions`). */
+export interface IntensityAllResponse {
+  /** Identique au champ `methodology` de chaque entrée (`rte-direct` = national seul). */
+  methodology: string;
+  methodology_version: number;
+  /** Nombre d'entrées de `regions` (1 à 13 ; 0 si aucune donnée). */
+  count: number;
+  regions: IntensityResponse[];
+}
+
+/** Part d'une filière dans la production (`MixResponse.shares`, aussi le contexte de `/v1/price`). */
+export interface MixShare {
+  filiere: string;
+  label: string;
+  /** Part dans la production, dans [0, 1] (somme = 1). */
+  share: number;
+  output_mw: number;
+}
+
 /** `GET /v1/mix`. */
 export interface MixResponse {
   region: string;
   timestamp: string;
   unit: string;
   mix: GenerationMix;
+  /** Parts de production par filière (filières à production nulle omises, pompage/échanges
+   *  exclus, `thermique` agrégé au régional). Absent sur un serveur plus ancien. */
+  shares?: MixShare[];
 }
 
 export interface HistoryPoint {
@@ -385,6 +408,22 @@ export interface MethodologyInfo {
 /** `GET /v1/methodologies`. */
 export interface MethodologiesResponse {
   methodologies: MethodologyInfo[];
+}
+
+/** Une région servie (`RegionsResponse.regions`). */
+export interface RegionInfo {
+  /** Slug stable : la valeur du paramètre `region`. */
+  slug: Region;
+  label: string;
+  /** Code INSEE de la région métropolitaine ; `null` pour `national`. */
+  insee_code: string | null;
+  /** `true` pour la maille nationale. */
+  national: boolean;
+}
+
+/** `GET /v1/regions` : catalogue statique, national puis les 12 régions. */
+export interface RegionsResponse {
+  regions: RegionInfo[];
 }
 
 export interface FactorEntry {

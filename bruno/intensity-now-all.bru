@@ -1,0 +1,22 @@
+meta {
+  name: Intensité now — toutes les régions (acv-ademe)
+  type: http
+  seq: 45
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/now/all?methodology=acv-ademe
+  body: none
+  auth: none
+}
+
+params:query {
+  methodology: acv-ademe
+}
+
+assert {
+  res.status: eq 200
+  res.body.methodology: eq acv-ademe
+  res.body.count: gte 1
+  res.body.regions[0].region: eq national
+}

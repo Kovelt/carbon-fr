@@ -226,17 +226,21 @@ a { color: var(--seq-3); }
   $('snap').textContent = sitesDoc.snapshot;
   const sites = sitesDoc.sites.slice().sort((a, b) => (b.mw || 0) - (a.mw || 0)); // gros dessous
 
-  // ---- intensités régionales (12 appels légers, acv-ademe) ----
+  // ---- intensités régionales : un seul appel (acv-ademe, 13 régions) ----
+  // Le produit est son propre premier client de /v1/intensity/now/all (plan
+  // I8). Garde équivalente aux 12 appels d'avant : en cas d'erreur réseau ou
+  // de réponse non 200, la carte se dégrade en « sans donnée », rien d'autre
+  // ne casse.
   const intensites = {}; // slug -> {value, at}
-  await Promise.all(Object.values(INSEE_SLUG).map(async (slug) => {
-    try {
-      const r = await fetch('/v1/intensity/now?region=' + slug + '&methodology=acv-ademe');
-      if (r.ok) {
-        const j = await r.json();
-        intensites[slug] = { value: j.intensity.value, at: j.timestamp };
+  try {
+    const r = await fetch('/v1/intensity/now/all?methodology=acv-ademe');
+    if (r.ok) {
+      const j = await r.json();
+      for (const m of j.regions) {
+        intensites[m.region] = { value: m.intensity.value, at: m.timestamp };
       }
-    } catch (e) { /* région sans donnée : classe « sans donnée » */ }
-  }));
+    }
+  } catch (e) { /* toutes les régions en « sans donnée » */ }
 
   function classe(v) {
     let i = 0;

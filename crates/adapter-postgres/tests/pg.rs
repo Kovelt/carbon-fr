@@ -516,6 +516,44 @@ async fn upsert_spans_multiple_chunks() {
     assert_eq!(got.len() as i32, n, "relecture complète après commit");
 }
 
+/// `latest_all` (PROD-API-2) : une seule requête, une ligne par région ayant
+/// une donnée, ordre canonique (national puis `Region::METROPOLITAN`) quel que
+/// soit l'ordre d'insertion, dernier point par région, méthodologie isolée
+/// (liste vide, pas d'erreur).
+#[tokio::test]
+async fn latest_all_returns_one_row_per_region_in_canonical_order() {
+    let m = "test-pg-latest-all";
+    let Some(repo) = setup(m).await else { return };
+    let t = OffsetDateTime::UNIX_EPOCH + Duration::days(5000);
+
+    repo.upsert_many(&[
+        measurement_in(Region::Occitanie, m, t, 30.0, Vintage::Tr, None),
+        measurement_in(Region::Bretagne, m, t, 20.0, Vintage::Tr, None),
+        measurement_in(
+            Region::Bretagne,
+            m,
+            t + Duration::minutes(15),
+            22.0,
+            Vintage::Tr,
+            None,
+        ),
+        measurement_in(Region::National, m, t, 40.0, Vintage::Tr, None),
+    ])
+    .await
+    .unwrap();
+
+    let all = repo.latest_all(m).await.unwrap();
+    let regions: Vec<Region> = all.iter().map(|x| x.region).collect();
+    assert_eq!(
+        regions,
+        [Region::National, Region::Bretagne, Region::Occitanie]
+    );
+    assert_eq!(all[1].intensity.value(), 22.0, "dernier point de la région");
+    assert_eq!(all[1].at, t + Duration::minutes(15));
+
+    assert!(repo.latest_all("inexistante").await.unwrap().is_empty());
+}
+
 /// La clé d'unicité inclut la région : même horodatage et même méthodologie sur
 /// deux régions distinctes coexistent sans collision, et `latest`/`range`
 /// filtrent bien par région.

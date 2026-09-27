@@ -1,0 +1,18 @@
+meta {
+  name: Régions — catalogue
+  type: http
+  seq: 46
+}
+
+get {
+  url: {{baseUrl}}/v1/regions
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.regions.length: eq 13
+  res.body.regions[0].slug: eq national
+  res.body.regions[0].national: eq true
+}

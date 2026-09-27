@@ -1,6 +1,6 @@
 {
   "name": "@carbon-fr/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Client TypeScript de l'API carbon-fr — intensité carbone de l'électricité française (gCO₂eq/kWh).",
   "type": "module",
   "main": "./dist/index.js",

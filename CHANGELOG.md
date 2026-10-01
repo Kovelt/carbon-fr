@@ -125,6 +125,17 @@ de retiré ni de modifié.
 - Plan I8 à jour après la v0.9.6 : quota ODRÉ, comblement régional (run en
   prod le 2026-09-26) et resynchronisation des alertes cochés ; mesure du
   backfill régional ajoutée à `deploy/README.md` §5.
+- **Rattrapage de la gouvernance** (DOCS-1, DOCS-2) : `GOUVERNANCE.md` décrit
+  désormais les **8** status checks requis (les 5 d'origine + MSRV, semver,
+  rustdoc + package depuis le 2026-09-24) et l'alerte du scan quotidien, la
+  publication sur crates.io (`release-crates.yml`, `release-rust-sdk.yml`) et
+  npm au tag, et les **cinq** axes de version (addendum ADR-0019 : crates
+  couplées à la version applicative, `carbonfr-sdk` sur son axe) — il
+  affirmait encore « pas crates.io », « quatre axes » et « 5 jobs ».
+  `CONTRIBUTING.md` : `carbonfr-sdk` publiée (0.1.0 → 0.2.0) et couverte par
+  `cargo-semver-checks`, règle du bump *minor* pour un champ public de DTO.
+  `SECURITY.md` : les deux SDK et les crates publiées entrent dans le
+  périmètre et les versions supportées. `CLAUDE.md` du dépôt aligné (8 jobs).
 
 ## [0.9.6] - 2026-09-26
 

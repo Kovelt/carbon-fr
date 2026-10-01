@@ -38,10 +38,12 @@ Si une contribution fait fuiter de l'infrastructure dans le domaine, elle sera r
 Ces trois crates — et elles seules, les autres membres du workspace restent
 `publish = false` — sont préparées pour crates.io ([ADR-0030](docs/adr/0030-politique-publication-crates-io.md),
 [ADR-0031](docs/adr/0031-conception-sdk-rust.md)). `carbonfr-core` et
-`carbonfr-eligibility` y sont publiées depuis I5 ; `carbonfr-sdk` (depuis I6)
-ne l'est **pas encore** — sa 1ʳᵉ publication se fera au tag `rust-sdk-v0.1.0`
-(axe de version propre, addendum ADR-0019) — mais suit déjà les mêmes règles
-de contribution. Toute contribution qui les touche doit respecter ces règles
+`carbonfr-eligibility` y sont publiées depuis le 2026-09-24, à chaque tag
+`vX.Y.Z` (version du workspace, `release-crates.yml`) ; `carbonfr-sdk` y est
+publiée depuis le 2026-09-25 (0.1.0, puis 0.1.1 ; 0.2.0 le 2026-09-27) sur
+son **axe de version propre** — `version` dans `crates/sdk/Cargo.toml`, tag
+`rust-sdk-vX.Y.Z`, `release-rust-sdk.yml` (addendum ADR-0019, ADR-0031
+décision 12). Toute contribution qui les touche doit respecter ces règles
 supplémentaires, vérifiées en CI :
 
 - **MSRV `1.88.0`** (`rust-version` du workspace) : plancher imposé par une
@@ -53,13 +55,18 @@ supplémentaires, vérifiées en CI :
   d'indétermination…) ; laissé exhaustif sur les ensembles finis par
   construction du domaine (méthodologie à N valeurs fixe, topologie figée…).
   Les structs à champs publics n'en reçoivent **jamais** : elles doivent
-  rester constructibles par littéral, y compris pour le futur SDK Rust.
+  rester constructibles par littéral, y compris dans le SDK Rust
+  (`carbonfr-sdk`) — y ajouter un champ public est donc un bump *minor* de la
+  crate, jamais un patch (imposé par `cargo-semver-checks` ; ex. `0.2.0`).
 - **En 0.x, toute rupture d'API publique de `core`/`eligibility`** (retrait ou
   renommage public, ajout de variante sur un enum exhaustif consommé par
   `match`, ajout de champ public à une struct…) **relève la version *minor*
   du workspace dans la même PR** — jamais un patch. `cargo-semver-checks`
   compare l'API à la baseline du dernier tag de release `vX.Y.Z` et échoue
-  sinon : l'outil « assume minor » tant que la version n'a pas bougé.
+  sinon : l'outil « assume minor » tant que la version n'a pas bougé. Même
+  règle pour `carbonfr-sdk`, contre le dernier tag `rust-sdk-v*` et sa propre
+  version. Un ajout **compatible** (méthode de trait à corps par défaut,
+  nouvelle fonction, nouveau type) ne demande aucun bump.
 
 Trois jobs CI dédiés (`.github/workflows/ci.yml`), à garder verts avant toute
 fusion touchant ces trois crates :
@@ -67,7 +74,7 @@ fusion touchant ces trois crates :
 | Job (`name:`) | Vérifie |
 |---|---|
 | `MSRV (Rust 1.88)` | `cargo check` sur les trois crates (`--all-features` pour `carbonfr-sdk`, sans effet sur core/eligibility qui n'ont aucune feature), toolchain épinglée `1.88.0` (pas `stable`) |
-| `semver (crates publiables)` | `cargo-semver-checks` contre le dernier tag `v*` (ADR-0030 §4) — **`carbonfr-sdk` pas encore couvert** : aucun tag `rust-sdk-v*` avant sa 1ʳᵉ publication (ADR-0031 décision 12), à ajouter ensuite (TODO daté dans `ci.yml`) |
+| `semver (crates publiables)` | `cargo-semver-checks` : `carbonfr-core`/`carbonfr-eligibility` contre le dernier tag `v*`, `carbonfr-sdk` contre le dernier tag `rust-sdk-v*` (toutes features), ADR-0030 §4 |
 | `rustdoc + package (crates publiables)` | `cargo doc -D warnings` (liens morts) puis empaquetage (`cargo package`, aucun upload) sur les trois crates, `carbonfr-sdk` avec `--all-features` en doc |
 
 Ces trois checks sont **requis** par le *ruleset* de `main` depuis le

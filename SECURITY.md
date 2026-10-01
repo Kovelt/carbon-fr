@@ -16,7 +16,7 @@ Le canal est privé : seuls les mainteneurs y ont accès, et la divulgation rest
 ### Un bon rapport contient
 
 - le **type** de faille (injection, SSRF, fuite de données, contournement d'authentification…) ;
-- les **composants** touchés (endpoint `/v1/…`, adapter, SDK, image Docker) et la **version** (tag `vX.Y.Z` ou image GHCR) ;
+- les **composants** touchés (endpoint `/v1/…`, adapter, SDK TypeScript ou Rust, crate publiée, image Docker) et la **version** (tag `vX.Y.Z` ou image GHCR ; version npm de `@carbon-fr/sdk` ou crates.io de `carbonfr-sdk`) ;
 - une **reproduction** pas à pas, idéalement une requête `curl` minimale ;
 - l'**impact** que tu anticipes.
 
@@ -38,12 +38,12 @@ Avant la `1.0`, seule la **dernière release** reçoit les correctifs de sécuri
 
 | Version | Supportée |
 | --- | --- |
-| Dernière release (`latest`) | ✅ |
+| Dernière release du service (`latest`) et dernière version publiée de chaque bibliothèque ou SDK (`carbonfr-core`/`carbonfr-eligibility` et `carbonfr-sdk` sur crates.io, `@carbon-fr/sdk` sur npm) | ✅ |
 | Versions antérieures | ❌ |
 
 ## Périmètre
 
-**Dans le périmètre** : le service API (`bin/server`, endpoints `/v1`), les adapters, le SDK officiel [`@carbon-fr/sdk`](sdk/typescript/), l'image Docker publiée.
+**Dans le périmètre** : le service API (`bin/server`, endpoints `/v1`), les adapters, les deux SDK officiels — [`@carbon-fr/sdk`](sdk/typescript/) (TypeScript, npm) et [`carbonfr-sdk`](crates/sdk/) (Rust, crates.io ; client HTTP réel, donc surface réseau : TLS, décodage des réponses, flux SSE) —, les bibliothèques publiées sur crates.io [`carbonfr-core`](crates/core/) et [`carbonfr-eligibility`](crates/eligibility/) (pures, sans IO : le risque y est d'ordre logique, ex. un calcul d'éligibilité faux), et l'image Docker publiée.
 
 **Hors périmètre** : la disponibilité de l'instance hébergée ([carbon-fr-api.kovelt.fr](https://carbon-fr-api.kovelt.fr)), les sources de données amont (RTE/éCO2mix/ODRÉ, ENTSO-E, Open-Meteo), et toute instance auto-hébergée par un tiers. Les rapports de **déni de service** purement volumétriques contre l'instance hébergée ne sont pas recevables.
 

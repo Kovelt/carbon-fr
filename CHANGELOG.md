@@ -17,7 +17,8 @@ compatibles (méthode de port
 `IntensityRepository::latest_all` à corps par défaut, `GetCurrentIntensity::
 execute_all`, `mix_shares` public). Contrat `/v1` : deux routes et deux champs
 ajoutés, une réponse `503` documentée en plus sur `/v1/intensity/stream`, rien
-de retiré ni de modifié.
+de retiré ni de modifié. S'y ajoute une mise à jour de dépendance sur quatre
+advisories RustSec (`rustls` 0.23.46, sans exposition réelle — voir Sécurité).
 
 ### Ajouté
 
@@ -60,6 +61,35 @@ de retiré ni de modifié.
 
 ### Sécurité
 
+- **`rustls` mis à jour sur advisories RustSec** (porte `cargo-deny` de la CI,
+  rouge depuis le 2026-10-14 sur les PR Dependabot #143/#144, puis sur le scan
+  quotidien à partir du 2026-10-15 — issue #145) : `rustls` 0.23.45 →
+  **0.23.46** (publiée le 2026-10-14), qui corrige quatre advisories :
+  RUSTSEC-2026-0346 (`Debug` dérivé de `Tls12ClientSessionValue`/
+  `Tls13ClientSessionValue`, dont la sortie incluait le secret maître TLS 1.2
+  ou la PSK de reprise TLS 1.3 — exposés par un `ClientSessionStore` maison
+  qui la journaliserait), RUSTSEC-2026-0347 (données applicatives tamponnées
+  avant la fin du handshake envoyées au serveur frontal `public_name` après
+  rejet de l'ECH — clients `EchMode::Enable` seulement), RUSTSEC-2026-0348
+  (décompression Brotli des certificats, feature `brotli` non activée par
+  défaut : jusqu'à 1 Gio alloué avant authentification) et RUSTSEC-2026-0349
+  (un `ServerHello` non authentifié empoisonne le groupe d'échange de clés
+  mémorisé par nom de serveur → les connexions suivantes n'offrent plus
+  qu'une part X25519 classique au lieu de l'hybride `X25519MLKEM768`, si le
+  serveur l'accepte sans HelloRetryRequest : perte de la confidentialité
+  post-quantique, sans compromission de clé ni contournement
+  d'authentification). **Exposition réelle de carbon-fr : aucune** —
+  features résolues `ring`/`std`/`tls12` (pas de `brotli`), ni ECH ni
+  `ClientSessionStore` maison, et `ring` seul provider (ADR-0031), qui
+  n'offre que X25519/P-256/P-384 : le chemin du 0349 est atteint (reprise de
+  session active par défaut dans le `reqwest` des adapters
+  ODRÉ/ENTSO-E/météo/webhook et du SDK Rust, et dans `sqlx`), mais sans
+  groupe post-quantique à rétrograder. Montée imposée par la porte CI. Borne
+  basse du workspace relevée à `rustls = "0.23.46"` (`Cargo.toml` racine,
+  dépendance directe depuis la montée `reqwest` 0.13) : plancher de sécurité
+  hérité par la prochaine version publiée de `carbonfr-sdk` (la 0.2.0 sur
+  crates.io exige encore `^0.23.45`). Aucun changement d'API ; seule entrée
+  du lockfile modifiée.
 - **Plafond global de connexions SSE** sur `GET /v1/intensity/stream` : un
   `tokio::sync::Semaphore` (type public `SseLimiter`) limite les abonnements
   simultanés, défaut **300** (`CARBONFR_SSE_MAX_CONNECTIONS`). Au-delà, `503`

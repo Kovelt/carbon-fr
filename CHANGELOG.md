@@ -6,19 +6,33 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.10.0] - 2026-10-19
 
-Deux items I8 du [plan](docs/plan-iterations.md) : les **petites victoires API
+Clôture côté code de l'itération I8 du [plan](docs/plan-iterations.md),
+après la livraison intermédiaire 0.9.6 : les **petites victoires API
 additives** (PROD-API-2/4/5 : `/v1/intensity/now/all`, parts dans `/v1/mix`,
-`/v1/regions`, `region` en enum dans l'OpenAPI) et **plafonner les connexions
-SSE concurrentes + timeout HTTP entrant** (SEC-1, PERF-2, SEC-4). Version
-*patch* du serveur, aucune migration. `carbonfr-core` ne gagne que des ajouts
-compatibles (méthode de port
-`IntensityRepository::latest_all` à corps par défaut, `GetCurrentIntensity::
-execute_all`, `mix_shares` public). Contrat `/v1` : deux routes et deux champs
-ajoutés, une réponse `503` documentée en plus sur `/v1/intensity/stream`, rien
-de retiré ni de modifié. S'y ajoute une mise à jour de dépendance sur quatre
-advisories RustSec (`rustls` 0.23.46, sans exposition réelle — voir Sécurité).
+`/v1/regions`, `region` en enum dans l'OpenAPI), **plafonner les connexions
+SSE concurrentes + timeouts HTTP entrants** (SEC-1, PERF-2, SEC-4), la
+**gouvernance remise à niveau** (DOCS-1, DOCS-2) et `rustls` 0.23.46 sur
+quatre advisories RustSec (sans exposition réelle — voir Sécurité). Version
+*minor* (deux routes nouvelles = fonctionnalité ajoutée, SemVer), aucune
+migration. `carbonfr-core` ne gagne que des ajouts compatibles (méthode de
+port `IntensityRepository::latest_all` à corps par défaut,
+`GetCurrentIntensity::execute_all`, `mix_shares` public), vérifiés par
+`cargo-semver-checks` en CI ; elle est republiée en 0.10.0 avec
+`carbonfr-eligibility`. Contrat `/v1` : deux routes et un champ (`shares`,
+tableau racine de `/v1/mix`) ajoutés, une réponse `503` documentée en plus
+sur `/v1/intensity/stream`, `region` documenté en enum dans l'OpenAPI ;
+aucun comportement existant retiré ni modifié. Les SDK qui consomment ces
+routes (TypeScript 0.3.0, Rust 0.2.0) sont publiés depuis le 2026-09-27 :
+leurs `intensityNowAll()`/`regions()` répondent 404 face à un serveur
+≤ 0.9.6. Au déploiement Kovelt : `CARBONFR_HEADER_READ_TIMEOUT_SECS=120`
+(derrière Traefik, cf. Sécurité) et resynchronisation de
+`deploy/prometheus/alerts.yml` (8 règles, dont les deux règles SSE
+nouvelles) ; l'auto-réparation régionale (`CARBONFR_SELF_HEAL_REGIONAL=1`,
+PERF-3, livrée désactivée en 0.9.6) y est active depuis le 2026-10-01
+(≈ 8 040 lignes régionales relues chaque nuit, quota régional
+28 731/50 000 restants au 19/10).
 
 ### Ajouté
 
@@ -47,17 +61,27 @@ advisories RustSec (`rustls` 0.23.46, sans exposition réelle — voir Sécurit�
   avec la description propre à chaque contexte (défaut national ; filtre du
   flux SSE ; `national` seul sur `/v1/price` et `/v1/price/date`). Nouveau tag
   `régions`. Snapshot régénéré.
-- **SDK TypeScript `@carbon-fr/sdk` 0.3.0** (tag `sdk-v0.3.0` à pousser après
-  merge, publication automatique) : `intensityNowAll()`, `regions()`,
+- **SDK TypeScript `@carbon-fr/sdk` 0.3.0** (tag `sdk-v0.3.0`, publié sur npm
+  le 2026-09-27) : `intensityNowAll()`, `regions()`,
   `MixResponse.shares?` (optionnel : absent face à un serveur plus ancien),
   types `IntensityAllResponse`, `MixShare`, `RegionInfo`, `RegionsResponse`.
-- **SDK Rust `carbonfr-sdk` 0.2.0** (tag `rust-sdk-v0.2.0` à pousser après
-  merge) : `intensity_now_all(IntensityNowAllOptions)`, `regions()`,
-  `MixResponse.shares: Vec<MixShareBody>` (`#[serde(default)]`, vide face à un
-  serveur plus ancien) — champ public ajouté à un DTO = *minor* de la crate
-  (ADR-0030 §3, imposé par `cargo-semver-checks`) ; DTO `IntensityAllResponse`,
-  `MixShareBody`, `RegionInfo`, `RegionsResponse` ; parité 28/28 opérations.
+- **SDK Rust `carbonfr-sdk` 0.2.0** (tag `rust-sdk-v0.2.0`, publié sur
+  crates.io le 2026-09-27) : `intensity_now_all(IntensityNowAllOptions)`,
+  `regions()`, `MixResponse.shares: Vec<MixShareBody>` (`#[serde(default)]`,
+  vide face à un serveur plus ancien) — champ public ajouté à un DTO = *minor*
+  de la crate (ADR-0030 §3, imposé par `cargo-semver-checks`) ; DTO
+  `IntensityAllResponse`, `MixShareBody`, `RegionInfo`, `RegionsResponse` ;
+  parité 28/28 opérations.
 - Collection Bruno : `intensity-now-all`, `regions`, parts dans `mix-national`.
+
+### Modifié
+
+- **Dépendances mises à jour** (groupe mineur Dependabot : #142 du
+  2026-10-07, #144 du 2026-10-16) : `hyper` 1.10.1 → **1.12.0** et
+  `hyper-util` 0.1.20 → **0.1.21** (boucle d'accept `serve_http`, cf.
+  Sécurité), `tokio` 1.53.2, `tokio-util` 0.7.20, `serde_json` 1.0.154,
+  `thiserror` 2.0.21, `rustls-platform-verifier` 0.7.1 ; CI :
+  `actions/setup-node` 7.1.0 (#143).
 
 ### Sécurité
 
@@ -83,7 +107,7 @@ advisories RustSec (`rustls` 0.23.46, sans exposition réelle — voir Sécurit�
   `ClientSessionStore` maison, et `ring` seul provider (ADR-0031), qui
   n'offre que X25519/P-256/P-384 : le chemin du 0349 est atteint (reprise de
   session active par défaut dans le `reqwest` des adapters
-  ODRÉ/ENTSO-E/météo/webhook et du SDK Rust, et dans `sqlx`), mais sans
+  ODRÉ/ENTSO-E/météo/webhook et du SDK Rust), mais sans
   groupe post-quantique à rétrograder. Montée imposée par la porte CI. Borne
   basse du workspace relevée à `rustls = "0.23.46"` (`Cargo.toml` racine,
   dépendance directe depuis la montée `reqwest` 0.13) : plancher de sécurité
@@ -121,8 +145,9 @@ advisories RustSec (`rustls` 0.23.46, sans exposition réelle — voir Sécurit�
   au-dessus de l'authentification/quota, défaut **60 s**
   (`CARBONFR_REQUEST_TIMEOUT_SECS`) = 2 × `CARBONFR_DB_STATEMENT_TIMEOUT_MS`
   (30 000 ms par défaut), pour que Postgres tranche d'abord une requête
-  lente. Au dépassement, sur **toute route** : `503` `unavailable` (sans
-  `Retry-After`), journalisé en `error` par le middleware lui-même (la couche
+  lente. Au dépassement, sur **toute route de l'API** (hors `/metrics`) :
+  `503` `unavailable` (sans `Retry-After`), journalisé en `error` par le
+  middleware lui-même (la couche
   de trace, plus interne, ne voit pas ce 503). ⚠️ Relever `CARBONFR_DB_STATEMENT_TIMEOUT_MS` sans
   relever ce timeout en proportion réintroduit une course. Ne coupe **jamais**
   un flux SSE déjà ouvert (le futur borné se résout à la construction de la
@@ -133,7 +158,7 @@ advisories RustSec (`rustls` 0.23.46, sans exposition réelle — voir Sécurit�
   ne posait **aucun timer** hyper, donc le défaut de 30 s de hyper était
   inactif — aucune borne en prod jusqu'ici. Remplacé par une boucle d'accept
   maison (`serve_http`) sur `hyper::server::conn::http1::Builder`
-  (`hyper` 1.10.1, `hyper-util` 0.1.20, feature `server-graceful`), défaut
+  (`hyper` 1.12.0, `hyper-util` 0.1.21, feature `server-graceful`), défaut
   **30 s** (`CARBONFR_HEADER_READ_TIMEOUT_SECS`), même filet d'arrêt gracieux
   de 8 s qu'avant. ⚠️ Ce délai agit aussi comme **timeout d'inactivité
   keep-alive** entre deux requêtes d'une même connexion (réarmé à chaque
@@ -166,6 +191,11 @@ advisories RustSec (`rustls` 0.23.46, sans exposition réelle — voir Sécurit�
   `cargo-semver-checks`, règle du bump *minor* pour un champ public de DTO.
   `SECURITY.md` : les deux SDK et les crates publiées entrent dans le
   périmètre et les versions supportées. `CLAUDE.md` du dépôt aligné (8 jobs).
+- Release 0.10.0 : gabarit de PR (« CI verte (5/5) » → les 8 status checks
+  requis du ruleset, dérive depuis le 2026-09-24), `docs/ARCHITECTURE.md`
+  (28 opérations `/v1` pour le SDK Rust), `deploy/README.md` §3 (référent
+  des règles de quota), plan I8 resynchronisé (PR mergées, PERF-3 cochée,
+  PROD-4 à rejouer pour les deux règles SSE).
 
 ## [0.9.6] - 2026-09-26
 

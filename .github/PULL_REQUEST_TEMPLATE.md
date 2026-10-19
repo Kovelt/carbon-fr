@@ -20,7 +20,7 @@
 - [ ] Branche à jour avec `main` (rebase) ; un commit = une intention.
 
 <!--
-`main` est protégée (ADR-0027) : pas de push direct ; PR + CI verte (5/5) +
+`main` est protégée (ADR-0027) : pas de push direct ; PR + CI verte (8 status checks requis) +
 branche à jour + conversations résolues obligatoires ; fusion en squash/rebase
 (historique linéaire). La relecture se fait via le diff de la PR.
 -->

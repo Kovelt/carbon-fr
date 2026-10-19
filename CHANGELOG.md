@@ -6,6 +6,15 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### Documentation
+
+- Plan : itération I8 close après le déploiement de la v0.10.0 sur Kovelt le
+  2026-10-19 (mesures du déploiement, PROD-4 rejoué : 8 règles d'alerte) ;
+  nouvel item I9 sur la limite de descripteurs du conteneur (`ulimit -n`
+  soft 1 024 face à `CARBONFR_MAX_CONNECTIONS` 10 000).
+
 ## [0.10.0] - 2026-10-19
 
 Clôture côté code de l'itération I8 du [plan](docs/plan-iterations.md),

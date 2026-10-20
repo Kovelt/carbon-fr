@@ -4,6 +4,7 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use carbonfr_core::application::{
     CarbonAwareScheduler, GetConsumptionIntensity, GetCrossBorderExchanges, GetCurrentIntensity,
     GetElectricityPrice, GetIntensityHistory, GetIntensityStats, GetWeather,
@@ -33,6 +34,7 @@ use crate::dto::{
     WebhookListResponse,
 };
 use crate::error::{ApiError, ProblemDetails, ValidatedJson, ValidatedQuery};
+use crate::export::{ResponseFormat, csv_response, negotiate_format};
 use crate::{AppState, ForecastState};
 use std::convert::Infallible;
 
@@ -140,7 +142,7 @@ fn region_param_national_only() -> utoipa::openapi::schema::Object {
 
 /// Méthodologies servies (ADR-0005/0008/0010) — valide `?methodology=`
 /// symétriquement à la région.
-const KNOWN_METHODOLOGIES: &[&str] = &["rte-direct", "acv-ademe"];
+pub(crate) const KNOWN_METHODOLOGIES: &[&str] = &["rte-direct", "acv-ademe"];
 
 /// Méthodologie demandée (`?methodology=`), ou celle par défaut de l'état. 400 si
 /// la méthodologie demandée est inconnue (audit F30 : sinon elle produit un 404
@@ -510,6 +512,23 @@ where
     Ok(Json(RenewableResponse::build(&model, &forecast)?))
 }
 
+/// Schéma OpenAPI du paramètre `format` de `/v1/intensity/date` (PROD-API-3) :
+/// chaîne à deux valeurs, même mécanisme que [`region_schema`] (la description
+/// est portée par le schéma ; `restore_parameter_descriptions` la remonte au
+/// paramètre). Aucun `default` n'est déclaré : sans `format`, c'est l'en-tête
+/// `Accept` qui départage, et le JSON reste le format par défaut.
+fn history_format_param() -> utoipa::openapi::schema::Object {
+    utoipa::openapi::schema::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::schema::Type::String)
+        .enum_values(Some(["json", "csv"]))
+        .description(Some(
+            "Format de la réponse : `json` ou `csv` (`text/csv`, téléchargé en pièce jointe). \
+             Prime sur l'en-tête `Accept` ; sans `format`, `Accept: text/csv` demande le CSV \
+             et le JSON reste le défaut. Toute autre valeur → 400.",
+        ))
+        .build()
+}
+
 /// Paramètres de `GET /v1/intensity/date`.
 #[derive(Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
@@ -527,6 +546,10 @@ pub(crate) struct HistoryQuery {
     methodology: Option<String>,
     /// Version de la méthode (`acv-ademe` : `2` = consommation, national).
     version: Option<u32>,
+    /// Format de la réponse : `json` (défaut) ou `csv`. Prime sur l'en-tête
+    /// `Accept`. Tout autre texte → 400.
+    #[param(schema_with = history_format_param)]
+    format: Option<String>,
 }
 
 /// Paramètres d'un endpoint de série datée **sans dimension région/méthodologie**
@@ -548,12 +571,40 @@ pub(crate) struct DateRangeQuery {
 
 /// `GET /v1/intensity/date?from=&to=&region=` — série historique sur un
 /// intervalle `[from, to)` (RFC 3339), national par défaut.
+///
+/// **Format** (PROD-API-3) : JSON par défaut. Le CSV s'obtient avec
+/// `?format=csv` ou `Accept: text/csv` ; `format` prime sur `Accept`,
+/// `format=json` force le JSON et toute autre valeur répond `400`. Le CSV est
+/// servi en pièce jointe (`text/csv; charset=utf-8`, avec
+/// `Content-Disposition: attachment; filename="carbon-fr_intensity_<région>_<from>_<to>.csv"`)
+/// et écrit en flux : une ligne d'en-tête
+/// `timestamp,intensity,unit,region,methodology,methodology_version,vintage`,
+/// puis une ligne par mesure (séparateur `,`, fin de ligne `\n`, aucun
+/// guillemet), avec les mêmes valeurs que `data` en JSON. La colonne
+/// `methodology_version` (entier : `acv-ademe` 1 = production, 2 =
+/// consommation ; `rte-direct` = 1) n'existe qu'en CSV et distingue les deux
+/// versions d'`acv-ademe`. Une plage sans mesure donne l'en-tête seul. Le
+/// format pouvant dépendre de `Accept`, la réponse porte `Vary: Accept`.
+///
+/// Les **erreurs** (400, 404, 5xx) restent des Problem Details
+/// (`application/problem+json`), même quand le CSV est demandé. La fenêtre
+/// maximale est inchangée : 366 jours (92 jours en `acv-ademe@2`).
 #[utoipa::path(
     get,
     path = "/v1/intensity/date",
     params(HistoryQuery),
     responses(
-        (status = 200, description = "Série chronologique", body = HistoryResponse),
+        (
+            status = 200,
+            description = "Série chronologique : JSON (défaut) ou CSV (`format=csv` ou `Accept: text/csv`)",
+            content(
+                (HistoryResponse = "application/json"),
+                (
+                    String = "text/csv",
+                    example = json!("timestamp,intensity,unit,region,methodology,methodology_version,vintage\n2024-01-01T00:00:00Z,52,gCO2eq/kWh,national,rte-direct,1,definitive\n2024-01-01T00:15:00Z,51,gCO2eq/kWh,national,rte-direct,1,definitive\n")
+                )
+            )
+        ),
         (status = 400, description = "Paramètre invalide ou fenêtre > 366 jours (92 jours pour acv-ademe@2, série dérivée à la lecture)", body = ProblemDetails, content_type = "application/problem+json"),
     ),
     tag = "intensité"
@@ -561,11 +612,15 @@ pub(crate) struct DateRangeQuery {
 pub(crate) async fn intensity_date<R>(
     State(state): State<AppState<R>>,
     ValidatedQuery(query): ValidatedQuery<HistoryQuery>,
-) -> Result<Json<HistoryResponse>, ApiError>
+    headers: HeaderMap,
+) -> Result<Response, ApiError>
 where
     R: IntensityRepository + CrossBorderRepository + Clone + Send + Sync + 'static,
 {
     let region = resolve_region(&query.region)?;
+    // Format de la réponse (JSON par défaut) : validé avec les autres paramètres,
+    // avant tout accès au repository.
+    let format = negotiate_format(query.format.as_deref(), &headers)?;
 
     let from_raw = query
         .from
@@ -614,13 +669,16 @@ where
             .await?
     };
 
-    Ok(Json(HistoryResponse::new(
-        region.slug(),
-        from,
-        to,
-        &methodology,
-        &measurements,
-    )?))
+    match format {
+        ResponseFormat::Json => {
+            let body = HistoryResponse::new(region.slug(), from, to, &methodology, &measurements)?;
+            // Sans `?format=`, le contenu dépend de `Accept` : `Vary` empêche un
+            // cache partagé (la réponse est `Cache-Control: public`) de servir le
+            // JSON à qui demande le CSV — cf. `csv_response` pour l'autre moitié.
+            Ok(([(axum::http::header::VARY, "Accept")], Json(body)).into_response())
+        }
+        ResponseFormat::Csv => csv_response(region.slug(), &methodology, from, to, measurements),
+    }
 }
 
 /// Paramètres de `GET /v1/intensity/stats`.

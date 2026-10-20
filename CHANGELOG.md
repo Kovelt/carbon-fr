@@ -21,6 +21,26 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `Vary: accept-encoding` posé. Nouvelles crates dans l'arbre : `brotli`,
   `brotli-decompressor`, `alloc-no-stdlib`, `alloc-stdlib` (BSD-3-Clause/MIT,
   `cargo deny` vert). **SemVer : patch.**
+- **Export CSV de l'historique** (PROD-API-3, plan I9) :
+  `GET /v1/intensity/date` répond en CSV avec `?format=csv` ou l'en-tête
+  `Accept: text/csv`. `format` prime sur `Accept`, `format=json` force le
+  JSON, toute autre valeur répond 400 `bad_request`. Réponse 200
+  `text/csv; charset=utf-8` servie en pièce jointe (`Content-Disposition`
+  `attachment; filename="carbon-fr_intensity_<région>_<from>_<to>.csv"`,
+  bornes en UTC compactes), écrite **en flux** par paquets de 256 lignes —
+  le CSV n'est jamais construit en entier —, colonnes
+  `timestamp,intensity,unit,region,methodology,methodology_version,vintage`,
+  séparateur `,`, fin de ligne `\n`, mêmes valeurs que `data` en JSON ;
+  `methodology_version` (entier, propre au CSV) distingue `acv-ademe` 1
+  (production) de 2 (consommation) et vaut 1 pour `rte-direct`. Une plage
+  sans mesure donne l'en-tête seul. Les erreurs (400, 404, 5xx) restent en
+  `application/problem+json` même quand le CSV est demandé. Sans `format` ni
+  `Accept: text/csv`, le JSON est inchangé (aucun changement de schéma) ; les
+  réponses 200 de la route portent désormais `Vary: Accept`. Plafonds
+  inchangés (366 j ; 92 j en `acv-ademe@2`). Un `format` inconnu, jusqu'ici
+  ignoré, est désormais refusé en 400. OpenAPI : second type de contenu
+  `text/csv` sur la réponse 200 et paramètre `format` (enum `json`/`csv`).
+  Requête Bruno ajoutée. **SemVer : patch** (ajout rétro-compatible).
 
 ### Modifié
 

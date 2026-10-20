@@ -423,6 +423,7 @@
           "intensité"
         ],
         "summary": "`GET /v1/intensity/date?from=&to=&region=` — série historique sur un\nintervalle `[from, to)` (RFC 3339), national par défaut.",
+        "description": "**Format** (PROD-API-3) : JSON par défaut. Le CSV s'obtient avec\n`?format=csv` ou `Accept: text/csv` ; `format` prime sur `Accept`,\n`format=json` force le JSON et toute autre valeur répond `400`. Le CSV est\nservi en pièce jointe (`text/csv; charset=utf-8`, avec\n`Content-Disposition: attachment; filename=\"carbon-fr_intensity_<région>_<from>_<to>.csv\"`)\net écrit en flux : une ligne d'en-tête\n`timestamp,intensity,unit,region,methodology,methodology_version,vintage`,\npuis une ligne par mesure (séparateur `,`, fin de ligne `\\n`, aucun\nguillemet), avec les mêmes valeurs que `data` en JSON. La colonne\n`methodology_version` (entier : `acv-ademe` 1 = production, 2 =\nconsommation ; `rte-direct` = 1) n'existe qu'en CSV et distingue les deux\nversions d'`acv-ademe`. Une plage sans mesure donne l'en-tête seul. Le\nformat pouvant dépendre de `Accept`, la réponse porte `Vary: Accept`.\n\nLes **erreurs** (400, 404, 5xx) restent des Problem Details\n(`application/problem+json`), même quand le CSV est demandé. La fenêtre\nmaximale est inchangée : 366 jours (92 jours en `acv-ademe@2`).",
         "operationId": "intensity_date",
         "parameters": [
           {
@@ -487,16 +488,36 @@
               "format": "int32",
               "minimum": 0
             }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Format de la réponse : `json` ou `csv` (`text/csv`, téléchargé en pièce jointe). Prime sur l'en-tête `Accept` ; sans `format`, `Accept: text/csv` demande le CSV et le JSON reste le défaut. Toute autre valeur → 400.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Format de la réponse : `json` ou `csv` (`text/csv`, téléchargé en pièce jointe). Prime sur l'en-tête `Accept` ; sans `format`, `Accept: text/csv` demande le CSV et le JSON reste le défaut. Toute autre valeur → 400.",
+              "enum": [
+                "json",
+                "csv"
+              ]
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "Série chronologique",
+            "description": "Série chronologique : JSON (défaut) ou CSV (`format=csv` ou `Accept: text/csv`)",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HistoryResponse"
                 }
+              },
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n2024-01-01T00:00:00Z,52,gCO2eq/kWh,national,rte-direct,1,definitive\n2024-01-01T00:15:00Z,51,gCO2eq/kWh,national,rte-direct,1,definitive\n"
               }
             }
           },

@@ -50,6 +50,15 @@ curl https://carbon-fr-api.kovelt.fr/v1/intensity/now
 
 Ajoute `?region=<slug>` pour l'une des 12 régions, ou `?methodology=acv-ademe` pour le cycle de vie (cf. [Fonctionnalités](#fonctionnalités)). Les réponses sont compressées à la demande (`Accept-Encoding: gzip` ou `br`, soit `curl --compressed`) — un an d'historique `/v1/intensity/date` passe de 1,6 Mo à moins de 100 Ko ; seul le flux SSE n'est jamais compressé.
 
+📊 **En CSV** — l'historique (`/v1/intensity/date`, fenêtre ≤ 366 jours) s'exporte pour un tableur ou `pandas` : envoie l'en-tête `Accept: text/csv` ou ajoute `?format=csv` (pratique pour les outils qui ne règlent pas les en-têtes). `format` prime sur `Accept` ; sans l'un ni l'autre, ou avec `format=json`, la réponse reste du JSON. La réponse CSV est une pièce jointe `text/csv` écrite en flux — une ligne d'en-tête `timestamp,intensity,unit,region,methodology,methodology_version,vintage` puis une ligne par mesure, mêmes valeurs que le JSON ; `methodology_version` (entier) distingue `acv-ademe` production (`1`) et consommation (`2`), `rte-direct` vaut `1`. Les erreurs restent en `application/problem+json`, même quand le CSV est demandé.
+
+```bash
+curl -H 'Accept: text/csv' 'https://carbon-fr-api.kovelt.fr/v1/intensity/date?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z'
+
+# ou, enregistré sous le nom proposé par le serveur (carbon-fr_intensity_national_20260101T000000Z_20260201T000000Z.csv) :
+curl -OJ 'https://carbon-fr-api.kovelt.fr/v1/intensity/date?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z&format=csv'
+```
+
 🌐 **Dans le navigateur** — explore et essaie tous les endpoints depuis la **Swagger UI** : **[carbon-fr-api.kovelt.fr/docs](https://carbon-fr-api.kovelt.fr/docs)**.
 
 📦 **En TypeScript / JavaScript** — le SDK officiel ([`@carbon-fr/sdk`](sdk/typescript/), zéro dépendance runtime) :
@@ -84,7 +93,7 @@ cargo add carbonfr-core
 | `GET /v1/exchanges/date?from=&to=` | Série historique des échanges transfrontaliers | ✅ |
 | `GET /v1/weather` · `/weather/date` | Météo nationale (vent 100 m + irradiance, Open-Meteo CC-BY) | ✅ |
 | `GET /v1/renewable` | Production renouvelable **estimée** depuis la météo + facteur de charge (ADR-0018) | ✅ |
-| `GET /v1/intensity/date?from=&to=` | Historique sur un intervalle (révisé/consolidé/définitif) | ✅ |
+| `GET /v1/intensity/date?from=&to=` | Historique sur un intervalle (révisé/consolidé/définitif) — JSON, ou **CSV** en flux (`?format=csv` ou `Accept: text/csv`) | ✅ |
 | `GET /v1/intensity/stats?from=&to=[&interval=hour\|day]` | Résumé (moyenne/min/max) + série agrégée | ✅ |
 | `GET /v1/intensity/forecast` | Prévision d'intensité (`climatology@1` ; `acv-ademe@2` via `?methodology=acv-ademe&version=2`) | ✅ |
 | `GET /v1/intensity/greenest-window` | Créneau le plus bas-carbone (+ overlay électrolyseur `?eligibility=rfnbo\|low-carbon`, ADR-0025/0026) | ✅ |

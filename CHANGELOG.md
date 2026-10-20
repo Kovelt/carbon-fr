@@ -148,6 +148,15 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   la carte `/hydrogene` mentionné. Doc du crate `carbonfr-sdk` : parité avec
   les **28** opérations du SDK TypeScript **0.3.0** (27 méthodes REST + SSE),
   au lieu de « 26 … 0.2.0 ».
+- ADR-0033 (accepté le 2026-10-20) : index qualitatif d'intensité `index` (very-low →
+  very-high), cinq bandes absolues à seuils sourcés (20 · 64,8 · 100 ·
+  200 gCO₂eq/kWh : facteurs ADEME, RFNBO 18 gCO₂eq/MJ, taxonomie 100 g,
+  demi-facteur gaz), un seul barème pour toutes les méthodes et régions,
+  catalogue `GET /v1/intensity/index`, carte `/hydrogene` alignée — avec
+  les distributions nationales 2023-2026 et régionales 2025-2026 à l'appui ;
+  les quatre points de la proposition (seuils, libellés, catalogue, carte)
+  retenus tels quels par Morgan le 2026-10-20, implémentation à suivre
+  (plan I9, PROD-API-1).
 
 ## [0.10.0] - 2026-10-19
 

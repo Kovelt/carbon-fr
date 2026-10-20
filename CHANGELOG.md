@@ -33,6 +33,21 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   borné face à un client lent sur ses en-têtes ; la prod Kovelt garde sa
   valeur explicite de 120 s. `.env.example`, `deploy/Caddyfile` (keepalive
   amont) et `deploy/README.md` alignés. **SemVer : patch.**
+- **`/hydrogene` : repli en polling quand le flux SSE est refusé** (plan I9).
+  Au plafond de connexions (`CARBONFR_SSE_MAX_CONNECTIONS`) le serveur répond
+  `503` + `Retry-After` ; un `EventSource` natif passe alors en `CLOSED` et ne
+  reconnecte jamais : la carte restait figée. La page détecte ce cas
+  (`readyState === EventSource.CLOSED`) et interroge
+  `/v1/intensity/now/all?methodology=acv-ademe` toutes les 60 s — un seul
+  appel pour le bandeau national et les couleurs régionales (carte redessinée
+  seulement si une valeur change), indicateur « live » éteint —, retente
+  d'ouvrir le flux toutes les 5 min et arrête le polling dès qu'il s'ouvre
+  (jamais deux timers). Pendant le repli le bandeau affiche le national
+  `acv-ademe` (et non `rte-direct`), ce que dit son infobulle. Une coupure
+  réseau ordinaire (`CONNECTING`) reste gérée par le navigateur seul. Test de
+  présence du mécanisme ; comportement vérifié dans Chromium 155 (plafond
+  atteint puis libéré, coupure simulée, `EventSource` absent).
+  **SemVer : patch.**
 
 ### Documentation
 
@@ -47,6 +62,17 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   2026-10-19 (mesures du déploiement, PROD-4 rejoué : 8 règles d'alerte) ;
   nouvel item I9 sur la limite de descripteurs du conteneur (`ulimit -n`
   soft 1 024 face à `CARBONFR_MAX_CONNECTIONS` 10 000).
+- README : sous-section « Lancer l'API en local » (DX-1, plan I9) —
+  PostgreSQL jetable via `podman`/`docker`, `DATABASE_URL` et
+  `CARBONFR_VISIT_SALT` minimaux, `cargo run -p server`, sondes `curl`,
+  premières données du poller, `backfill`, pas de `.env` chargé
+  automatiquement. Parcours rejoué de bout en bout, PostgreSQL froid compris
+  (le serveur retente sa connexion tant que la base démarre) ; le renvoi de
+  `bruno/README.md`, qui visait une section inexistante, y mène enfin.
+- Bruno : environnement `Production` (`bruno/environments/Production.bru`,
+  `baseUrl: https://carbon-fr-api.kovelt.fr`, DX-5, plan I9), documenté dans
+  `bruno/README.md` (`bru run --env Production`) avec l'avertissement sur la
+  limite de débit anonyme et sur les requêtes qui écrivent (visite, webhooks).
 
 ## [0.10.0] - 2026-10-19
 

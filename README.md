@@ -178,6 +178,33 @@ cargo fmt --all
 
 Le crate `core` se teste **entièrement en mémoire**, avec des _fakes_ implémentant les ports — c'est le bénéfice direct de l'hexagonal (voir [`crates/core/tests/use_cases.rs`](crates/core/tests/use_cases.rs)).
 
+### Lancer l'API en local
+
+Le serveur a besoin d'un PostgreSQL ; un conteneur jetable suffit (`podman` ou `docker`, même syntaxe). Les migrations sont appliquées au démarrage.
+
+```bash
+# 1. PostgreSQL jetable (publié sur localhost seulement ; données perdues avec le conteneur)
+#    Port 5432 déjà pris ? Changer le port hôte (ex. 5433:5432) et DATABASE_URL en conséquence.
+podman run -d --name carbonfr-pg \
+  -e POSTGRES_USER=carbonfr -e POSTGRES_PASSWORD=carbonfr -e POSTGRES_DB=carbonfr \
+  -p 127.0.0.1:5432:5432 docker.io/library/postgres:17-alpine
+
+# 2. L'API et son poller (premier terminal)
+export DATABASE_URL=postgres://carbonfr:carbonfr@localhost:5432/carbonfr
+export CARBONFR_VISIT_SALT=dev        # sel du hachage des IP visiteurs : valeur libre en local
+cargo run -p server
+
+# 3. Deuxième terminal
+curl -s localhost:8080/health/ready        # → ready
+curl -s localhost:8080/v1/intensity/now    # → {"region":"national","timestamp":"…","intensity":{"value":19.0,…},"methodology":"rte-direct",…}
+```
+
+- **Variables** : seule `DATABASE_URL` est requise ; `CARBONFR_VISIT_SALT` (sel du hachage des IP visiteurs) évite l'avertissement « sel par défaut » au démarrage — valeur libre en local, secret à haute entropie en production, obligatoire avec `CARBONFR_TRUST_PROXY=1`. Le serveur ne charge **aucun** fichier `.env` : [`.env.example`](.env.example) est une référence à exporter dans le shell (`set -a; . ./.env; set +a`). Il écoute sur `0.0.0.0:8080` par défaut (`CARBONFR_BIND=127.0.0.1:8080` pour rester local). Inutile d'attendre PostgreSQL : le serveur retente la connexion (10 × 2 s).
+- **Première donnée** : le poller tourne dans le même processus et ingère **dès le démarrage** (≈ 2 s : national, 12 régions, charge, météo), puis toutes les 15 min — avant cela, `/v1/intensity/now` répond `404 no_data`. Il interroge ODRÉ (RTE) et Open-Meteo : l'accès réseau sortant est requis (~1 350 appels ODRÉ par jour si le serveur reste allumé, sur un quota de 50 000/mois par IP — [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §3).
+- **Historique** : le poller ne relit que les dernières heures. `/v1/intensity/date`, `/v1/intensity/stats` et la prévision (qui s'appuie sur ~8 semaines en amont) supposent l'historique, rapatrié par la sous-commande `backfill` (export de masse ODRÉ, jamais l'API paginée) — par exemple un mois, en quelques secondes : `CARBONFR_BACKFILL_FROM=2025-01-01T00:00:00Z CARBONFR_BACKFILL_TO=2025-02-01T00:00:00Z cargo run -p server -- backfill` (sans bornes : tout l'historique depuis 2012). Les autres sous-commandes (`mint-key`, `backtest*`…) et toutes les variables sont décrites dans la docstring de [`bin/server/src/main.rs`](bin/server/src/main.rs), dans [`.env.example`](.env.example) et dans [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+- **Explorer** : Swagger UI sur <http://localhost:8080/docs> (spec : `/v1/openapi.json`), carte sur <http://localhost:8080/hydrogene>, et la collection [Bruno](bruno/README.md) (`bru run --env Local`) pour balayer les endpoints.
+- **Arrêter** : `Ctrl-C` (arrêt gracieux, `SIGTERM` aussi) ; `podman rm -f carbonfr-pg` supprime la base jetable.
+
 ## Déploiement
 
 Image de production via le [`Dockerfile`](Dockerfile) multi-stage (binaire `--release`, runtime Debian slim, utilisateur non-root). Chaque tag git `vX.Y.Z` **publie l'image sur GHCR** (`ghcr.io/kovelt/carbon-fr:X.Y.Z`, publique, ADR-0019) — en prod, épingler une version exacte. En bare-metal, une unité systemd ([`deploy/carbonfr.service`](deploy/carbonfr.service)) avec `Restart=on-failure`. Dans les deux cas, placer l'API **derrière un reverse proxy TLS** ([`deploy/Caddyfile`](deploy/Caddyfile), exemple self-host) et activer `CARBONFR_TRUST_PROXY=1`. L'**instance hébergée** (`carbon-fr-api.kovelt.fr`) tourne comme un service de la stack Kovelt **derrière Traefik** (PostgreSQL dédié) ; détails dans [`deploy/README.md`](deploy/README.md).

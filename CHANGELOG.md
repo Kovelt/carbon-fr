@@ -37,16 +37,16 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   Au plafond de connexions (`CARBONFR_SSE_MAX_CONNECTIONS`) le serveur répond
   `503` + `Retry-After` ; un `EventSource` natif passe alors en `CLOSED` et ne
   reconnecte jamais : la carte restait figée. La page détecte ce cas
-  (`readyState === EventSource.CLOSED`) et interroge
-  `/v1/intensity/now/all?methodology=acv-ademe` toutes les 60 s — un seul
-  appel pour le bandeau national et les couleurs régionales (carte redessinée
-  seulement si une valeur change), indicateur « live » éteint —, retente
+  (`readyState === EventSource.CLOSED`) et, toutes les 60 s, interroge
+  `/v1/intensity/now` (bandeau : le national reste en `rte-direct`, comme
+  avec le flux) et `/v1/intensity/now/all?methodology=acv-ademe` (couleurs
+  régionales ; carte redessinée seulement si une valeur change), indicateur
+  « live » éteint et infobulle « actualisée chaque minute ». Elle retente
   d'ouvrir le flux toutes les 5 min et arrête le polling dès qu'il s'ouvre
-  (jamais deux timers). Pendant le repli le bandeau affiche le national
-  `acv-ademe` (et non `rte-direct`), ce que dit son infobulle. Une coupure
-  réseau ordinaire (`CONNECTING`) reste gérée par le navigateur seul. Test de
-  présence du mécanisme ; comportement vérifié dans Chromium 155 (plafond
-  atteint puis libéré, coupure simulée, `EventSource` absent).
+  (jamais deux timers). Une coupure réseau ordinaire (`CONNECTING`) reste
+  gérée par le navigateur seul. Test de présence du mécanisme ; comportement
+  vérifié dans Chromium 155 (plafond atteint puis libéré, coupure simulée,
+  `EventSource` absent).
   **SemVer : patch.**
 
 ### Documentation

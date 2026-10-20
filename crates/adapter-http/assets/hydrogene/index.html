@@ -230,20 +230,18 @@ a { color: var(--seq-3); }
   // Le produit est son propre premier client de /v1/intensity/now/all (plan
   // I8). Garde équivalente aux 12 appels d'avant : en cas d'erreur réseau ou
   // de réponse non 200, la carte se dégrade en « sans donnée », rien d'autre
-  // ne casse. Le repli polling du bandeau (plus bas) rappelle ce même appel.
+  // ne casse. Le repli polling (plus bas) rappelle ce même appel.
   const intensites = {}; // slug -> {value, at}
-  // Met `intensites` à jour et renvoie l'entrée nationale (acv-ademe) de la
-  // réponse. Renvoie null en cas d'échec, sans toucher aux valeurs déjà connues.
+  // Met `intensites` à jour. En cas d'échec, les valeurs déjà connues restent.
   async function fetchIntensites() {
     try {
       const r = await fetch('/v1/intensity/now/all?methodology=acv-ademe');
-      if (!r.ok) return null;
+      if (!r.ok) return;
       const j = await r.json();
       for (const m of j.regions) {
         intensites[m.region] = { value: m.intensity.value, at: m.timestamp };
       }
-      return j.regions.find((m) => m.region === 'national') || null;
-    } catch (e) { return null; /* toutes les régions en « sans donnée » */ }
+    } catch (e) { /* toutes les régions en « sans donnée » */ }
   }
   await fetchIntensites();
 
@@ -337,24 +335,25 @@ a { color: var(--seq-3); }
   // `error` part et le navigateur ne reconnecte JAMAIS (le script ne voit ni le
   // statut ni Retry-After). Sur une coupure réseau ordinaire, au contraire,
   // readyState reste CONNECTING et le navigateur reconnecte seul. Dans le cas
-  // CLOSED on prend donc le relais : /v1/intensity/now/all chaque minute
-  // (bandeau national + couleurs régionales en un appel) et une nouvelle
-  // tentative d'ouverture du flux toutes les 5 minutes ; dès qu'il s'ouvre
-  // (événement `open`), le polling s'arrête.
+  // CLOSED on prend donc le relais : chaque minute, le national rte-direct du
+  // bandeau (/v1/intensity/now, comme pollNow) et les couleurs régionales
+  // (/v1/intensity/now/all), et toutes les 5 minutes une nouvelle tentative
+  // d'ouverture du flux ; dès qu'il s'ouvre (événement `open`), le polling
+  // s'arrête.
   const POLL_MS = 60 * 1000;
   const SSE_RETRY_MS = 5 * 60 * 1000;
   const LIVE_TITLE = $('live').title; // infobulle nominale : national rte-direct, temps réel
-  const POLL_TITLE = 'Intensité carbone nationale (acv-ademe), actualisée chaque minute — flux temps réel indisponible';
+  const POLL_TITLE = 'Intensité carbone nationale (rte-direct), actualisée chaque minute — flux temps réel indisponible';
   let es = null;         // flux SSE courant
   let pollTimer = null;  // setInterval du polling ; non null = repli actif
   let retryTimer = null; // setInterval de réouverture du flux, actif avec le polling
 
-  // Un seul appel pour tout le repli. Le national vient d'ici en acv-ademe (le
-  // flux nominal porte du rte-direct) : l'infobulle du bandeau le dit.
+  // Deux appels par minute. Le bandeau reste en rte-direct (pollNow), comme avec
+  // le flux : sa valeur ne change pas de méthodologie selon que le flux est là
+  // ou non. Les couleurs régionales (acv-ademe) viennent de /v1/intensity/now/all.
   async function pollAll() {
     const avant = JSON.stringify(intensites);
-    const national = await fetchIntensites();
-    if (national) setLive(national.intensity.value, national.timestamp, false);
+    await Promise.all([pollNow(), fetchIntensites()]);
     // La donnée ne change qu'au cycle du poller (15 min) : on ne redessine la
     // carte que si une valeur a bougé.
     if (JSON.stringify(intensites) !== avant) render(vueId);
@@ -371,7 +370,6 @@ a { color: var(--seq-3); }
     clearInterval(retryTimer);
     pollTimer = retryTimer = null;
     $('live').title = LIVE_TITLE;
-    pollNow(); // le bandeau reprend le national rte-direct sans attendre le prochain événement
   }
   function openStream() {
     if (es) es.close(); // une tentative précédente peut encore être en cours

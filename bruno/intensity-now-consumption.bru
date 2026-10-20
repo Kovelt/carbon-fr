@@ -8,10 +8,11 @@ get {
   url: {{baseUrl}}/v1/intensity/now?methodology=acv-ademe&version=2
   body: none
   auth: none
-  query {
-    methodology: acv-ademe
-    version: 2
-  }
+}
+
+params:query {
+  methodology: acv-ademe
+  version: 2
 }
 
 assert {

@@ -199,3 +199,22 @@ ADR-0022 2026-09-26).
   ~15 min) : option noyau Linux non testable hermétiquement, écartée pour
   l'instant ; à envisager si `carbonfr_sse_connections_active` reste durablement
   au-dessus du nombre de clients réels (permis fantômes visibles).
+
+---
+
+## Addendum 2026-10-20 — reconnexion automatique du SDK TypeScript (I9, DX-2)
+
+Le SDK TypeScript `@carbon-fr/sdk` **0.4.0** (PR #153) reconnecte désormais
+comme le SDK Rust : backoff 1 → 30 s (×2, plafonné, remis au délai initial
+après une connexion réussie, tentatives illimitées), délai d'inactivité de
+45 s réarmé par les keep-alive, rejeu sur 408/429/5xx — donc sur le **503 de
+plafond** décrit ci-dessus, absorbé silencieusement dans le backoff —, échec
+immédiat sur les autres 4xx (écart assumé avec le SDK Rust, qui rejoue tout),
+arrêt propre sur `AbortSignal`, `reconnect: false` pour retrouver le
+comportement 0.3.0. Deux passages ci-dessus sont donc datés : la raison
+« couperait le SDK TypeScript » donnée à « pas de durée de vie maximale » ne
+tient plus (la décision, elle, reste : une durée de vie forcée n'apporterait
+toujours rien) ; et le dernier point des « Comportements clients » décrit la
+0.3.0. La carte `/hydrogene`, cliente `EventSource` native, a reçu son propre
+repli (polling toutes les 60 s + nouvelle tentative d'ouverture du flux toutes
+les 5 min, PR #151).

@@ -21,10 +21,10 @@
 //!
 //! ## Couverture
 //!
-//! **Parité avec les 26 opérations `/v1`** du SDK TypeScript 0.2.0
+//! **Parité avec les 28 opérations `/v1`** du SDK TypeScript 0.3.0
 //! (ADR-0031 décision 8 ; `health`/`health_ready`, d'exploitation, ne sont pas
 //! exposées) : construction du client ([`CarbonFr`]/[`CarbonFrBuilder`]),
-//! erreurs typées ([`CarbonFrError`], RFC 9457), 25 méthodes REST (ex.
+//! erreurs typées ([`CarbonFrError`], RFC 9457), 27 méthodes REST (ex.
 //! [`CarbonFr::intensity_now`], [`CarbonFr::mix`], [`CarbonFr::schedule`],
 //! [`CarbonFr::create_webhook`]…) et le flux SSE `CarbonFr::intensity_stream`
 //! (feature Cargo `stream`). Exemples exécutables dans `examples/` du dépôt.

@@ -8,11 +8,12 @@ get {
   url: {{baseUrl}}/v1/intensity/forecast?methodology=acv-ademe&version=2&horizon_hours=24
   body: none
   auth: none
-  query {
-    methodology: acv-ademe
-    version: 2
-    horizon_hours: 24
-  }
+}
+
+params:query {
+  methodology: acv-ademe
+  version: 2
+  horizon_hours: 24
 }
 
 assert {

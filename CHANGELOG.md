@@ -25,6 +25,21 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   (sans effet sur la CI, qui ne documente que les crates publiées) ; remplacés
   par de simples mentions de code.
 
+### SDK TypeScript
+
+- **Test de parité SDK TS ↔ OpenAPI** (DX-3, plan I10, ADR-0032) :
+  `sdk/typescript/test/parity.test.mjs`, symétrique de
+  `crates/sdk/tests/parity.rs`, lu par le job CI `sdk-typescript` à chaque
+  run — une table `operationId → méthode` vérifiée contre
+  `crates/adapter-http/tests/openapi.snapshot.json` dans les deux sens (29
+  opérations couvertes, `health`/`health_ready` exclues), chaque méthode du
+  client attribuée à une opération ou déclarée utilitaire (`get`, `request`,
+  `buildUrl`, `authHeaders`), et le chemin + la méthode HTTP de chaque méthode
+  REST vérifiés par un `fetch` injecté, sans réseau. Une route ajoutée côté
+  serveur sans méthode SDK, une route renommée ou une méthode mal routée font
+  désormais échouer la CI (la dérive constatée à la sortie de la 0.2.0).
+  Aucun changement du SDK publié.
+
 ## [0.11.0] - 2026-10-20
 
 Clôture côté code de l'itération I9 du [plan](docs/plan-iterations.md) —

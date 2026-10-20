@@ -137,7 +137,7 @@ try {
 
 ## Développement
 
-`npm test` compile le SDK puis lance ses tests (`node:test`, sans dépendance ni réseau : serveur SSE local).
+`npm test` compile le SDK puis lance ses tests (`node:test`, sans dépendance ni réseau : serveur SSE local, `fetch` injecté). `test/parity.test.mjs` vérifie la parité avec l'OpenAPI du serveur (`crates/adapter-http/tests/openapi.snapshot.json`, dans le dépôt) : toute opération `/v1` a sa méthode, et chaque méthode appelle la bonne route — il se saute hors du dépôt.
 
 ## Licence
 

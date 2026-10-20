@@ -43,8 +43,9 @@ bru run --env Production                              # la collection entière :
 ```
 
 > ⚠️ **Prudence : c'est la production, pas un bac à sable.** L'instance
-> hébergée applique la limite de débit anonyme (60 req/min, `429` au-delà —
-> cf. « Tier hébergé » au README racine) : ne pas enchaîner la collection
+> hébergée peut activer la limite de débit anonyme (60 req/min, `429`
+> au-delà — cf. « Tier hébergé » au README racine ; désactivée au 2026-10-20,
+> aucun en-tête `RateLimit-*` servi) : ne pas enchaîner la collection
 > entière. Elle contient aussi des requêtes qui **écrivent** :
 > `visit-record.bru` (« Enregistrer une visite ») incrémente le compteur
 > public de visites, et les `webhook-*.bru` exigent une clé API (`{{apiKey}}`)

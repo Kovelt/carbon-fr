@@ -578,9 +578,12 @@ pub(crate) struct DateRangeQuery {
 /// servi en pièce jointe (`text/csv; charset=utf-8`, avec
 /// `Content-Disposition: attachment; filename="carbon-fr_intensity_<région>_<from>_<to>.csv"`)
 /// et écrit en flux : une ligne d'en-tête
-/// `timestamp,intensity,unit,region,methodology,vintage`, puis une ligne par
-/// mesure (séparateur `,`, fin de ligne `\n`, aucun guillemet), avec les mêmes
-/// valeurs que `data` en JSON. Une plage sans mesure donne l'en-tête seul. Le
+/// `timestamp,intensity,unit,region,methodology,methodology_version,vintage`,
+/// puis une ligne par mesure (séparateur `,`, fin de ligne `\n`, aucun
+/// guillemet), avec les mêmes valeurs que `data` en JSON. La colonne
+/// `methodology_version` (entier : `acv-ademe` 1 = production, 2 =
+/// consommation ; `rte-direct` = 1) n'existe qu'en CSV et distingue les deux
+/// versions d'`acv-ademe`. Une plage sans mesure donne l'en-tête seul. Le
 /// format pouvant dépendre de `Accept`, la réponse porte `Vary: Accept`.
 ///
 /// Les **erreurs** (400, 404, 5xx) restent des Problem Details
@@ -598,7 +601,7 @@ pub(crate) struct DateRangeQuery {
                 (HistoryResponse = "application/json"),
                 (
                     String = "text/csv",
-                    example = json!("timestamp,intensity,unit,region,methodology,vintage\n2024-01-01T00:00:00Z,52,gCO2eq/kWh,national,rte-direct,definitive\n2024-01-01T00:15:00Z,51,gCO2eq/kWh,national,rte-direct,definitive\n")
+                    example = json!("timestamp,intensity,unit,region,methodology,methodology_version,vintage\n2024-01-01T00:00:00Z,52,gCO2eq/kWh,national,rte-direct,1,definitive\n2024-01-01T00:15:00Z,51,gCO2eq/kWh,national,rte-direct,1,definitive\n")
                 )
             )
         ),

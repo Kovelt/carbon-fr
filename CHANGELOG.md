@@ -29,9 +29,11 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `attachment; filename="carbon-fr_intensity_<région>_<from>_<to>.csv"`,
   bornes en UTC compactes), écrite **en flux** par paquets de 256 lignes —
   le CSV n'est jamais construit en entier —, colonnes
-  `timestamp,intensity,unit,region,methodology,vintage`, séparateur `,`, fin
-  de ligne `\n`, mêmes valeurs que `data` en JSON ; une plage sans mesure
-  donne l'en-tête seul. Les erreurs (400, 404, 5xx) restent en
+  `timestamp,intensity,unit,region,methodology,methodology_version,vintage`,
+  séparateur `,`, fin de ligne `\n`, mêmes valeurs que `data` en JSON ;
+  `methodology_version` (entier, propre au CSV) distingue `acv-ademe` 1
+  (production) de 2 (consommation) et vaut 1 pour `rte-direct`. Une plage
+  sans mesure donne l'en-tête seul. Les erreurs (400, 404, 5xx) restent en
   `application/problem+json` même quand le CSV est demandé. Sans `format` ni
   `Accept: text/csv`, le JSON est inchangé (aucun changement de schéma) ; les
   réponses 200 de la route portent désormais `Vary: Accept`. Plafonds

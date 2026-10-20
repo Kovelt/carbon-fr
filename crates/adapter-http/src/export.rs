@@ -24,14 +24,18 @@
 //!   `intensity` : nombre décimal à point en gCO₂eq/kWh, **sans exposant**
 //!   (`Display` d'un `f64` n'en produit jamais), même valeur que le JSON ;
 //!   `unit`, `region`, `methodology` : les champs de tête du JSON, répétés sur
-//!   chaque ligne ; `vintage` : le millésime du point ;
+//!   chaque ligne ; `methodology_version` : la version entière de la
+//!   méthodologie **du point** (le JSON de cette route ne porte que
+//!   l'identifiant) — `acv-ademe` 1 (production) et 2 (consommation) se
+//!   distinguent, `rte-direct` vaut 1 — ; `vintage` : le millésime du point ;
 //! - une plage sans mesure donne l'en-tête seul (le même `200` que le JSON à
 //!   `data` vide).
 //!
 //! **Rien à échapper.** Aucune des valeurs écrites ne peut contenir `,`, `"` ni
 //! retour à la ligne : horodatage RFC 3339, nombre fini, unité constante, slug
-//! de région, identifiant de méthodologie validé contre une liste fermée et code
-//! de millésime sont tous issus d'ensembles fermés ou de formats fixes. Le test
+//! de région, identifiant de méthodologie validé contre une liste fermée,
+//! version entière (un `u32`) et code de millésime sont tous issus d'ensembles
+//! fermés ou de formats fixes. Le test
 //! `csv_fields_never_need_escaping` garde cet invariant : toute valeur future
 //! qui l'enfreindrait doit faire écrire un vrai échappement (RFC 4180) ici, pas
 //! y échapper silencieusement.
@@ -58,8 +62,10 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::dto::{INTENSITY_UNIT, to_rfc3339};
 use crate::error::ApiError;
 
-/// Ligne d'en-tête du CSV : les noms des champs du JSON.
-const HEADER: &str = "timestamp,intensity,unit,region,methodology,vintage\n";
+/// Ligne d'en-tête du CSV : les noms des champs du JSON, plus
+/// `methodology_version` (propre au CSV : le JSON de la route n'a pas de version).
+/// Ordre et noms sont un contrat — les lecteurs positionnels en dépendent.
+const HEADER: &str = "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n";
 
 /// Nombre de lignes de mesure rendues par paquet de flux. Une ligne fait de ~60 à
 /// ~100 octets : un paquet pèse donc de 15 à 26 Kio — assez pour amortir le coût
@@ -270,8 +276,9 @@ fn render_rows(
         // Écrire dans un `String` ne peut pas échouer.
         let _ = writeln!(
             out,
-            "{at},{},{INTENSITY_UNIT},{region},{methodology},{}",
+            "{at},{},{INTENSITY_UNIT},{region},{methodology},{},{}",
             m.intensity.value(),
+            m.methodology.version,
             m.vintage.code()
         );
     }
@@ -435,10 +442,44 @@ mod tests {
             .collect();
         assert_eq!(
             String::from_utf8(text).unwrap(),
-            "timestamp,intensity,unit,region,methodology,vintage\n\
-             1970-01-01T00:00:00Z,20,gCO2eq/kWh,national,rte-direct,definitive\n\
-             1970-01-01T00:15:00Z,38.84702345,gCO2eq/kWh,national,rte-direct,definitive\n"
+            "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n\
+             1970-01-01T00:00:00Z,20,gCO2eq/kWh,national,rte-direct,1,definitive\n\
+             1970-01-01T00:15:00Z,38.84702345,gCO2eq/kWh,national,rte-direct,1,definitive\n"
         );
+    }
+
+    /// `methodology_version` est celle de **chaque point** : `acv-ademe` 1
+    /// (production) et 2 (consommation) se distinguent, `rte-direct` vaut 1.
+    #[tokio::test]
+    async fn methodology_version_comes_from_each_point() {
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let with = |methodology: Methodology, minutes: i64| Measurement {
+            at: t0 + time::Duration::minutes(minutes),
+            methodology,
+            ..measurement(t0, 10.0)
+        };
+        let body = csv_body(
+            "national",
+            "acv-ademe",
+            vec![
+                with(Methodology::rte_direct(), 0),
+                with(Methodology::acv_ademe(), 15),
+                with(Methodology::acv_ademe_consumption(), 30),
+            ],
+        )
+        .unwrap();
+        let text: Vec<u8> = chunks_of(body)
+            .await
+            .into_iter()
+            .flat_map(|chunk| chunk.unwrap())
+            .collect();
+        let text = String::from_utf8(text).unwrap();
+        let versions: Vec<&str> = text
+            .lines()
+            .skip(1)
+            .map(|line| line.split(',').nth(5).unwrap())
+            .collect();
+        assert_eq!(versions, ["1", "1", "2"]);
     }
 
     /// Plage vide : l'en-tête seul, en un seul paquet.
@@ -539,8 +580,25 @@ mod tests {
             assert!(!needs_escaping(methodology), "{methodology}");
         }
         assert!(!needs_escaping(INTENSITY_UNIT));
-        // L'en-tête : 6 colonnes, une seule ligne, pas de guillemets.
-        assert_eq!(HEADER.trim_end().split(',').count(), 6);
+        // La version de méthodologie est un entier : que des chiffres.
+        for version in [0, 1, 2, u32::MAX] {
+            let text = version.to_string();
+            assert!(text.chars().all(|c| c.is_ascii_digit()), "{text}");
+        }
+        // L'en-tête : les 7 colonnes du contrat, dans l'ordre, sur une seule
+        // ligne, sans guillemets.
+        assert_eq!(
+            HEADER.trim_end().split(',').collect::<Vec<_>>(),
+            [
+                "timestamp",
+                "intensity",
+                "unit",
+                "region",
+                "methodology",
+                "methodology_version",
+                "vintage"
+            ]
+        );
         assert_eq!(HEADER.matches('\n').count(), 1);
         assert!(HEADER.ends_with('\n') && !HEADER.contains(['"', '\r']));
         // Le nombre écrit est toujours une notation décimale simple.

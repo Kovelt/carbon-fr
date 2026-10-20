@@ -1470,10 +1470,10 @@ const HISTORY_URI: &str = "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-
 
 /// Le CSV exact attendu pour [`hourly_series`] sur [`HISTORY_URI`] : l'en-tête
 /// puis une ligne par mesure.
-const HISTORY_CSV: &str = "timestamp,intensity,unit,region,methodology,vintage\n\
-    1970-01-01T00:00:00Z,20,gCO2eq/kWh,national,rte-direct,definitive\n\
-    1970-01-01T01:00:00Z,21,gCO2eq/kWh,national,rte-direct,definitive\n\
-    1970-01-01T02:00:00Z,22,gCO2eq/kWh,national,rte-direct,definitive\n";
+const HISTORY_CSV: &str = "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n\
+    1970-01-01T00:00:00Z,20,gCO2eq/kWh,national,rte-direct,1,definitive\n\
+    1970-01-01T01:00:00Z,21,gCO2eq/kWh,national,rte-direct,1,definitive\n\
+    1970-01-01T02:00:00Z,22,gCO2eq/kWh,national,rte-direct,1,definitive\n";
 
 /// En-tête de requête `Accept` optionnel, au format attendu par [`get_with`].
 fn accept_header(accept: Option<&str>) -> Vec<(&str, &str)> {
@@ -1664,8 +1664,8 @@ async fn intensity_date_csv_headers() {
     assert_eq!(header_of(&response, "cache-control"), "public, max-age=60");
     assert_eq!(
         text_body(response).await,
-        "timestamp,intensity,unit,region,methodology,vintage\n\
-         1970-01-01T00:00:00Z,30,gCO2eq/kWh,bretagne,acv-ademe,definitive\n"
+        "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n\
+         1970-01-01T00:00:00Z,30,gCO2eq/kWh,bretagne,acv-ademe,1,definitive\n"
     );
 }
 
@@ -1709,8 +1709,9 @@ fn csv_rows(csv: &str) -> Vec<Vec<&str>> {
 /// Demande la même série en JSON puis en CSV et vérifie que les deux disent
 /// exactement la même chose : horodatages (même texte), intensités (même
 /// `f64`), millésimes, et les champs de tête du JSON répétés sur chaque ligne.
-/// Renvoie le nombre de lignes.
-async fn assert_csv_matches_json(app: axum::Router, uri: &str) -> usize {
+/// `methodology_version`, propre au CSV (le JSON de la route n'a que
+/// l'identifiant), est comparée à `version`. Renvoie le nombre de lignes.
+async fn assert_csv_matches_json(app: axum::Router, uri: &str, version: &str) -> usize {
     let json = json_body(get(app.clone(), uri).await).await;
     let response = get_with(app, uri, &[("accept", "text/csv")]).await;
     assert_eq!(response.status(), StatusCode::OK);
@@ -1718,7 +1719,7 @@ async fn assert_csv_matches_json(app: axum::Router, uri: &str) -> usize {
 
     assert_eq!(
         csv.lines().next(),
-        Some("timestamp,intensity,unit,region,methodology,vintage")
+        Some("timestamp,intensity,unit,region,methodology,methodology_version,vintage")
     );
     assert!(csv.ends_with('\n'));
     let rows = csv_rows(&csv);
@@ -1726,7 +1727,7 @@ async fn assert_csv_matches_json(app: axum::Router, uri: &str) -> usize {
     assert_eq!(rows.len(), data.len());
     assert_eq!(rows.len() as u64, json["count"].as_u64().unwrap());
     for (row, point) in rows.iter().zip(data) {
-        assert_eq!(row.len(), 6, "{row:?}");
+        assert_eq!(row.len(), 7, "{row:?}");
         assert_eq!(row[0], point["timestamp"].as_str().unwrap());
         assert_eq!(
             row[1].parse::<f64>().unwrap(),
@@ -1735,7 +1736,8 @@ async fn assert_csv_matches_json(app: axum::Router, uri: &str) -> usize {
         assert_eq!(row[2], json["unit"].as_str().unwrap());
         assert_eq!(row[3], json["region"].as_str().unwrap());
         assert_eq!(row[4], json["methodology"].as_str().unwrap());
-        assert_eq!(row[5], point["vintage"].as_str().unwrap());
+        assert_eq!(row[5], version, "{row:?}");
+        assert_eq!(row[6], point["vintage"].as_str().unwrap());
     }
     rows.len()
 }
@@ -1768,21 +1770,24 @@ async fn intensity_date_csv_carries_the_same_values_as_json() {
         app_with_series(series),
         "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T02:00:00Z\
          &region=bretagne&methodology=acv-ademe",
+        "1",
     )
     .await;
     assert_eq!(rows, 5);
 }
 
 /// Le chemin `acv-ademe@2` (consommation, série calculée à la lecture) sort
-/// aussi en CSV, avec les valeurs du JSON.
+/// aussi en CSV, avec les valeurs du JSON ; `methodology_version` distingue
+/// `acv-ademe@2` (`2`) de `acv-ademe@1` (`1`), qui portent le même
+/// identifiant — ce que le JSON de la route ne permet pas.
 #[tokio::test]
 async fn intensity_date_consumption_v2_csv() {
     let uri = "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T05:00:00Z\
                &methodology=acv-ademe&version=2";
     let app = build(consumption_history_repo(3));
-    assert_eq!(assert_csv_matches_json(app.clone(), uri).await, 3);
+    assert_eq!(assert_csv_matches_json(app.clone(), uri, "2").await, 3);
 
-    let response = get_with(app, uri, &[("accept", "text/csv")]).await;
+    let response = get_with(app.clone(), uri, &[("accept", "text/csv")]).await;
     assert_eq!(
         header_of(&response, "content-type"),
         "text/csv; charset=utf-8"
@@ -1790,8 +1795,21 @@ async fn intensity_date_consumption_v2_csv() {
     for row in csv_rows(&text_body(response).await) {
         assert_eq!(row[3], "national");
         assert_eq!(row[4], "acv-ademe");
+        assert_eq!(row[5], "2");
         // Import charbon → au-dessus de la production seule (~12,56), comme en JSON.
         assert!(row[1].parse::<f64>().unwrap() > 12.56, "{row:?}");
+    }
+
+    // Même identifiant sans `version` : `acv-ademe@1`, la série stockée (12 g),
+    // en version 1.
+    let v1_uri = "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T05:00:00Z\
+                  &methodology=acv-ademe";
+    assert_eq!(assert_csv_matches_json(app.clone(), v1_uri, "1").await, 3);
+    let response = get_with(app, v1_uri, &[("accept", "text/csv")]).await;
+    for row in csv_rows(&text_body(response).await) {
+        assert_eq!(row[4], "acv-ademe");
+        assert_eq!(row[5], "1");
+        assert_eq!(row[1], "12", "{row:?}");
     }
 }
 
@@ -1802,7 +1820,7 @@ async fn intensity_date_csv_of_an_empty_range_is_header_only() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         text_body(response).await,
-        "timestamp,intensity,unit,region,methodology,vintage\n"
+        "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n"
     );
 }
 
@@ -1918,7 +1936,7 @@ async fn intensity_date_csv_streams_a_full_year_in_bounded_chunks() {
     }
     assert_eq!(
         first_line.as_deref(),
-        Some(&b"timestamp,intensity,unit,region,methodology,vintage"[..])
+        Some(&b"timestamp,intensity,unit,region,methodology,methodology_version,vintage"[..])
     );
     assert_eq!(lines, 1 + n);
     assert!(chunks > 100, "corps servi en {chunks} paquet(s) seulement");

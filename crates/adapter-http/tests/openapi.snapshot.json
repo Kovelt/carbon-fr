@@ -423,7 +423,7 @@
           "intensité"
         ],
         "summary": "`GET /v1/intensity/date?from=&to=&region=` — série historique sur un\nintervalle `[from, to)` (RFC 3339), national par défaut.",
-        "description": "**Format** (PROD-API-3) : JSON par défaut. Le CSV s'obtient avec\n`?format=csv` ou `Accept: text/csv` ; `format` prime sur `Accept`,\n`format=json` force le JSON et toute autre valeur répond `400`. Le CSV est\nservi en pièce jointe (`text/csv; charset=utf-8`, avec\n`Content-Disposition: attachment; filename=\"carbon-fr_intensity_<région>_<from>_<to>.csv\"`)\net écrit en flux : une ligne d'en-tête\n`timestamp,intensity,unit,region,methodology,vintage`, puis une ligne par\nmesure (séparateur `,`, fin de ligne `\\n`, aucun guillemet), avec les mêmes\nvaleurs que `data` en JSON. Une plage sans mesure donne l'en-tête seul. Le\nformat pouvant dépendre de `Accept`, la réponse porte `Vary: Accept`.\n\nLes **erreurs** (400, 404, 5xx) restent des Problem Details\n(`application/problem+json`), même quand le CSV est demandé. La fenêtre\nmaximale est inchangée : 366 jours (92 jours en `acv-ademe@2`).",
+        "description": "**Format** (PROD-API-3) : JSON par défaut. Le CSV s'obtient avec\n`?format=csv` ou `Accept: text/csv` ; `format` prime sur `Accept`,\n`format=json` force le JSON et toute autre valeur répond `400`. Le CSV est\nservi en pièce jointe (`text/csv; charset=utf-8`, avec\n`Content-Disposition: attachment; filename=\"carbon-fr_intensity_<région>_<from>_<to>.csv\"`)\net écrit en flux : une ligne d'en-tête\n`timestamp,intensity,unit,region,methodology,methodology_version,vintage`,\npuis une ligne par mesure (séparateur `,`, fin de ligne `\\n`, aucun\nguillemet), avec les mêmes valeurs que `data` en JSON. La colonne\n`methodology_version` (entier : `acv-ademe` 1 = production, 2 =\nconsommation ; `rte-direct` = 1) n'existe qu'en CSV et distingue les deux\nversions d'`acv-ademe`. Une plage sans mesure donne l'en-tête seul. Le\nformat pouvant dépendre de `Accept`, la réponse porte `Vary: Accept`.\n\nLes **erreurs** (400, 404, 5xx) restent des Problem Details\n(`application/problem+json`), même quand le CSV est demandé. La fenêtre\nmaximale est inchangée : 366 jours (92 jours en `acv-ademe@2`).",
         "operationId": "intensity_date",
         "parameters": [
           {
@@ -517,7 +517,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "example": "timestamp,intensity,unit,region,methodology,vintage\n2024-01-01T00:00:00Z,52,gCO2eq/kWh,national,rte-direct,definitive\n2024-01-01T00:15:00Z,51,gCO2eq/kWh,national,rte-direct,definitive\n"
+                "example": "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n2024-01-01T00:00:00Z,52,gCO2eq/kWh,national,rte-direct,1,definitive\n2024-01-01T00:15:00Z,51,gCO2eq/kWh,national,rte-direct,1,definitive\n"
               }
             }
           },

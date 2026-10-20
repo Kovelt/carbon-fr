@@ -8,6 +8,20 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté
+
+- **Compression HTTP des réponses** (PERF-1, plan I9) : gzip ou brotli selon
+  `Accept-Encoding`, par `tower_http::compression::CompressionLayer` posée au
+  plus près des handlers, niveau explicite 4 (le défaut brotli, qualité 11,
+  coûte plusieurs secondes par Mo). Mesure de prod du 2026-09-26 :
+  `/v1/intensity/date` sur un an = 1,6 Mo en clair, ÷22 en gzip, et ni
+  Traefik ni l'API ne compressaient. Jamais appliquée au flux SSE
+  `/v1/intensity/stream` (`text/event-stream` exclu par le prédicat, test de
+  bout en bout sur la première trame) ni aux corps < 32 octets ;
+  `Vary: accept-encoding` posé. Nouvelles crates dans l'arbre : `brotli`,
+  `brotli-decompressor`, `alloc-no-stdlib`, `alloc-stdlib` (BSD-3-Clause/MIT,
+  `cargo deny` vert). **SemVer : patch.**
+
 ### Modifié
 
 - Défaut de `CARBONFR_HEADER_READ_TIMEOUT_SECS` relevé de 30 s à **180 s**

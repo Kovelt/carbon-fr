@@ -121,7 +121,10 @@ tokio-util = "0.7"
 # Combinateur `take_until` (clôture des flux SSE à l'arrêt). Déjà dans l'arbre
 # via axum/hyper ; sans features par défaut (calcul pur, pas d'IO).
 futures-util = { version = "0.3", default-features = false }
-tower-http = { version = "0.7.0", features = ["trace", "cors"] }
+# `compression-gzip`/`compression-br` (PERF-1, plan I9) : compression des
+# réponses selon `Accept-Encoding` ; tirent `async-compression` (déjà dans
+# l'arbre via reqwest) et `brotli` (BSD-3-Clause/MIT, nouvelle crate).
+tower-http = { version = "0.7.0", features = ["trace", "cors", "compression-gzip", "compression-br"] }
 # Boucle d'accept HTTP maison de `bin/server` (SEC-4, plan I8) : `axum::serve`
 # ne pose aucun timer hyper, donc son `header_read_timeout` par défaut est
 # ignoré — on pilote `hyper::server::conn::http1` directement. Déjà transitives

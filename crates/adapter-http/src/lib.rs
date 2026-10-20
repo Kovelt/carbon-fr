@@ -654,6 +654,25 @@ where
         // comme une réponse normale (sinon un client navigateur ne peut pas lire le
         // corps du 404). Cf. `fallback_not_found` (audit F16).
         .fallback(fallback_not_found)
+        // Compression des réponses (PERF-1, plan I9) : gzip ou brotli selon
+        // `Accept-Encoding` — mesuré en prod le 2026-09-26, `/v1/intensity/date`
+        // sur un an pesait 1,6 Mo en clair (÷22 en gzip) et ni Traefik ni
+        // l'API ne compressaient. Couche la plus INTERNE : elle n'habille que
+        // les réponses des handlers et du 404 de repli ; celles des couches
+        // externes (503 de délai, 401/429 du tier hébergé, préflights) sont
+        // minuscules. Exclusions du prédicat par défaut de tower-http : corps
+        // < 32 octets, images, gRPC et surtout `text/event-stream` — le flux
+        // SSE `/v1/intensity/stream` n'est JAMAIS compressé (un encodeur
+        // tamponnerait les événements : le live arriverait en retard, ou
+        // jamais) ; test `stream_is_never_compressed`. `Vary: accept-encoding`
+        // est posé par la couche. Niveau explicite `Precise(4)` : le défaut
+        // brotli est la qualité 11 (plusieurs secondes par Mo, hors de
+        // question pour une API) ; 4 reste rapide pour les deux codecs et
+        // proche de gzip en taille.
+        .layer(
+            tower_http::compression::CompressionLayer::new()
+                .quality(tower_http::CompressionLevel::Precise(4)),
+        )
         // Limite de corps serrée : nos seuls POST (webhook, visite) sont de petits
         // JSON. 16 Kio plafonne un corps abusif bien sous le défaut axum (2 Mio).
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))

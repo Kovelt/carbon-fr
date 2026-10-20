@@ -39,3 +39,7 @@ tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time
 async-trait = { workspace = true }
 serde_json = { workspace = true }
 tower = { version = "0.5.3", features = ["util"] }
+# Décodage des réponses compressées dans les tests (PERF-1) — les deux codecs
+# sont déjà dans l'arbre via `tower-http` (features `compression-*`).
+flate2 = "1"
+brotli = "8"

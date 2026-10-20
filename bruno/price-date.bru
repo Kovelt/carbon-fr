@@ -8,10 +8,11 @@ get {
   url: {{baseUrl}}/v1/price/date?from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z
   body: none
   auth: none
-  query {
-    from: 2026-01-01T00:00:00Z
-    to: 2026-01-02T00:00:00Z
-  }
+}
+
+params:query {
+  from: 2026-01-01T00:00:00Z
+  to: 2026-01-02T00:00:00Z
 }
 
 assert {

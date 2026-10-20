@@ -8,9 +8,10 @@ get {
   url: {{baseUrl}}/v1/factors?methodology=acv-ademe
   body: none
   auth: none
-  query {
-    methodology: acv-ademe
-  }
+}
+
+params:query {
+  methodology: acv-ademe
 }
 
 assert {

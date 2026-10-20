@@ -69,6 +69,16 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `EventSource` absent).
   **SemVer : patch.**
 
+### Corrigé
+
+- Collection Bruno : 10 requêtes sur 46 (`schedule`, `schedule-slots`,
+  `intensity-below`, `factors-acv-ademe`, `price-date`, les trois
+  `*-consumption`, `error-factors-rte-direct`,
+  `error-cost-reference-source`) imbriquaient un bloc `query { }` dans
+  `get { }` — syntaxe invalide, ignorée par le Bruno CLI récent (« Skipping
+  invalid file ») : réécrites en bloc `params:query { }` séparé, comme les
+  36 autres.
+
 ### SDK TypeScript
 
 - **`@carbon-fr/sdk` 0.4.0** (DX-2, publication npm par le tag `sdk-v0.4.0`
@@ -102,6 +112,12 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   arrêt, reconnexion désactivée, options. `npm test` (build puis
   `node --test`) ; nouvelle étape « Tests (node:test) » du job CI du SDK.
 
+### CI
+
+- `release-sdk.yml` (publication npm sur tag `sdk-v*`) : les tests
+  `node:test` du SDK TypeScript (0.4.0) tournent avant `npm publish`, même
+  commande que le job CI.
+
 ### Documentation
 
 - Limite de descripteurs de fichiers (constat du déploiement du 2026-10-19) :
@@ -126,6 +142,12 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `baseUrl: https://carbon-fr-api.kovelt.fr`, DX-5, plan I9), documenté dans
   `bruno/README.md` (`bru run --env Production`) avec l'avertissement sur la
   limite de débit anonyme et sur les requêtes qui écrivent (visite, webhooks).
+- ADR-0014, addendum 2026-10-20 : le SDK TypeScript 0.4.0 reconnecte (DX-2),
+  ce qui date la raison « couperait le SDK TS » donnée à « pas de durée de
+  vie maximale » et le dernier point des « Comportements clients » ; repli de
+  la carte `/hydrogene` mentionné. Doc du crate `carbonfr-sdk` : parité avec
+  les **28** opérations du SDK TypeScript **0.3.0** (27 méthodes REST + SSE),
+  au lieu de « 26 … 0.2.0 ».
 
 ## [0.10.0] - 2026-10-19
 

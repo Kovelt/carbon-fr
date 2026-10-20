@@ -8,10 +8,11 @@ get {
   url: {{baseUrl}}/v1/intensity/below?threshold=50&horizon_hours=24
   body: none
   auth: none
-  query {
-    threshold: 50
-    horizon_hours: 24
-  }
+}
+
+params:query {
+  threshold: 50
+  horizon_hours: 24
 }
 
 assert {

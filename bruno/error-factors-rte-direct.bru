@@ -8,9 +8,10 @@ get {
   url: {{baseUrl}}/v1/factors?methodology=rte-direct
   body: none
   auth: none
-  query {
-    methodology: rte-direct
-  }
+}
+
+params:query {
+  methodology: rte-direct
 }
 
 assert {

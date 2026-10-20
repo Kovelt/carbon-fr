@@ -8,9 +8,10 @@ get {
   url: {{baseUrl}}/v1/cost-reference?source=lazard
   body: none
   auth: none
-  query {
-    source: lazard
-  }
+}
+
+params:query {
+  source: lazard
 }
 
 assert {

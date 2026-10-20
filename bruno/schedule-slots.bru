@@ -8,10 +8,11 @@ get {
   url: {{baseUrl}}/v1/schedule/slots?count=4&horizon_hours=24
   body: none
   auth: none
-  query {
-    count: 4
-    horizon_hours: 24
-  }
+}
+
+params:query {
+  count: 4
+  horizon_hours: 24
 }
 
 assert {

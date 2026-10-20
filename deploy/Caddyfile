@@ -7,6 +7,9 @@
 # Remplacer le domaine. Lancer : `caddy run --config deploy/Caddyfile`.
 
 carbon.example.fr {
+	# L'API compresse elle-même ses réponses (gzip/brotli selon Accept-Encoding,
+	# flux SSE exclu) : Caddy ne ré-encode jamais un corps déjà encodé. `encode`
+	# ne sert plus qu'aux rares clients n'acceptant que zstd.
 	encode zstd gzip
 
 	# En-têtes de sécurité (defense-in-depth ; l'API ne les pose pas elle-même).

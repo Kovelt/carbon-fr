@@ -48,7 +48,7 @@ curl https://carbon-fr-api.kovelt.fr/v1/intensity/now
 }
 ```
 
-Ajoute `?region=<slug>` pour l'une des 12 régions, ou `?methodology=acv-ademe` pour le cycle de vie (cf. [Fonctionnalités](#fonctionnalités)).
+Ajoute `?region=<slug>` pour l'une des 12 régions, ou `?methodology=acv-ademe` pour le cycle de vie (cf. [Fonctionnalités](#fonctionnalités)). Les réponses sont compressées à la demande (`Accept-Encoding: gzip` ou `br`, soit `curl --compressed`) — un an d'historique `/v1/intensity/date` passe de 1,6 Mo à moins de 100 Ko ; seul le flux SSE n'est jamais compressé.
 
 🌐 **Dans le navigateur** — explore et essaie tous les endpoints depuis la **Swagger UI** : **[carbon-fr-api.kovelt.fr/docs](https://carbon-fr-api.kovelt.fr/docs)**.
 

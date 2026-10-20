@@ -3245,3 +3245,127 @@ async fn factors_version_out_of_range_is_400() {
         );
     }
 }
+
+// ─── Compression HTTP (PERF-1, plan I9) ─────────────────────────────────────
+
+async fn get_encoded(app: axum::Router, uri: &str, encoding: &str) -> axum::response::Response {
+    app.oneshot(
+        Request::get(uri)
+            .header("accept-encoding", encoding)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+}
+
+fn header<'a>(response: &'a axum::response::Response, name: &str) -> Option<&'a str> {
+    response.headers().get(name).and_then(|v| v.to_str().ok())
+}
+
+fn three_points() -> Vec<Measurement> {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    (0..3)
+        .map(|i| point(t0 + Duration::hours(i), 20.0 + i as f64))
+        .collect()
+}
+
+const HISTORY_URI: &str = "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T03:00:00Z";
+
+/// `Accept-Encoding: gzip` → corps gzip, `Vary` posé, contenu identique au
+/// clair une fois décodé.
+#[tokio::test]
+async fn history_is_gzipped_when_the_client_accepts_it() {
+    let app = app_with_series(three_points());
+    let plain = get(app.clone(), HISTORY_URI).await;
+    assert_eq!(plain.status(), StatusCode::OK);
+    assert!(header(&plain, "content-encoding").is_none());
+    let plain = to_bytes(plain.into_body(), usize::MAX).await.unwrap();
+
+    let response = get_encoded(app, HISTORY_URI, "gzip").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(header(&response, "content-encoding"), Some("gzip"));
+    assert!(
+        header(&response, "vary")
+            .unwrap_or("")
+            .to_ascii_lowercase()
+            .contains("accept-encoding"),
+        "vary = {:?}",
+        header(&response, "vary")
+    );
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert!(
+        body.len() < plain.len(),
+        "{} >= {}",
+        body.len(),
+        plain.len()
+    );
+    let mut decoded = Vec::new();
+    std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(&body[..]), &mut decoded).unwrap();
+    assert_eq!(decoded, plain);
+}
+
+/// Brotli est servi aussi (`Accept-Encoding: br`), au niveau explicite du
+/// routeur — jamais la qualité 11 par défaut du codec.
+#[tokio::test]
+async fn history_is_brotli_compressed_when_preferred() {
+    let app = app_with_series(three_points());
+    let plain = to_bytes(get(app.clone(), HISTORY_URI).await.into_body(), usize::MAX)
+        .await
+        .unwrap();
+
+    let response = get_encoded(app, HISTORY_URI, "br").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(header(&response, "content-encoding"), Some("br"));
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let mut decoded = Vec::new();
+    std::io::Read::read_to_end(
+        &mut brotli::Decompressor::new(&body[..], 4096),
+        &mut decoded,
+    )
+    .unwrap();
+    assert_eq!(decoded, plain);
+}
+
+/// Le flux SSE n'est JAMAIS compressé, même si le client l'accepte : un
+/// encodeur tamponnerait les événements et le live arriverait en retard ou
+/// jamais. Vérifié de bout en bout : en-tête absent ET première trame en clair.
+#[tokio::test]
+async fn stream_is_never_compressed() {
+    use tokio_stream::StreamExt;
+
+    let (app, _limiter, updates) =
+        app_with_limits(FakeRepo::default(), 10, std::time::Duration::from_secs(5));
+    let response = get_encoded(app, "/v1/intensity/stream", "gzip, br").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(header(&response, "content-encoding").is_none());
+    assert!(
+        header(&response, "content-type")
+            .unwrap_or("")
+            .starts_with("text/event-stream")
+    );
+
+    updates
+        .send(carbonfr_core::domain::IntensityUpdate::from_measurement(
+            &national_measurement(),
+        ))
+        .unwrap();
+    let mut data = response.into_body().into_data_stream();
+    let chunk = tokio::time::timeout(std::time::Duration::from_secs(2), data.next())
+        .await
+        .expect("le flux SSE doit émettre sans attendre un tampon de compression")
+        .expect("un événement attendu")
+        .unwrap();
+    let text = String::from_utf8_lossy(&chunk);
+    assert!(text.contains("event: intensity"), "{text}");
+}
+
+/// Sous 32 octets (prédicat par défaut), pas d'encodage : `/health` reste « ok ».
+#[tokio::test]
+async fn tiny_responses_are_left_uncompressed() {
+    let response = get_encoded(app(None), "/health", "gzip, br").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(header(&response, "content-encoding").is_none());
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(&body[..], b"ok");
+}

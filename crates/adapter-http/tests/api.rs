@@ -3832,14 +3832,25 @@ fn header<'a>(response: &'a axum::response::Response, name: &str) -> Option<&'a 
     response.headers().get(name).and_then(|v| v.to_str().ok())
 }
 
+/// Toutes les valeurs de `Vary` (plusieurs lignes d'en-tête possibles),
+/// éclatées et normalisées en minuscules.
+fn vary_names(response: &axum::response::Response) -> Vec<String> {
+    response
+        .headers()
+        .get_all("vary")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(|name| name.trim().to_ascii_lowercase())
+        .collect()
+}
+
 fn three_points() -> Vec<Measurement> {
     let t0 = OffsetDateTime::UNIX_EPOCH;
     (0..3)
         .map(|i| point(t0 + Duration::hours(i), 20.0 + i as f64))
         .collect()
 }
-
-const HISTORY_URI: &str = "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T03:00:00Z";
 
 /// `Accept-Encoding: gzip` → corps gzip, `Vary` posé, contenu identique au
 /// clair une fois décodé.
@@ -3854,13 +3865,12 @@ async fn history_is_gzipped_when_the_client_accepts_it() {
     let response = get_encoded(app, HISTORY_URI, "gzip").await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(header(&response, "content-encoding"), Some("gzip"));
+    // La route pose déjà `Vary: Accept` (négociation CSV) ; la couche de
+    // compression ajoute `accept-encoding` en seconde valeur, sans l'effacer.
+    let vary = vary_names(&response);
     assert!(
-        header(&response, "vary")
-            .unwrap_or("")
-            .to_ascii_lowercase()
-            .contains("accept-encoding"),
-        "vary = {:?}",
-        header(&response, "vary")
+        vary.contains(&"accept-encoding".to_string()),
+        "vary = {vary:?}"
     );
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     assert!(

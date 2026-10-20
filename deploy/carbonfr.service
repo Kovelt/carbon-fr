@@ -21,6 +21,9 @@ RestartSec=3
 # SIGTERM déclenche l'arrêt gracieux du serveur ; on laisse le temps de drainer.
 KillSignal=SIGTERM
 TimeoutStopSec=30
+# Un descripteur par connexion servie (flux SSE compris) : le défaut de 1 024
+# est sous CARBONFR_MAX_CONNECTIONS (10 000) — cf. deploy/README.md §2.
+LimitNOFILE=65536
 
 # Durcissement.
 NoNewPrivileges=true

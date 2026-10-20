@@ -8,8 +8,27 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Modifié
+
+- Défaut de `CARBONFR_HEADER_READ_TIMEOUT_SECS` relevé de 30 s à **180 s**
+  (revue de release du 2026-10-19, plan I9) : 30 s passait sous les délais
+  d'inactivité des pools amont courants (Traefik 90 s, Caddy 2 min, `reqwest`
+  et Go 90 s) — un auto-hébergeur gardant le défaut s'exposait à des `502`
+  intermittents sur les POST (`/v1/stats/visit`, webhooks) quand le serveur
+  fermait une connexion de pool que le proxy réutilisait. Le délai reste
+  borné face à un client lent sur ses en-têtes ; la prod Kovelt garde sa
+  valeur explicite de 120 s. `.env.example`, `deploy/Caddyfile` (keepalive
+  amont) et `deploy/README.md` alignés. **SemVer : patch.**
+
 ### Documentation
 
+- Limite de descripteurs de fichiers (constat du déploiement du 2026-10-19) :
+  `deploy/README.md` §2 documente `ulimits: nofile` (soft 65 536) pour le
+  service compose — le conteneur démarre à 1 024, sous
+  `CARBONFR_MAX_CONNECTIONS` 10 000 —, `deploy/carbonfr.service` pose
+  `LimitNOFILE=65536`, l'exemple `docker run` du README passe
+  `--ulimit nofile`, la docstring de `bin/server` le rappelle. Reste à poser
+  dans le compose de prod au prochain déploiement.
 - Plan : itération I8 close après le déploiement de la v0.10.0 sur Kovelt le
   2026-10-19 (mesures du déploiement, PROD-4 rejoué : 8 règles d'alerte) ;
   nouvel item I9 sur la limite de descripteurs du conteneur (`ulimit -n`

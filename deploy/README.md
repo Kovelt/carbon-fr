@@ -33,7 +33,7 @@ Cadrer une release : `git tag v0.3.3 && git push origin v0.3.3` (le workflow vé
 
 Dans tous les cas : **API derrière un reverse proxy TLS** + `CARBONFR_TRUST_PROXY=1` (pour lire l'IP réelle du client via le **dernier segment** de `X-Forwarded-For`, que le proxy ajoute). `X-Real-Ip` n'est **pas** lu par défaut (audit 2026-08 : beaucoup de proxys — dont Caddy sans `header_up` — relaient l'en-tête client tel quel, donc spoofable) : pour l'utiliser, définir `CARBONFR_REAL_IP_HEADER=x-real-ip` **et** s'assurer que le proxy écrase cet en-tête (cf. le `header_up` du [`Caddyfile`](Caddyfile)). Sans proxy de confiance, laisser `CARBONFR_TRUST_PROXY=0` (l'en-tête est spoofable). Cf. [`.env.example`](../.env.example).
 
-Sans reverse proxy en amont, le serveur pose déjà, en défense en profondeur, un timeout de lecture des en-têtes/inactivité keep-alive de 30 s (`CARBONFR_HEADER_READ_TIMEOUT_SECS`), un timeout de traitement de requête de 60 s (`CARBONFR_REQUEST_TIMEOUT_SECS`), un plafond de 300 connexions SSE simultanées (`CARBONFR_SSE_MAX_CONNECTIONS`) et un plafond brut de 10 000 connexions TCP servies en parallèle (`CARBONFR_MAX_CONNECTIONS`, au-delà l'accept attend) — cf. [`.env.example`](../.env.example) pour ces quatre variables.
+Sans reverse proxy en amont, le serveur pose déjà, en défense en profondeur, un timeout de lecture des en-têtes/inactivité keep-alive de 180 s (`CARBONFR_HEADER_READ_TIMEOUT_SECS`), un timeout de traitement de requête de 60 s (`CARBONFR_REQUEST_TIMEOUT_SECS`), un plafond de 300 connexions SSE simultanées (`CARBONFR_SSE_MAX_CONNECTIONS`) et un plafond brut de 10 000 connexions TCP servies en parallèle (`CARBONFR_MAX_CONNECTIONS`, au-delà l'accept attend) — cf. [`.env.example`](../.env.example) pour ces quatre variables.
 
 ## 2. Production Kovelt — derrière Traefik (org)
 
@@ -62,7 +62,17 @@ labels:
 
 Avec, côté service, **`CARBONFR_TRUST_PROXY=1`** (Traefik est le proxy de confiance) et un **`CARBONFR_VISIT_SALT`** secret (sinon le serveur refuse de démarrer en mode proxy). Les migrations s'appliquent au démarrage ; sondes `GET /health` (liveness) et `GET /health/ready` (vérifie la base).
 
-- Traefik met les connexions amont en pool (`forwardingTimeouts.idleConnTimeout`, 90 s par défaut) : poser **`CARBONFR_HEADER_READ_TIMEOUT_SECS=120`** côté service (> ce délai), pour que ce soit Traefik qui ferme les connexions inactives, jamais le serveur (sinon une requête peut tomber sur une connexion de pool que le serveur vient de fermer).
+- Traefik met les connexions amont en pool (`forwardingTimeouts.idleConnTimeout`, 90 s par défaut) : le défaut de `CARBONFR_HEADER_READ_TIMEOUT_SECS` (180 s) est déjà au-dessus ; la prod pose explicitement **`CARBONFR_HEADER_READ_TIMEOUT_SECS=120`** côté service. Dans tous les cas, garder une valeur **supérieure** au délai du proxy, pour que ce soit Traefik qui ferme les connexions inactives, jamais le serveur (sinon une requête peut tomber sur une connexion de pool que le serveur vient de fermer).
+- **Descripteurs de fichiers** : chaque connexion servie (flux SSE compris) tient un descripteur, et le conteneur démarre avec `ulimit -n` soft = **1 024** (hard 524 288) — bien sous `CARBONFR_MAX_CONNECTIONS` (10 000) : au-delà de ~1 000 connexions simultanées, `accept()` échouerait en `EMFILE` avant même le plafond (constat du déploiement du 2026-10-19, à appliquer au prochain déploiement). Poser dans le service compose :
+
+  ```yaml
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 524288
+  ```
+
+  puis vérifier `docker exec <conteneur> cat /proc/1/limits`. En bare-metal : `LimitNOFILE=65536` dans l'unité systemd ([`carbonfr.service`](carbonfr.service)) ; en `docker run` : `--ulimit nofile=65536:524288`.
 
 ### Restreindre `/metrics` (exploitation, non public)
 

@@ -96,7 +96,7 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   la connexion. Avec `reconnect: false`, une fermeture serveur termine la
   boucle et une erreur de transport ou HTTP est levée, comme en 0.3.0 ; le
   délai d'inactivité y lève une `DOMException` nommée `TimeoutError`.
-- **Tests** : premiers tests du SDK TS, `node:test` sans dépendance (30 cas,
+- **Tests** : premiers tests du SDK TS, `node:test` sans dépendance (31 cas,
   ~1,5 s, serveur `node:http` local) — réception et keep-alive, reconnexion
   (fermeture, transport, inactivité, en-têtes), statuts rejoués ou levés,
   arrêt, reconnexion désactivée, options. `npm test` (build puis

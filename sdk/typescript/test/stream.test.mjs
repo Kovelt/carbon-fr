@@ -298,6 +298,24 @@ describe("arrêt par le signal", () => {
     await closed.promise; // le serveur voit la déconnexion (place SSE rendue)
   });
 
+  test("pendant le traitement d'un événement : connexion coupée aussitôt, fin au next() suivant", LIMIT, async (t) => {
+    const closed = signalled();
+    const baseUrl = await serve(t, (req, res) => {
+      openSse(res);
+      res.write(eventFrame("national", 4));
+      res.on("close", closed.resolve);
+    });
+    const cf = new CarbonFr({ baseUrl });
+    const ac = abortAfter(t);
+    const it = cf.stream({ signal: ac.signal, reconnect: FAST });
+
+    assert.equal((await it.next()).value.intensity, 4);
+    ac.abort(); // l'appelant traite encore l'événement : aucun next() en cours
+    await closed.promise; // place SSE rendue sans attendre le next() suivant
+
+    assert.deepEqual(await it.next(), { done: true, value: undefined });
+  });
+
   test("pendant la connexion (en-têtes en attente) : fin rapide, sans erreur", LIMIT, async (t) => {
     let attempts = 0;
     const closed = signalled();

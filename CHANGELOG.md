@@ -10,6 +10,35 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ### Ajouté
 
+- **Index qualitatif d'intensité `index`** (PROD-API-1, plan I9, ADR-0033) :
+  une lecture à cinq bandes (`very-low`, `low`, `moderate`, `high`,
+  `very-high`) de l'intensité, sur un barème **absolu et unique** pour toutes
+  les méthodologies et toutes les régions, bornes basses incluses et hautes
+  exclues. Domaine : type `IntensityIndex` `#[non_exhaustive]` dans
+  `carbonfr-core`, barème `index@1` en constante de domaine
+  `THRESHOLDS_V1 = [20, 64.8, 100, 200]` (gCO₂eq/kWh ; sources : facteurs ACV
+  ADEME, seuil RFNBO 18 gCO₂eq/MJ × 3,6, seuil de la taxonomie européenne,
+  demi-facteur gaz), calcul pur, **jamais stocké** — dérivé à la projection,
+  sans migration, et un futur `index@2` se servirait sur tout l'historique.
+  API : champ `index` sur `/v1/intensity/now`, sur chaque entrée de
+  `/v1/intensity/now/all`, sur chaque point de `/v1/intensity/date` (JSON, et
+  **colonne `index` ajoutée en dernière position du CSV**, après `vintage` :
+  les sept premières colonnes ne bougent pas), sur chaque point de
+  `/v1/intensity/forecast` (calculé sur `expected`) et sur chaque événement
+  SSE de `/v1/intensity/stream` ; pas sur `/v1/intensity/stats` (l'index
+  d'une moyenne n'est pas la moyenne des index) ni sur
+  `/v1/intensity/greenest-window`. Nouveau catalogue
+  **`GET /v1/intensity/index`** : `version`, `unit`, cinq bandes (`label`,
+  `min`, `max`, `description`), quatre bornes (`value`, `below`, `above`,
+  `source`, `url`), une `note` sur les limites de lecture et la `source` ;
+  `Cache-Control: public, max-age=60` comme les autres catalogues. OpenAPI :
+  enum `IntensityIndexLabel`, schémas `IntensityIndexResponse`, `IndexBand` et
+  `IndexThreshold`, nouvelle route, instantané régénéré. Carte `/hydrogene` :
+  légende lue dans le catalogue au chargement (plus de classes codées en dur
+  `25 · 45 · 70 · 100` ; repli sur les bornes d'`index@1` si le catalogue est
+  injoignable), couleur de chaque région par l'`index` servi, bande du
+  national dans le bandeau. Requête Bruno `intensity-index.bru`.
+  **SemVer : minor** (v0.11.0 — champ et route ajoutés, ADR-0019).
 - **Compression HTTP des réponses** (PERF-1, plan I9) : gzip ou brotli selon
   `Accept-Encoding`, par `tower_http::compression::CompressionLayer` posée au
   plus près des handlers, niveau explicite 4 (le défaut brotli, qualité 11,
@@ -29,7 +58,8 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `attachment; filename="carbon-fr_intensity_<région>_<from>_<to>.csv"`,
   bornes en UTC compactes), écrite **en flux** par paquets de 256 lignes —
   le CSV n'est jamais construit en entier —, colonnes
-  `timestamp,intensity,unit,region,methodology,methodology_version,vintage`,
+  `timestamp,intensity,unit,region,methodology,methodology_version,vintage`
+  (+ `index` en dernière colonne, cf. « Index qualitatif » ci-dessus),
   séparateur `,`, fin de ligne `\n`, mêmes valeurs que `data` en JSON ;
   `methodology_version` (entier, propre au CSV) distingue `acv-ademe` 1
   (production) de 2 (consommation) et vaut 1 pour `rte-direct`. Une plage
@@ -111,6 +141,21 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   (fermeture, transport, inactivité, en-têtes), statuts rejoués ou levés,
   arrêt, reconnexion désactivée, options. `npm test` (build puis
   `node --test`) ; nouvelle étape « Tests (node:test) » du job CI du SDK.
+- **`@carbon-fr/sdk` 0.5.0** (publication npm par le tag `sdk-v0.5.0`) : type
+  `IntensityIndex`, champ optionnel `index?` sur `IntensityResponse`,
+  `HistoryPoint`, `ForecastPoint` et `StreamEvent` (absent face à un serveur
+  ≤ 0.10), méthode `intensityIndex()` et types `IntensityIndexResponse`,
+  `IndexBand` et `IndexThreshold` ; README à jour.
+
+### SDK Rust
+
+- **`carbonfr-sdk` 0.3.0** (tag `rust-sdk-v0.3.0` ; ADR-0030 §3 : un champ
+  public ajouté sur des structs à champs publics = *minor*) : enum ouvert
+  `IntensityIndex` (`#[non_exhaustive]` + `Other` : un libellé inconnu n'est
+  jamais rejeté), champ `index: Option<IntensityIndex>` (`#[serde(default)]`)
+  sur `IntensityResponse`, `HistoryPoint`, `ForecastPointBody` et
+  `IntensityEvent`, méthode `intensity_index()`, DTO du catalogue ; parité
+  29 opérations `/v1` (test `parity.rs`).
 
 ### CI
 
@@ -157,6 +202,12 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   les quatre points de la proposition (seuils, libellés, catalogue, carte)
   retenus tels quels par Morgan le 2026-10-20, implémentation à suivre
   (plan I9, PROD-API-1).
+- ADR-0033 passé à *Accepté, implémenté* ; ADR-0029, addendum 2026-10-20
+  (légende de la carte `/hydrogene` alignée sur l'index) ; README : ligne
+  `GET /v1/intensity/index` du tableau « Fonctionnalités », paragraphe
+  « Index qualitatif » (barème, sources, limites), exemple de réponse et
+  en-tête CSV mis à jour ; `CLAUDE.md` (repère d'implémentation) ; plan I9 :
+  item PROD-API-1 coché.
 
 ## [0.10.0] - 2026-10-19
 

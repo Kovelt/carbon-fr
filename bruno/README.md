@@ -59,6 +59,7 @@ bru run --env Production                              # la collection entière :
 | Health | `200`, corps `ok` |
 | Health ready — vérifie la base | `200` (lit la dernière mesure nationale) |
 | Intensité now — national (rte-direct / acv-ademe) | `200`, méthodologie |
+| Index qualitatif — barème | `200`, version 1, 5 bandes `very-low` → `very-high`, 4 bornes (dont 64,8) |
 | Intensité now — régional Bretagne (acv-ademe) | `200`, région |
 | Intensité now — acv-ademe@2 (consommation) | `200`, version `2` (si contexte d'import ingéré) |
 | Intensité now — toutes les régions (acv-ademe) | `200`, `count`, national en premier |
@@ -68,7 +69,7 @@ bru run --env Production                              # la collection entière :
 | Régions — catalogue | `200`, 13 entrées, national en premier |
 | Facteurs — acv-ademe | `200`, unité, filières |
 | Intensité date — historique | `200` |
-| Intensité date — export CSV (`format=csv`) | `200`, corps `text/csv` : en-tête `timestamp,intensity,unit,region,methodology,methodology_version,vintage` |
+| Intensité date — export CSV (`format=csv`) | `200`, corps `text/csv` : en-tête `timestamp,intensity,unit,region,methodology,methodology_version,vintage,index` |
 | Intensité stats — résumé / série journalière | `200`, `intervals` |
 | Échanges transfrontaliers — courant / historique | `200`, `net_flow_mw`, `snapshots` |
 | Météo nationale — courant / historique | `200`, `wind_kmh`, `irradiance_wm2` |

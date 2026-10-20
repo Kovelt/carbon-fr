@@ -423,7 +423,7 @@
           "intensité"
         ],
         "summary": "`GET /v1/intensity/date?from=&to=&region=` — série historique sur un\nintervalle `[from, to)` (RFC 3339), national par défaut.",
-        "description": "**Format** (PROD-API-3) : JSON par défaut. Le CSV s'obtient avec\n`?format=csv` ou `Accept: text/csv` ; `format` prime sur `Accept`,\n`format=json` force le JSON et toute autre valeur répond `400`. Le CSV est\nservi en pièce jointe (`text/csv; charset=utf-8`, avec\n`Content-Disposition: attachment; filename=\"carbon-fr_intensity_<région>_<from>_<to>.csv\"`)\net écrit en flux : une ligne d'en-tête\n`timestamp,intensity,unit,region,methodology,methodology_version,vintage`,\npuis une ligne par mesure (séparateur `,`, fin de ligne `\\n`, aucun\nguillemet), avec les mêmes valeurs que `data` en JSON. La colonne\n`methodology_version` (entier : `acv-ademe` 1 = production, 2 =\nconsommation ; `rte-direct` = 1) n'existe qu'en CSV et distingue les deux\nversions d'`acv-ademe`. Une plage sans mesure donne l'en-tête seul. Le\nformat pouvant dépendre de `Accept`, la réponse porte `Vary: Accept`.\n\nLes **erreurs** (400, 404, 5xx) restent des Problem Details\n(`application/problem+json`), même quand le CSV est demandé. La fenêtre\nmaximale est inchangée : 366 jours (92 jours en `acv-ademe@2`).",
+        "description": "**Format** (PROD-API-3) : JSON par défaut. Le CSV s'obtient avec\n`?format=csv` ou `Accept: text/csv` ; `format` prime sur `Accept`,\n`format=json` force le JSON et toute autre valeur répond `400`. Le CSV est\nservi en pièce jointe (`text/csv; charset=utf-8`, avec\n`Content-Disposition: attachment; filename=\"carbon-fr_intensity_<région>_<from>_<to>.csv\"`)\net écrit en flux : une ligne d'en-tête\n`timestamp,intensity,unit,region,methodology,methodology_version,vintage,index`,\npuis une ligne par mesure (séparateur `,`, fin de ligne `\\n`, aucun\nguillemet), avec les mêmes valeurs que `data` en JSON. La colonne\n`methodology_version` (entier : `acv-ademe` 1 = production, 2 =\nconsommation ; `rte-direct` = 1) n'existe qu'en CSV et distingue les deux\nversions d'`acv-ademe` ; `index` (dernière colonne, ADR-0033) est l'index\nqualitatif du point, identique à `data[].index` en JSON. Une plage sans\nmesure donne l'en-tête seul. Le format pouvant dépendre de `Accept`, la\nréponse porte `Vary: Accept`.\n\nLes **erreurs** (400, 404, 5xx) restent des Problem Details\n(`application/problem+json`), même quand le CSV est demandé. La fenêtre\nmaximale est inchangée : 366 jours (92 jours en `acv-ademe@2`).",
         "operationId": "intensity_date",
         "parameters": [
           {
@@ -517,7 +517,7 @@
                 "schema": {
                   "type": "string"
                 },
-                "example": "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n2024-01-01T00:00:00Z,52,gCO2eq/kWh,national,rte-direct,1,definitive\n2024-01-01T00:15:00Z,51,gCO2eq/kWh,national,rte-direct,1,definitive\n"
+                "example": "timestamp,intensity,unit,region,methodology,methodology_version,vintage,index\n2024-01-01T00:00:00Z,52,gCO2eq/kWh,national,rte-direct,1,definitive,low\n2024-01-01T00:15:00Z,51,gCO2eq/kWh,national,rte-direct,1,definitive,low\n"
               }
             }
           },
@@ -823,6 +823,27 @@
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/intensity/index": {
+      "get": {
+        "tags": [
+          "intensité"
+        ],
+        "summary": "`GET /v1/intensity/index` — catalogue du barème de l'index qualitatif\n(ADR-0033, `index@1`) : les cinq bandes `very-low` → `very-high`, leurs\nbornes (`[min, max[`, gCO₂eq/kWh) et la source de chaque borne. Même rôle\nque `/v1/factors` pour l'ACV : la légende est **auditable** ; la carte\n`/hydrogene` la lit au chargement au lieu de coder ses classes en dur.",
+        "operationId": "intensity_index",
+        "responses": {
+          "200": {
+            "description": "Barème de l'index qualitatif (5 bandes, 4 bornes sourcées)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntensityIndexResponse"
                 }
               }
             }
@@ -2585,13 +2606,18 @@
           "timestamp",
           "expected",
           "lower",
-          "upper"
+          "upper",
+          "index"
         ],
         "properties": {
           "expected": {
             "type": "number",
             "format": "double",
             "description": "Estimation centrale (gCO₂eq/kWh)."
+          },
+          "index": {
+            "$ref": "#/components/schemas/IntensityIndexLabel",
+            "description": "Index qualitatif de `expected` (ADR-0033, barème `index@1`)."
           },
           "lower": {
             "type": "number",
@@ -2714,9 +2740,14 @@
         "required": [
           "timestamp",
           "intensity",
+          "index",
           "vintage"
         ],
         "properties": {
+          "index": {
+            "$ref": "#/components/schemas/IntensityIndexLabel",
+            "description": "Index qualitatif de `intensity` (ADR-0033, barème `index@1`) — aussi\nla dernière colonne de l'export CSV."
+          },
           "intensity": {
             "type": "number",
             "format": "double"
@@ -2769,6 +2800,77 @@
           }
         }
       },
+      "IndexBand": {
+        "type": "object",
+        "description": "Une bande de l'index (`IntensityIndexResponse::bands`).",
+        "required": [
+          "label",
+          "description"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Ce que la bande signifie, en une phrase."
+          },
+          "label": {
+            "$ref": "#/components/schemas/IntensityIndexLabel",
+            "description": "La valeur servie dans le champ `index` des réponses."
+          },
+          "max": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Borne haute **exclue** (gCO₂eq/kWh) ; `null` pour la dernière bande.",
+            "example": 64.8
+          },
+          "min": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Borne basse **incluse** (gCO₂eq/kWh) ; `null` pour la première bande.",
+            "example": 20.0
+          }
+        }
+      },
+      "IndexThreshold": {
+        "type": "object",
+        "description": "Une borne du barème et ce qui la fonde (`IntensityIndexResponse::thresholds`).",
+        "required": [
+          "value",
+          "below",
+          "above",
+          "source",
+          "url"
+        ],
+        "properties": {
+          "above": {
+            "$ref": "#/components/schemas/IntensityIndexLabel",
+            "description": "Bande à partir de la borne."
+          },
+          "below": {
+            "$ref": "#/components/schemas/IntensityIndexLabel",
+            "description": "Bande sous la borne."
+          },
+          "source": {
+            "type": "string",
+            "description": "Source de la borne : texte réglementaire ou facteur publié."
+          },
+          "url": {
+            "type": "string",
+            "description": "Où la vérifier (texte officiel, ou la table des facteurs de cette API)."
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "description": "Valeur de la borne (gCO₂eq/kWh) — borne haute exclue de `below`, borne\nbasse incluse de `above`.",
+            "example": 64.8
+          }
+        }
+      },
       "IntensityAllResponse": {
         "type": "object",
         "description": "Réponse de `GET /v1/intensity/now/all` : la dernière mesure de **chaque**\nrégion disposant d'une donnée, pour une méthodologie (plan I8, PROD-API-2).",
@@ -2802,6 +2904,63 @@
           }
         }
       },
+      "IntensityIndexLabel": {
+        "type": "string",
+        "description": "Index qualitatif d'une intensité (ADR-0033), barème `index@1` : les cinq\nbandes de [`IntensityIndex`], en kebab-case comme tous les identifiants de\nl'API — bornes basses incluses, hautes exclues : `very-low` < 20 ≤ `low`\n< 64,8 (18 gCO₂eq/MJ × 3,6, seuil RFNBO) ≤ `moderate` < 100 (taxonomie)\n≤ `high` < 200 ≤ `very-high`, en gCO₂eq/kWh. Catalogue des bornes et de\nleurs sources : `GET /v1/intensity/index`. Un seul barème absolu pour\ntoutes les méthodologies et régions. En France le national est `very-low`\nou `low` la quasi-totalité du temps : l'index ne dit pas **quand**\nconsommer — pour choisir une heure, `/v1/intensity/forecast`,\n`/v1/intensity/greenest-window`, `/v1/intensity/below` ou `/v1/schedule`.\nEn `acv-ademe` régional (basé production), une région importatrice peut\nêtre `high` ou `very-high` quand ses centrales de pointe tournent.",
+        "enum": [
+          "very-low",
+          "low",
+          "moderate",
+          "high",
+          "very-high"
+        ],
+        "example": "low"
+      },
+      "IntensityIndexResponse": {
+        "type": "object",
+        "description": "Réponse de `GET /v1/intensity/index` — catalogue du barème de l'index\nqualitatif (ADR-0033) : même rôle que `/v1/factors` pour l'ACV, la légende\nest **auditable** et un client (dont la carte `/hydrogene`) la lit au lieu\nde la coder en dur.",
+        "required": [
+          "version",
+          "unit",
+          "bands",
+          "thresholds",
+          "note",
+          "source"
+        ],
+        "properties": {
+          "bands": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IndexBand"
+            },
+            "description": "Les cinq bandes, de la plus basse à la plus haute (`[min, max[`)."
+          },
+          "note": {
+            "type": "string",
+            "description": "Ce que l'index dit — et ne dit pas."
+          },
+          "source": {
+            "type": "string"
+          },
+          "thresholds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IndexThreshold"
+            },
+            "description": "Les quatre bornes, croissantes, chacune avec sa source."
+          },
+          "unit": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Version du barème (`index@1`) : immuable, toute révision = nouvelle\nversion + nouvel ADR.",
+            "example": 1,
+            "minimum": 0
+          }
+        }
+      },
       "IntensityResponse": {
         "type": "object",
         "description": "Réponse de `GET /v1/intensity/now`.",
@@ -2809,11 +2968,16 @@
           "region",
           "timestamp",
           "intensity",
+          "index",
           "methodology",
           "methodology_version",
           "vintage"
         ],
         "properties": {
+          "index": {
+            "$ref": "#/components/schemas/IntensityIndexLabel",
+            "description": "Index qualitatif de `intensity` (ADR-0033, barème `index@1`)."
+          },
           "intensity": {
             "$ref": "#/components/schemas/IntensityValue"
           },
@@ -3766,11 +3930,16 @@
           "region",
           "timestamp",
           "intensity",
+          "index",
           "methodology",
           "methodology_version",
           "unit"
         ],
         "properties": {
+          "index": {
+            "$ref": "#/components/schemas/IntensityIndexLabel",
+            "description": "Index qualitatif de `intensity` (ADR-0033, barème `index@1`)."
+          },
           "intensity": {
             "type": "number",
             "format": "double"

@@ -19,7 +19,8 @@
 //! - **Intensité** : `GET /v1/intensity/now`, `/v1/intensity/now/all` (les 13
 //!   régions en un appel), `/v1/intensity/date?from=&to=`
 //!   (fenêtre ≤ 366 jours, ≤ 92 jours en `acv-ademe@2` ; JSON par défaut,
-//!   **CSV** écrit en flux avec `?format=csv` ou `Accept: text/csv`),
+//!   **CSV** écrit en flux avec `?format=csv` ou `Accept: text/csv`) — chaque
+//!   mesure porte son index qualitatif `index` (ADR-0033),
 //!   `/v1/intensity/stats?from=&to=[&interval=hour|day]` (résumé exact sur les
 //!   mesures brutes ; série agrégée optionnelle depuis les rollups) ;
 //!   `GET /v1/mix` (mix de production, MW par filière).
@@ -34,7 +35,8 @@
 //! - **Prix & coût** : `GET /v1/price`, `/v1/price/date` (ADR-0023),
 //!   `/v1/cost-reference` (LCOE, ADR-0024).
 //! - **Catalogues** : `GET /v1/methodologies`, `/v1/factors`,
-//!   `/v1/eligibility/rulesets`, `/v1/regions` (slug, libellé, code INSEE).
+//!   `/v1/eligibility/rulesets`, `/v1/regions` (slug, libellé, code INSEE),
+//!   `/v1/intensity/index` (barème de l'index qualitatif, ADR-0033).
 //! - **Webhooks** : `POST`/`GET /v1/webhooks`, `DELETE /v1/webhooks/{id}`
 //!   (ADR-0016, **clé API requise**).
 //! - **Compteur de visites** : `GET /v1/stats`, `POST /v1/stats/visit` (IP jamais
@@ -593,6 +595,7 @@ where
             get(handlers::intensity_now_all::<R>),
         )
         .route("/v1/intensity/date", get(handlers::intensity_date::<R>))
+        .route("/v1/intensity/index", get(handlers::intensity_index))
         .route("/v1/intensity/stats", get(handlers::intensity_stats::<R>))
         .route("/v1/mix", get(handlers::mix::<R>))
         .route("/v1/exchanges", get(handlers::exchanges::<R>))
@@ -721,6 +724,7 @@ where
 const CACHEABLE_PATHS: &[&str] = &[
     "/v1/intensity/now",
     "/v1/intensity/now/all",
+    "/v1/intensity/index",
     "/v1/regions",
     "/v1/intensity/date",
     "/v1/intensity/stats",

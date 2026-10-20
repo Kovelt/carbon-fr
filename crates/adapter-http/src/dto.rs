@@ -2,10 +2,10 @@
 //! jamais dans `core`). L'unité canonique est exposée explicitement.
 
 use carbonfr_core::domain::{
-    COST_REFERENCE_DISCLAIMER, CostEstimate, CostTechnology, CrossBorderSnapshot, ForecastPoint,
-    GenerationMix, GreenWindow, IntensityStats, Measurement, MixShare, Neighbor, PriceBreakdown,
-    Region, RenewableModel, RollupBucket, VisitStats, WeatherForecast, cost_reference_catalog,
-    mix_shares,
+    COST_REFERENCE_DISCLAIMER, CarbonIntensity, CostEstimate, CostTechnology, CrossBorderSnapshot,
+    ForecastPoint, GenerationMix, GreenWindow, IntensityIndex, IntensityStats, Measurement,
+    MixShare, Neighbor, PriceBreakdown, Region, RenewableModel, RollupBucket, VisitStats,
+    WeatherForecast, cost_reference_catalog, mix_shares,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -23,12 +23,74 @@ pub(crate) fn to_rfc3339(at: OffsetDateTime) -> Result<String, time::error::Form
     at.format(&Rfc3339)
 }
 
+/// Index qualitatif d'une intensité (ADR-0033), barème `index@1` : les cinq
+/// bandes de [`IntensityIndex`], en kebab-case comme tous les identifiants de
+/// l'API — bornes basses incluses, hautes exclues : `very-low` < 20 ≤ `low`
+/// < 64,8 (18 gCO₂eq/MJ × 3,6, seuil RFNBO) ≤ `moderate` < 100 (taxonomie)
+/// ≤ `high` < 200 ≤ `very-high`, en gCO₂eq/kWh. Catalogue des bornes et de
+/// leurs sources : `GET /v1/intensity/index`. Un seul barème absolu pour
+/// toutes les méthodologies et régions. En France le national est `very-low`
+/// ou `low` la quasi-totalité du temps : l'index ne dit pas **quand**
+/// consommer — pour choisir une heure, `/v1/intensity/forecast`,
+/// `/v1/intensity/greenest-window`, `/v1/intensity/below` ou `/v1/schedule`.
+/// En `acv-ademe` régional (basé production), une région importatrice peut
+/// être `high` ou `very-high` quand ses centrales de pointe tournent.
+#[derive(Serialize, ToSchema, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "kebab-case")]
+#[schema(example = "low")]
+pub(crate) enum IntensityIndexLabel {
+    VeryLow,
+    Low,
+    Moderate,
+    High,
+    VeryHigh,
+}
+
+impl IntensityIndexLabel {
+    /// Bande d'une intensité, dérivée à la projection (jamais stockée).
+    pub(crate) fn of(intensity: CarbonIntensity) -> Self {
+        Self::from(IntensityIndex::of(intensity))
+    }
+}
+
+impl From<IntensityIndex> for IntensityIndexLabel {
+    fn from(index: IntensityIndex) -> Self {
+        match index {
+            IntensityIndex::VeryLow => Self::VeryLow,
+            IntensityIndex::Low => Self::Low,
+            IntensityIndex::Moderate => Self::Moderate,
+            IntensityIndex::High => Self::High,
+            IntensityIndex::VeryHigh => Self::VeryHigh,
+            // Bras obligatoire (`#[non_exhaustive]` côté domaine), inatteignable
+            // tant que `IntensityIndex::ALL` et cette projection sont alignés —
+            // ce que garantit le test `every_domain_band_has_a_label`. Une
+            // bande ajoutée au domaine sans libellé ici ferait échouer ce test
+            // avant d'arriver en production ; le repli est arbitraire.
+            _ => Self::VeryHigh,
+        }
+    }
+}
+
+impl From<IntensityIndexLabel> for IntensityIndex {
+    fn from(label: IntensityIndexLabel) -> Self {
+        match label {
+            IntensityIndexLabel::VeryLow => Self::VeryLow,
+            IntensityIndexLabel::Low => Self::Low,
+            IntensityIndexLabel::Moderate => Self::Moderate,
+            IntensityIndexLabel::High => Self::High,
+            IntensityIndexLabel::VeryHigh => Self::VeryHigh,
+        }
+    }
+}
+
 /// Réponse de `GET /v1/intensity/now`.
 #[derive(Serialize, ToSchema)]
 pub(crate) struct IntensityResponse {
     region: String,
     timestamp: String,
     intensity: IntensityValue,
+    /// Index qualitatif de `intensity` (ADR-0033, barème `index@1`).
+    index: IntensityIndexLabel,
     methodology: String,
     methodology_version: u32,
     vintage: &'static str,
@@ -49,6 +111,7 @@ impl IntensityResponse {
                 value: m.intensity.value(),
                 unit: "gCO2eq/kWh",
             },
+            index: IntensityIndexLabel::of(m.intensity),
             methodology: m.methodology.id.clone(),
             methodology_version: m.methodology.version,
             vintage: m.vintage.code(),
@@ -352,6 +415,8 @@ struct ForecastPointBody {
     lower: f64,
     /// Borne haute de l'intervalle d'incertitude.
     upper: f64,
+    /// Index qualitatif de `expected` (ADR-0033, barème `index@1`).
+    index: IntensityIndexLabel,
 }
 
 impl ForecastResponse {
@@ -371,6 +436,7 @@ impl ForecastResponse {
                     expected: p.expected.value(),
                     lower: p.lower.value(),
                     upper: p.upper.value(),
+                    index: IntensityIndexLabel::of(p.expected),
                 })
             })
             .collect::<Result<Vec<_>, time::error::Format>>()?;
@@ -765,6 +831,9 @@ pub(crate) struct HistoryResponse {
 struct HistoryPoint {
     timestamp: String,
     intensity: f64,
+    /// Index qualitatif de `intensity` (ADR-0033, barème `index@1`) — aussi
+    /// la dernière colonne de l'export CSV.
+    index: IntensityIndexLabel,
     vintage: &'static str,
 }
 
@@ -782,6 +851,7 @@ impl HistoryResponse {
                 Ok(HistoryPoint {
                     timestamp: to_rfc3339(m.at)?,
                     intensity: m.intensity.value(),
+                    index: IntensityIndexLabel::of(m.intensity),
                     vintage: m.vintage.code(),
                 })
             })
@@ -1178,6 +1248,123 @@ impl FactorsResponse {
             source: "Base Carbone ADEME (cf. ADR-0008 ; pertes T&D ADR-0010)",
             factors,
             td_loss_factor,
+        }
+    }
+}
+
+/// Une bande de l'index (`IntensityIndexResponse::bands`).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct IndexBand {
+    /// La valeur servie dans le champ `index` des réponses.
+    label: IntensityIndexLabel,
+    /// Borne basse **incluse** (gCO₂eq/kWh) ; `null` pour la première bande.
+    #[schema(example = 20.0)]
+    min: Option<f64>,
+    /// Borne haute **exclue** (gCO₂eq/kWh) ; `null` pour la dernière bande.
+    #[schema(example = 64.8)]
+    max: Option<f64>,
+    /// Ce que la bande signifie, en une phrase.
+    description: &'static str,
+}
+
+/// Une borne du barème et ce qui la fonde (`IntensityIndexResponse::thresholds`).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct IndexThreshold {
+    /// Valeur de la borne (gCO₂eq/kWh) — borne haute exclue de `below`, borne
+    /// basse incluse de `above`.
+    #[schema(example = 64.8)]
+    value: f64,
+    /// Bande sous la borne.
+    below: IntensityIndexLabel,
+    /// Bande à partir de la borne.
+    above: IntensityIndexLabel,
+    /// Source de la borne : texte réglementaire ou facteur publié.
+    source: &'static str,
+    /// Où la vérifier (texte officiel, ou la table des facteurs de cette API).
+    url: &'static str,
+}
+
+/// Réponse de `GET /v1/intensity/index` — catalogue du barème de l'index
+/// qualitatif (ADR-0033) : même rôle que `/v1/factors` pour l'ACV, la légende
+/// est **auditable** et un client (dont la carte `/hydrogene`) la lit au lieu
+/// de la coder en dur.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct IntensityIndexResponse {
+    /// Version du barème (`index@1`) : immuable, toute révision = nouvelle
+    /// version + nouvel ADR.
+    #[schema(example = 1)]
+    version: u32,
+    unit: &'static str,
+    /// Les cinq bandes, de la plus basse à la plus haute (`[min, max[`).
+    bands: Vec<IndexBand>,
+    /// Les quatre bornes, croissantes, chacune avec sa source.
+    thresholds: Vec<IndexThreshold>,
+    /// Ce que l'index dit — et ne dit pas.
+    note: &'static str,
+    source: &'static str,
+}
+
+impl IntensityIndexResponse {
+    /// Le barème `index@1`, bornes lues dans le domaine
+    /// (`IntensityIndex::THRESHOLDS_V1`), sources portées ici.
+    pub(crate) fn catalog() -> Self {
+        const DESCRIPTIONS: [&str; 5] = [
+            "Mix dominé par le nucléaire, l'hydraulique et l'éolien : l'état normal du réseau national.",
+            "Électricité « pleinement renouvelable » au sens RFNBO (intensité de la zone de dépôt sous 18 gCO₂eq/MJ).",
+            "Au-dessus du seuil RFNBO, encore « durable » au sens de la taxonomie européenne (< 100 g).",
+            "Au-delà de la taxonomie ; jusqu'à environ un kWh sur deux produit au gaz.",
+            "Mix majoritairement fossile (gaz de pointe, charbon, fioul).",
+        ];
+        const SOURCES: [(&str, &str); 4] = [
+            (
+                "Facteurs cycle de vie ADEME des filières décarbonées (nucléaire 6, hydraulique 4, éolien 7,3 gCO₂eq/kWh — ADR-0008) : sous 20 g, le mix en est dominé.",
+                "/v1/factors?methodology=acv-ademe",
+            ),
+            (
+                "18 gCO₂eq/MJ × 3,6 = 64,8 gCO₂eq/kWh : intensité maximale de la zone de dépôt pour que l'électricité du réseau compte comme pleinement renouvelable (RFNBO) — règlement délégué (UE) 2023/1184, art. 4 §2.",
+                "https://eur-lex.europa.eu/eli/reg_del/2023/1184/oj",
+            ),
+            (
+                "100 gCO₂e/kWh (cycle de vie) : seuil de contribution substantielle de la taxonomie européenne pour la production d'électricité — règlement délégué (UE) 2021/2139, annexe I.",
+                "https://eur-lex.europa.eu/eli/reg_del/2021/2139/oj",
+            ),
+            (
+                "≈ la moitié du facteur cycle de vie du gaz en cycle combiné (406 gCO₂eq/kWh, ADEME — ADR-0008) : un mix dont environ un kWh sur deux vient du gaz.",
+                "/v1/factors?methodology=acv-ademe",
+            ),
+        ];
+        let bands = IntensityIndex::ALL
+            .iter()
+            .zip(DESCRIPTIONS)
+            .map(|(&band, description)| {
+                let (min, max) = band.bounds();
+                IndexBand {
+                    label: band.into(),
+                    min,
+                    max,
+                    description,
+                }
+            })
+            .collect();
+        let thresholds = IntensityIndex::THRESHOLDS_V1
+            .iter()
+            .zip(IntensityIndex::ALL.windows(2))
+            .zip(SOURCES)
+            .map(|((&value, pair), (source, url))| IndexThreshold {
+                value,
+                below: pair[0].into(),
+                above: pair[1].into(),
+                source,
+                url,
+            })
+            .collect();
+        Self {
+            version: IntensityIndex::VERSION,
+            unit: INTENSITY_UNIT,
+            bands,
+            thresholds,
+            note: "Lecture qualitative d'une intensité instantanée, un seul barème absolu pour toutes les méthodologies et régions (bornes basses incluses, hautes exclues). En France le national est very-low ou low la quasi-totalité du temps : pour choisir une heure, utiliser /v1/intensity/forecast, /v1/intensity/greenest-window, /v1/intensity/below ou /v1/schedule. En acv-ademe régional (basé production), une région importatrice peut être high ou very-high quand ses centrales de pointe tournent alors que sa consommation est décarbonée.",
+            source: "ADR-0033 (carbon-fr) ; précédent : index de carbonintensity.org.uk (NESO)",
         }
     }
 }
@@ -1618,6 +1805,8 @@ pub(crate) struct StreamEventBody {
     region: String,
     timestamp: String,
     intensity: f64,
+    /// Index qualitatif de `intensity` (ADR-0033, barème `index@1`).
+    index: IntensityIndexLabel,
     methodology: String,
     methodology_version: u32,
     unit: &'static str,
@@ -1631,6 +1820,7 @@ impl StreamEventBody {
             region: u.region.slug().to_string(),
             timestamp: to_rfc3339(u.at)?,
             intensity: u.intensity.value(),
+            index: IntensityIndexLabel::of(u.intensity),
             methodology: u.methodology.id.clone(),
             methodology_version: u.methodology.version,
             unit: "gCO2eq/kWh",
@@ -1852,5 +2042,44 @@ mod eligibility_tests {
         let body = build(&window(t0, t0 + step * 4), &[a, b, c]);
         let best = body.best_eligible.expect("un éligible");
         assert_eq!(best.score, 10.0);
+    }
+}
+
+#[cfg(test)]
+mod index_label_tests {
+    use super::*;
+
+    /// Chaque bande du domaine a son libellé, et le slug servi est celui du
+    /// domaine (le `_ =>` de `From<IntensityIndex>` ne doit jamais servir).
+    #[test]
+    fn every_domain_band_has_a_label() {
+        for band in IntensityIndex::ALL {
+            let label = IntensityIndexLabel::from(band);
+            assert_eq!(IntensityIndex::from(label), band);
+            assert_eq!(
+                serde_json::to_string(&label).unwrap(),
+                format!("\"{}\"", band.slug())
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_lists_five_bands_and_four_sourced_thresholds() {
+        let catalog = IntensityIndexResponse::catalog();
+        assert_eq!(catalog.version, 1);
+        assert_eq!(catalog.unit, INTENSITY_UNIT);
+        assert_eq!(catalog.bands.len(), 5);
+        assert_eq!(catalog.thresholds.len(), 4);
+        assert_eq!(catalog.bands[0].min, None);
+        assert_eq!(catalog.bands[4].max, None);
+        for (threshold, pair) in catalog.thresholds.iter().zip(catalog.bands.windows(2)) {
+            assert_eq!(pair[0].max, Some(threshold.value));
+            assert_eq!(pair[1].min, Some(threshold.value));
+            assert_eq!(threshold.below, pair[0].label);
+            assert_eq!(threshold.above, pair[1].label);
+            assert!(!threshold.source.is_empty() && !threshold.url.is_empty());
+        }
+        let values: Vec<f64> = catalog.thresholds.iter().map(|t| t.value).collect();
+        assert_eq!(values, IntensityIndex::THRESHOLDS_V1);
     }
 }

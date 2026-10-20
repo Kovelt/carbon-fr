@@ -88,7 +88,7 @@ a { color: var(--seq-3); }
   <h1>Électrolyseurs × carbone du réseau <small>France · Europe — <a href="/docs">carbon-fr</a></small></h1>
   <span id="live" title="Intensité carbone nationale (rte-direct), temps réel">
     <span class="dot"></span>
-    <span>Réseau FR&nbsp;: <b id="live-val">—</b> gCO₂eq/kWh</span>
+    <span>Réseau FR&nbsp;: <b id="live-val">—</b> gCO₂eq/kWh · <b id="live-index" title="index qualitatif (ADR-0033)">—</b></span>
     <span class="s" id="live-at" style="color:var(--ink-muted)"></span>
   </span>
 </header>
@@ -122,12 +122,8 @@ a { color: var(--seq-3); }
 
     <div class="card legende" aria-hidden="false">
       <h2>Légende</h2>
-      <div class="row"><span style="font-size:12px;color:var(--ink-muted)">Intensité du réseau régional (acv-ademe, gCO₂eq/kWh)</span></div>
-      <div class="row"><span class="sw" style="background:var(--seq-1)"></span> &lt; 25</div>
-      <div class="row"><span class="sw" style="background:var(--seq-2)"></span> 25 – 45</div>
-      <div class="row"><span class="sw" style="background:var(--seq-3)"></span> 45 – 70</div>
-      <div class="row"><span class="sw" style="background:var(--seq-4)"></span> 70 – 100</div>
-      <div class="row"><span class="sw" style="background:var(--seq-5)"></span> ≥ 100</div>
+      <div class="row"><span style="font-size:12px;color:var(--ink-muted)">Intensité du réseau régional (acv-ademe, gCO₂eq/kWh) — index qualitatif <a href="/v1/intensity/index" title="barème : bandes, bornes et sources">index@1</a></span></div>
+      <div id="legende-bandes"></div>
       <div class="row"><span class="sw" style="background:var(--nodata)"></span> sans donnée (hors couverture éCO2mix régional)</div>
       <div class="row" style="margin-top:10px">
         <svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="6" class="site operation" style="stroke:var(--surface)"/></svg>
@@ -172,8 +168,45 @@ a { color: var(--seq-3); }
 'use strict';
 (async function () {
   const $ = (id) => document.getElementById(id);
-  const CLASSES = [25, 45, 70, 100]; // bornes des 5 classes
   const SEQ = ['--seq-1', '--seq-2', '--seq-3', '--seq-4', '--seq-5'];
+  const fmtH = (iso) => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  const fmt1 = (v) => v.toLocaleString('fr-FR', { maximumFractionDigits: 1 });
+
+  // ---- barème de l'index qualitatif (ADR-0033) ----
+  // La carte lit ses classes dans /v1/intensity/index plutôt que de les coder
+  // en dur : une seule échelle dans le produit (API, SDK, carte). Repli sur les
+  // bornes d'index@1 si le catalogue est injoignable, pour rester lisible.
+  const BANDS_FALLBACK = [
+    { label: 'very-low', min: null, max: 20 }, { label: 'low', min: 20, max: 64.8 },
+    { label: 'moderate', min: 64.8, max: 100 }, { label: 'high', min: 100, max: 200 },
+    { label: 'very-high', min: 200, max: null },
+  ];
+  // Un catalogue n'est adopté que bien formé (5 bandes jointives, libellés en
+  // kebab-case, bornes numériques croissantes) : sinon le repli, jamais une
+  // page cassée ni un texte venu du réseau injecté tel quel dans la légende.
+  function bandesValides(list) {
+    if (!Array.isArray(list) || list.length !== SEQ.length) return false;
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i];
+      if (!b || typeof b.label !== 'string' || !/^[a-z-]+$/.test(b.label)) return false;
+      const minOk = i === 0 ? b.min === null : typeof b.min === 'number' && b.min === list[i - 1].max;
+      const maxOk = i === list.length - 1 ? b.max === null : typeof b.max === 'number' && (b.min === null || b.max > b.min);
+      if (!minOk || !maxOk) return false;
+    }
+    return true;
+  }
+  let bands = BANDS_FALLBACK;
+  try {
+    const r = await fetch('/v1/intensity/index');
+    if (r.ok) {
+      const j = await r.json();
+      if (bandesValides(j.bands)) bands = j.bands;
+    }
+  } catch (e) { /* repli : bornes d'index@1 */ }
+  const CLASSES = bands.slice(0, -1).map((b) => b.max); // bornes hautes (exclues) des 4 premières bandes
+  const fmtBande = (b) => (b.min === null ? '&lt; ' + fmt1(b.max) : b.max === null ? '&ge; ' + fmt1(b.min) : fmt1(b.min) + ' – ' + fmt1(b.max));
+  $('legende-bandes').innerHTML = bands.map((b, i) =>
+    '<div class="row"><span class="sw" style="background:var(' + SEQ[i] + ')"></span> <b>' + b.label + '</b>&nbsp;<span style="color:var(--ink-muted)">' + fmtBande(b) + '</span></div>').join('');
   const INSEE_SLUG = {
     '84': 'auvergne-rhone-alpes', '27': 'bourgogne-franche-comte', '53': 'bretagne',
     '24': 'centre-val-de-loire', '44': 'grand-est', '32': 'hauts-de-france',
@@ -239,19 +272,23 @@ a { color: var(--seq-3); }
       if (!r.ok) return;
       const j = await r.json();
       for (const m of j.regions) {
-        intensites[m.region] = { value: m.intensity.value, at: m.timestamp };
+        intensites[m.region] = { value: m.intensity.value, index: m.index, at: m.timestamp };
       }
     } catch (e) { /* toutes les régions en « sans donnée » */ }
   }
   await fetchIntensites();
 
-  function classe(v) {
-    let i = 0;
-    while (i < CLASSES.length && v >= CLASSES[i]) i++;
-    return getComputedStyle(document.documentElement).getPropertyValue(SEQ[i]).trim();
+  // Rang de bande d'une mesure : l'`index` servi par l'API s'il est là (même
+  // barème), sinon la valeur contre les bornes du catalogue.
+  function rang(mes) {
+    let i = bands.findIndex((b) => b.label === mes.index);
+    if (i < 0) { i = 0; while (i < CLASSES.length && mes.value >= CLASSES[i]) i++; }
+    return i;
   }
-  const fmtH = (iso) => new Date(iso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-  const fmt1 = (v) => v.toLocaleString('fr-FR', { maximumFractionDigits: 1 });
+  const bande = (mes) => bands[rang(mes)].label;
+  function classe(mes) {
+    return getComputedStyle(document.documentElement).getPropertyValue(SEQ[rang(mes)]).trim();
+  }
 
   // ---- rendu ----
   const svg = $('carte');
@@ -266,7 +303,7 @@ a { color: var(--seq-3); }
     for (const f of regions.features) {
       const slug = INSEE_SLUG[f.properties.code];
       const mes = slug ? intensites[slug] : undefined;
-      const fill = mes ? classe(mes.value) : 'var(--nodata)';
+      const fill = mes ? classe(mes) : 'var(--nodata)';
       out += '<path class="region" data-code="' + f.properties.code + '" fill="' + fill + '" d="' + geomPath(f.geometry, p) + '"/>';
     }
     const rScale = vueId === 'fr' ? 1.6 : 1.0;
@@ -288,7 +325,7 @@ a { color: var(--seq-3); }
       const slug = INSEE_SLUG[f.properties.code];
       const mes = slug ? intensites[slug] : undefined;
       showTip(evt, '<div class="t">' + f.properties.nom + '</div>' + (mes
-        ? '<div><b>' + fmt1(mes.value) + '</b> gCO₂eq/kWh <span class="s">(acv-ademe, réseau, ' + fmtH(mes.at) + ')</span></div>'
+        ? '<div><b>' + fmt1(mes.value) + '</b> gCO₂eq/kWh · <b>' + bande(mes) + '</b> <span class="s">(acv-ademe, réseau, ' + fmtH(mes.at) + ')</span></div>'
         : '<div class="s">sans donnée (hors couverture éCO2mix régional)</div>'));
     } else if (t.classList && t.classList.contains('site')) {
       const s = sites[Number(t.dataset.i)];
@@ -315,15 +352,16 @@ a { color: var(--seq-3); }
   $('btn-eu').addEventListener('click', () => setVue('eu'));
 
   // ---- bandeau national : SSE + repli polling ----
-  function setLive(value, at, live) {
+  function setLive(value, at, live, index) {
     $('live-val').textContent = fmt1(value);
+    $('live-index').textContent = bande({ value, index });
     $('live-at').textContent = fmtH(at);
     $('live').classList.toggle('on', live);
   }
   async function pollNow() {
     try {
       const j = await (await fetch('/v1/intensity/now')).json();
-      setLive(j.intensity.value, j.timestamp, false);
+      setLive(j.intensity.value, j.timestamp, false, j.index);
     } catch (e) { /* bandeau reste sur la dernière valeur */ }
   }
   await pollNow();
@@ -380,7 +418,7 @@ a { color: var(--seq-3); }
     src.addEventListener('open', stopFallback);
     src.addEventListener('intensity', (evt) => {
       const j = JSON.parse(evt.data);
-      setLive(j.intensity, j.timestamp, true);
+      setLive(j.intensity, j.timestamp, true, j.index);
     });
     src.onerror = () => {
       $('live').classList.remove('on');

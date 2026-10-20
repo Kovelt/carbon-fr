@@ -6,7 +6,33 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.11.0] - 2026-10-20
+
+Clôture côté code de l'itération I9 du [plan](docs/plan-iterations.md) —
+**ce qui différencie carbon-fr** : l'**index qualitatif d'intensité** `index`
+(PROD-API-1, [ADR-0033](docs/adr/0033-index-qualitatif-intensite.md),
+catalogue `GET /v1/intensity/index`), l'**export CSV** de l'historique
+(PROD-API-3), la **compression** gzip/brotli des réponses (PERF-1), le
+**repli** de la carte `/hydrogene` quand le flux SSE est refusé, le parcours
+local documenté (DX-1), l'environnement Bruno « Production » (DX-5) et la
+**reconnexion automatique** du SDK TypeScript (DX-2) ; plus le défaut de
+`CARBONFR_HEADER_READ_TIMEOUT_SECS` relevé à 180 s et la limite de
+descripteurs documentée. Version *minor* (champ `index` et route
+`/v1/intensity/index` ajoutés, ADR-0019), aucune migration, rien de retiré
+ni de modifié dans le contrat `/v1` : `index` est additif sur `now`,
+`now/all`, `date` (JSON et dernière colonne du CSV), `forecast` et le flux ;
+le CSV et la compression sont des réponses nouvelles, négociées par en-tête
+(`Accept`, `Accept-Encoding`) ou par `?format=csv`. `carbonfr-core` ne gagne
+que des ajouts compatibles (`IntensityIndex`, barème `index@1`), vérifiés par
+`cargo-semver-checks` en CI ; elle est republiée en 0.11.0 avec
+`carbonfr-eligibility`. SDK : TypeScript **0.5.0** (tag `sdk-v0.5.0` ; cumule
+la reconnexion de la 0.4.0 et l'index) et Rust **0.3.0** (tag
+`rust-sdk-v0.3.0`) — leur `intensityIndex()`/`intensity_index()` répond 404
+face à un serveur ≤ 0.10, et `index` y est optionnel. Au déploiement Kovelt :
+poser `ulimits: nofile` (soft 65 536, hard 524 288) dans le compose de prod —
+le conteneur démarre à 1 024 descripteurs, sous `CARBONFR_MAX_CONNECTIONS`
+10 000 — ; la valeur explicite `CARBONFR_HEADER_READ_TIMEOUT_SECS=120` y
+reste (derrière Traefik).
 
 ### Ajouté
 

@@ -1,6 +1,6 @@
 # ADR-0033 — Index qualitatif d'intensité carbone (`index` : very-low → very-high)
 
-- **Statut** : Accepté le 2026-10-20 — Morgan a retenu la proposition telle quelle (« garde les seuils proposés »), les quatre points de l'encadré ci-dessous compris ; le premier commit d'implémentation n'arrive qu'après cette acceptation (principe 3 du plan I9) ; **implémenté le 2026-10-20** (PR #TBD)
+- **Statut** : Accepté le 2026-10-20 — Morgan a retenu la proposition telle quelle (« garde les seuils proposés »), les quatre points de l'encadré ci-dessous compris ; le premier commit d'implémentation n'arrive qu'après cette acceptation (principe 3 du plan I9) ; **implémenté le 2026-10-20** (PR #156)
 - **Date** : 2026-10-20
 - **Décideurs** : Morgan (Kovelt / carbon-fr)
 - **ADR liés** : ADR-0005 (méthodologies versionnées, immuables), ADR-0007 (contrat `/v1` additif), ADR-0008 (facteurs ACV ADEME = constante de domaine versionnée), ADR-0010 §7 (vérifiabilité : `/v1/factors`), ADR-0014 (flux SSE), ADR-0019 (champ/route ajoutés = *minor* en 0.x), ADR-0025/0026 (éligibilité électrolyseur : seuil RFNBO 18 gCO₂eq/MJ), ADR-0029 (carte `/hydrogene`, classes `<25, 25-45, 45-70, 70-100, ≥100`), ADR-0030 §3 (SDK Rust : champ public ajouté = *minor*), ADR-0031/0032 (SDK)
@@ -165,7 +165,7 @@ La légende de la carte adopte les cinq bandes de l'index (couleurs inchangées,
 - Le régional en `acv-ademe` est **basé production** : une région importatrice peut être `very-high` quand ses centrales de pointe tournent alors que sa consommation est décarbonée (ADR-0008). Le caveat de la carte passe dans la doc de l'index.
 - 64,8 n'est pas rond : c'est le prix de la source exacte (18 gCO₂eq/MJ). Le catalogue l'explique ; l'arrondi à 65 est la variante du point 1.
 
-**Engagements** (PR d'implémentation, après fusion de cet ADR) : type `IntensityIndex` + tests dans `core` ; DTO `now`/`now/all`/`date` (JSON + CSV)/`forecast`/`stream` + catalogue ; OpenAPI (`enum`, nouvelle route, snapshot) ; SDK TS 0.5.0 et Rust 0.3.0 (types ; tests : parité OpenAPI et REST côté Rust, REST et flux côté TS — la parité OpenAPI du SDK TS reste l'item DX-3 d'I10) ; Bruno (`intensity-index.bru`) ; README (« Index qualitatif ») ; carte `/hydrogene` ; CHANGELOG ; plan I9. Le `methodologies` de `/v1/methodologies` n'est pas touché : l'index n'est pas une méthodologie (il ne produit pas de gCO₂eq/kWh), c'est une **lecture** d'une intensité, quelle que soit la méthode. Tenus le 2026-10-20 (PR #TBD).
+**Engagements** (PR d'implémentation, après fusion de cet ADR) : type `IntensityIndex` + tests dans `core` ; DTO `now`/`now/all`/`date` (JSON + CSV)/`forecast`/`stream` + catalogue ; OpenAPI (`enum`, nouvelle route, snapshot) ; SDK TS 0.5.0 et Rust 0.3.0 (types ; tests : parité OpenAPI et REST côté Rust, REST et flux côté TS — la parité OpenAPI du SDK TS reste l'item DX-3 d'I10) ; Bruno (`intensity-index.bru`) ; README (« Index qualitatif ») ; carte `/hydrogene` ; CHANGELOG ; plan I9. Le `methodologies` de `/v1/methodologies` n'est pas touché : l'index n'est pas une méthodologie (il ne produit pas de gCO₂eq/kWh), c'est une **lecture** d'une intensité, quelle que soit la méthode. Tenus le 2026-10-20 (PR #156).
 
 ## Alternatives envisagées
 

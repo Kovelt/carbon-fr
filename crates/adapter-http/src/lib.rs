@@ -684,7 +684,11 @@ where
         // En-tête `Cache-Control` sur les lectures stables (audit perf 2026-08).
         .layer(axum::middleware::from_fn(cache_control))
         // Trace HTTP (méthode, chemin, statut, latence) — observabilité prod.
-        .layer(tower_http::trace::TraceLayer::new_for_http());
+        // Classification : tout 5xx est une défaillance (`error`), sauf le 503
+        // attendu du plafond SSE, cf. `ExpectedOverloadAsSuccess`.
+        .layer(tower_http::trace::TraceLayer::new(
+            tower_http::classify::SharedClassifier::new(ExpectedOverloadAsSuccess),
+        ));
     // Tier hébergé (ADR-0015, opt-in) : auth + quota, appliqué SOUS la couche
     // CORS (dernier `.layer()` = plus externe) — cf. doc de `router()`.
     if let Some(auth) = auth {
@@ -770,6 +774,49 @@ async fn cache_control(
     response
 }
 
+/// Classification des réponses pour la trace HTTP (`TraceLayer`) : un 5xx est
+/// une **défaillance**, journalisée en `error` par `DefaultOnFailure` — sauf le
+/// **503 attendu** du plafond de connexions SSE (ADR-0014, addendum
+/// 2026-09-26), reconnaissable à son `Retry-After` : c'est un refus de charge
+/// nominal, compté par `carbonfr_sse_connections_rejected_total` et journalisé
+/// en `warn` par le handler lui-même. Le marquer `error` noyait le journal à
+/// chaque rafale de clients (constat I9). Le 503 du délai de traitement, lui,
+/// n'a pas de `Retry-After` et ne traverse pas cette couche (`request_timeout`
+/// est au-dessus) : il reste journalisé en `error` par son middleware.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ExpectedOverloadAsSuccess;
+
+impl tower_http::classify::ClassifyResponse for ExpectedOverloadAsSuccess {
+    type FailureClass = tower_http::classify::ServerErrorsFailureClass;
+    type ClassifyEos = tower_http::classify::NeverClassifyEos<Self::FailureClass>;
+
+    fn classify_response<B>(
+        self,
+        res: &axum::http::Response<B>,
+    ) -> tower_http::classify::ClassifiedResponse<Self::FailureClass, Self::ClassifyEos> {
+        if res.status() == axum::http::StatusCode::SERVICE_UNAVAILABLE
+            && res.headers().contains_key(axum::http::header::RETRY_AFTER)
+        {
+            tower_http::classify::ClassifiedResponse::Ready(Ok(()))
+        } else {
+            tower_http::classify::ClassifyResponse::classify_response(
+                tower_http::classify::ServerErrorsAsFailures::new(),
+                res,
+            )
+        }
+    }
+
+    fn classify_error<E>(self, error: &E) -> Self::FailureClass
+    where
+        E: std::fmt::Display + 'static,
+    {
+        tower_http::classify::ClassifyResponse::classify_error(
+            tower_http::classify::ServerErrorsAsFailures::new(),
+            error,
+        )
+    }
+}
+
 /// Borne le **traitement** d'une requête (SEC-4, plan I8) : au-delà de `limit`,
 /// le futur de la requête est abandonné et le client reçoit un 503 Problem
 /// Details (code `unavailable`), journalisé ici en `error` — le niveau que
@@ -836,4 +883,53 @@ fn cors_layer() -> tower_http::cors::CorsLayer {
         // Cache du préflight côté navigateur : sans `Access-Control-Max-Age`,
         // les navigateurs re-préflightent ~toutes les 5 s (audit 2026-08).
         .max_age(std::time::Duration::from_secs(3600))
+}
+
+#[cfg(test)]
+mod trace_classifier_tests {
+    use super::ExpectedOverloadAsSuccess;
+    use axum::http::{Response, StatusCode, header};
+    use tower_http::classify::{ClassifiedResponse, ClassifyResponse, ServerErrorsFailureClass};
+
+    fn classify(
+        status: StatusCode,
+        retry_after: Option<&str>,
+    ) -> Result<(), ServerErrorsFailureClass> {
+        let mut builder = Response::builder().status(status);
+        if let Some(secs) = retry_after {
+            builder = builder.header(header::RETRY_AFTER, secs);
+        }
+        let response = builder.body(()).unwrap();
+        match ExpectedOverloadAsSuccess.classify_response(&response) {
+            ClassifiedResponse::Ready(result) => result,
+            ClassifiedResponse::RequiresEos(_) => unreachable!("jamais de classification à l'EOS"),
+        }
+    }
+
+    /// Le 503 du plafond SSE (avec `Retry-After`) est un refus nominal : pas de
+    /// ligne `error` dans la trace.
+    #[test]
+    fn sse_cap_rejection_is_not_a_failure() {
+        assert!(classify(StatusCode::SERVICE_UNAVAILABLE, Some("30")).is_ok());
+    }
+
+    /// Tout autre 5xx reste une défaillance — y compris un 503 sans
+    /// `Retry-After` (délai de traitement) et un 500 qui en porterait un.
+    #[test]
+    fn other_server_errors_stay_failures() {
+        assert!(matches!(
+            classify(StatusCode::SERVICE_UNAVAILABLE, None),
+            Err(ServerErrorsFailureClass::StatusCode(
+                StatusCode::SERVICE_UNAVAILABLE
+            ))
+        ));
+        assert!(matches!(
+            classify(StatusCode::INTERNAL_SERVER_ERROR, Some("30")),
+            Err(ServerErrorsFailureClass::StatusCode(
+                StatusCode::INTERNAL_SERVER_ERROR
+            ))
+        ));
+        assert!(classify(StatusCode::OK, None).is_ok());
+        assert!(classify(StatusCode::TOO_MANY_REQUESTS, Some("60")).is_ok());
+    }
 }

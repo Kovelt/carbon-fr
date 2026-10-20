@@ -1447,6 +1447,13 @@ pub(crate) async fn intensity_stream(
     // consomme aucun permis) et AVANT l'abonnement au canal. Refus immédiat,
     // jamais d'attente : un flux SSE est long par nature.
     let permit = state.sse_limiter.try_acquire().ok_or_else(|| {
+        // Refus de charge nominal : `warn`, jamais `error` — la trace HTTP le
+        // classe en succès grâce au `Retry-After` (`ExpectedOverloadAsSuccess`).
+        tracing::warn!(
+            max = state.sse_limiter.max(),
+            rejected_total = state.sse_limiter.rejected_total(),
+            "plafond de connexions SSE atteint : connexion refusée (503, Retry-After)"
+        );
         ApiError::unavailable(format!(
             "plafond de connexions SSE simultanées atteint ({}) — réessayer plus tard",
             state.sse_limiter.max()

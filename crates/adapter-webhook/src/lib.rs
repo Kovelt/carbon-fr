@@ -4,7 +4,7 @@
 //! sécurité y est triple :
 //! - validation **anti-SSRF** de l'URL (schéma + deny-list, [`validate_webhook_url`])
 //!   à l'inscription **et** avant chaque livraison (littéraux IP, userinfo, port) ;
-//! - **resolver DNS custom** ([`PublicOnlyResolver`]) **interne à reqwest** : la
+//! - **resolver DNS custom** (`PublicOnlyResolver`, privé) **interne à reqwest** : la
 //!   résolution qui décide l'IP contactée est **la même** qui la valide → pas de
 //!   fenêtre TOCTOU / DNS rebinding (contrairement à un check séparé suivi d'une
 //!   re-résolution par le client) ;
@@ -110,9 +110,9 @@ fn guard_allow_local_test_server(url: &str) -> Result<(), SourceError> {
 ///
 /// `guard` et `backoff_base` sont les deux seuls points de variation entre le
 /// chemin de production ([`HttpNotifier::new`]) et le constructeur réservé aux
-/// tests ([`HttpNotifier::new_for_test`], `#[cfg(test)]`) : la construction du
+/// tests (`HttpNotifier::new_for_test`, `#[cfg(test)]`) : la construction du
 /// `reqwest::Client` (timeouts, refus des redirections, `no_proxy`, resolver
-/// anti-SSRF) est **partagée** par [`HttpNotifier::build`], donc identique
+/// anti-SSRF) est **partagée** par `HttpNotifier::build` (privé), donc identique
 /// dans les deux cas — seuls les délais et la garde d'URL diffèrent.
 #[derive(Clone)]
 pub struct HttpNotifier {

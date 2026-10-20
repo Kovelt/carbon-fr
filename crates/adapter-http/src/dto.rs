@@ -12,7 +12,14 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 use utoipa::ToSchema;
 
-fn to_rfc3339(at: OffsetDateTime) -> Result<String, time::error::Format> {
+/// Unité canonique de l'intensité (gCO₂eq/kWh), exposée explicitement dans les
+/// réponses. Partagée avec l'export CSV de l'historique (module `export`) :
+/// la colonne `unit` du CSV ne peut ainsi pas diverger du champ `unit` du JSON.
+pub(crate) const INTENSITY_UNIT: &str = "gCO2eq/kWh";
+
+/// Horodatage RFC 3339 : format unique des réponses JSON **et** de l'export CSV
+/// (module `export`), qui doivent écrire exactement le même texte.
+pub(crate) fn to_rfc3339(at: OffsetDateTime) -> Result<String, time::error::Format> {
     at.format(&Rfc3339)
 }
 
@@ -784,7 +791,7 @@ impl HistoryResponse {
             region: region.to_string(),
             from: to_rfc3339(from)?,
             to: to_rfc3339(to)?,
-            unit: "gCO2eq/kWh",
+            unit: INTENSITY_UNIT,
             methodology: methodology.to_string(),
             count: data.len(),
             data,

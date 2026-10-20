@@ -41,6 +41,9 @@ struct FakeRepo {
     subs: Arc<Mutex<Vec<carbonfr_core::domain::Subscription>>>,
     /// Latence artificielle de `latest()` (tests du délai de traitement).
     latest_delay: Option<std::time::Duration>,
+    /// `range()` échoue (panne de stockage simulée) : la réponse doit être un
+    /// 500 Problem Details, quel que soit le format demandé.
+    range_fails: bool,
 }
 
 #[async_trait]
@@ -90,6 +93,9 @@ impl IntensityRepository for FakeRepo {
         _methodology_id: &str,
         range: TimeRange,
     ) -> Result<Vec<Measurement>, RepositoryError> {
+        if self.range_fails {
+            return Err(RepositoryError::Backend("panne simulée".to_string()));
+        }
         let mut out: Vec<Measurement> = self
             .series
             .iter()
@@ -436,6 +442,36 @@ async fn get(app: axum::Router, uri: &str) -> axum::response::Response {
     app.oneshot(Request::get(uri).body(Body::empty()).unwrap())
         .await
         .unwrap()
+}
+
+/// Comme [`get`], avec des en-têtes de requête (`Accept`, `Origin`…).
+async fn get_with(
+    app: axum::Router,
+    uri: &str,
+    headers: &[(&str, &str)],
+) -> axum::response::Response {
+    let mut request = Request::get(uri);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    app.oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+/// Valeur d'un en-tête de réponse (`""` s'il est absent ou illisible).
+fn header_of<'a>(response: &'a axum::response::Response, name: &str) -> &'a str {
+    response
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+}
+
+/// Corps de réponse lu en entier comme texte UTF-8.
+async fn text_body(response: axum::response::Response) -> String {
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    String::from_utf8(bytes.to_vec()).unwrap()
 }
 
 #[tokio::test]
@@ -1411,6 +1447,482 @@ async fn intensity_date_window_too_wide_is_400() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+// ---------------------------------------------------------------------------
+// Export CSV de `/v1/intensity/date` (PROD-API-3, plan I9)
+// ---------------------------------------------------------------------------
+
+/// Trois points horaires (20, 21 puis 22 g) depuis l'epoch, millésime définitif.
+fn hourly_series() -> Vec<Measurement> {
+    (0..3)
+        .map(|i| {
+            point(
+                OffsetDateTime::UNIX_EPOCH + Duration::hours(i),
+                20.0 + i as f64,
+            )
+        })
+        .collect()
+}
+
+/// Fenêtre qui couvre exactement [`hourly_series`].
+const HISTORY_URI: &str = "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T03:00:00Z";
+
+/// Le CSV exact attendu pour [`hourly_series`] sur [`HISTORY_URI`] : l'en-tête
+/// puis une ligne par mesure.
+const HISTORY_CSV: &str = "timestamp,intensity,unit,region,methodology,vintage\n\
+    1970-01-01T00:00:00Z,20,gCO2eq/kWh,national,rte-direct,definitive\n\
+    1970-01-01T01:00:00Z,21,gCO2eq/kWh,national,rte-direct,definitive\n\
+    1970-01-01T02:00:00Z,22,gCO2eq/kWh,national,rte-direct,definitive\n";
+
+/// En-tête de requête `Accept` optionnel, au format attendu par [`get_with`].
+fn accept_header(accept: Option<&str>) -> Vec<(&str, &str)> {
+    accept.map(|value| ("accept", value)).into_iter().collect()
+}
+
+/// `Accept: text/csv` : la série en CSV — statut, type de contenu et corps
+/// exacts (en-tête, valeurs, fins de ligne).
+#[tokio::test]
+async fn intensity_date_csv_via_accept_header() {
+    let response = get_with(
+        app_with_series(hourly_series()),
+        HISTORY_URI,
+        &[("accept", "text/csv")],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        header_of(&response, "content-type"),
+        "text/csv; charset=utf-8"
+    );
+    assert_eq!(text_body(response).await, HISTORY_CSV);
+}
+
+/// `?format=csv` seul, sans `Accept` : le même CSV, octet pour octet.
+#[tokio::test]
+async fn intensity_date_csv_via_format_param() {
+    let response = get(
+        app_with_series(hourly_series()),
+        &format!("{HISTORY_URI}&format=csv"),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        header_of(&response, "content-type"),
+        "text/csv; charset=utf-8"
+    );
+    assert_eq!(text_body(response).await, HISTORY_CSV);
+}
+
+/// `format` prime sur `Accept`, dans les deux sens ; `format=json` force le JSON.
+#[tokio::test]
+async fn intensity_date_format_param_beats_accept_header() {
+    let app = app_with_series(hourly_series());
+
+    // `format=csv` l'emporte sur un `Accept` qui demande le JSON, ou tout.
+    for accept in ["application/json", "*/*"] {
+        let response = get_with(
+            app.clone(),
+            &format!("{HISTORY_URI}&format=csv"),
+            &[("accept", accept)],
+        )
+        .await;
+        assert_eq!(
+            header_of(&response, "content-type"),
+            "text/csv; charset=utf-8",
+            "Accept = {accept}"
+        );
+        assert_eq!(text_body(response).await, HISTORY_CSV);
+    }
+
+    // `format=json` l'emporte sur `Accept: text/csv`.
+    let response = get_with(
+        app,
+        &format!("{HISTORY_URI}&format=json"),
+        &[("accept", "text/csv")],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(header_of(&response, "content-type"), "application/json");
+    assert_eq!(header_of(&response, "content-disposition"), "");
+    assert_eq!(json_body(response).await["count"], 3);
+}
+
+/// Tout autre `format` est un 400 Problem Details `bad_request` — y compris
+/// avec `Accept: text/csv` —, sensible à la casse comme `region`.
+#[tokio::test]
+async fn intensity_date_unknown_format_is_400() {
+    for format in ["xml", "CSV", "Json", "", "text/csv", "csv%20"] {
+        for accept in [None, Some("text/csv")] {
+            let response = get_with(
+                app_with_series(hourly_series()),
+                &format!("{HISTORY_URI}&format={format}"),
+                &accept_header(accept),
+            )
+            .await;
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "format = {format:?}, Accept = {accept:?}"
+            );
+            assert_eq!(
+                header_of(&response, "content-type"),
+                "application/problem+json"
+            );
+            let body = json_body(response).await;
+            assert_eq!(body["code"], "bad_request");
+            assert_eq!(body["status"], 400);
+            assert!(body["detail"].as_str().unwrap().contains("format"));
+        }
+    }
+}
+
+/// Sans `format` ni demande explicite du CSV, c'est le JSON historique, inchangé :
+/// mêmes champs, aucun en-tête propre au CSV. Un `Accept` générique, un
+/// `text/csv` refusé (`q=0`) ou moins préféré que le JSON ne change rien.
+#[tokio::test]
+async fn intensity_date_defaults_to_unchanged_json() {
+    let app = app_with_series(hourly_series());
+    for accept in [
+        None,
+        Some("*/*"),
+        Some("application/json"),
+        Some("text/*"),
+        Some("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+        Some("text/csv;q=0"),
+        Some("application/json, text/csv;q=0.5"),
+    ] {
+        let response = get_with(app.clone(), HISTORY_URI, &accept_header(accept)).await;
+        assert_eq!(response.status(), StatusCode::OK, "Accept = {accept:?}");
+        assert_eq!(
+            header_of(&response, "content-type"),
+            "application/json",
+            "Accept = {accept:?}"
+        );
+        assert_eq!(header_of(&response, "content-disposition"), "");
+
+        let body = json_body(response).await;
+        let mut keys: Vec<&str> = body
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "count",
+                "data",
+                "from",
+                "methodology",
+                "region",
+                "to",
+                "unit"
+            ]
+        );
+        let mut point_keys: Vec<&str> = body["data"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        point_keys.sort_unstable();
+        assert_eq!(point_keys, ["intensity", "timestamp", "vintage"]);
+        assert_eq!(body["count"], 3);
+    }
+}
+
+/// En-têtes de la réponse CSV : pièce jointe nommée d'après la région et les
+/// bornes (ramenées en UTC, sans `:` ni `+`), `Vary: Accept`, et le
+/// `Cache-Control` des lectures stables, comme pour le JSON.
+#[tokio::test]
+async fn intensity_date_csv_headers() {
+    let series = vec![Measurement {
+        region: Region::Bretagne,
+        methodology: Methodology::acv_ademe(),
+        ..point(OffsetDateTime::UNIX_EPOCH, 30.0)
+    }];
+    // Bornes données avec des décalages (`+01:00`, `+02:00` ; `+` encodé `%2B`).
+    let response = get_with(
+        app_with_series(series),
+        "/v1/intensity/date?from=1970-01-01T01:00:00%2B01:00&to=1970-01-01T05:00:00%2B02:00\
+         &region=bretagne&methodology=acv-ademe",
+        &[("accept", "text/csv")],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        header_of(&response, "content-type"),
+        "text/csv; charset=utf-8"
+    );
+    assert_eq!(
+        header_of(&response, "content-disposition"),
+        "attachment; filename=\"carbon-fr_intensity_bretagne_19700101T000000Z_19700101T030000Z.csv\""
+    );
+    assert_eq!(header_of(&response, "vary"), "Accept");
+    assert_eq!(header_of(&response, "cache-control"), "public, max-age=60");
+    assert_eq!(
+        text_body(response).await,
+        "timestamp,intensity,unit,region,methodology,vintage\n\
+         1970-01-01T00:00:00Z,30,gCO2eq/kWh,bretagne,acv-ademe,definitive\n"
+    );
+}
+
+/// Le format pouvant dépendre de `Accept`, les réponses 200 — JSON comme CSV —
+/// portent `Vary: Accept`, sans effacer ce que pose la couche CORS ; les
+/// erreurs ne sont jamais marquées `Cache-Control`.
+#[tokio::test]
+async fn intensity_date_responses_vary_on_accept() {
+    let app = app_with_series(hourly_series());
+    for accept in [None, Some("text/csv")] {
+        let mut headers = vec![("origin", "https://exemple.fr")];
+        headers.extend(accept_header(accept));
+        let response = get_with(app.clone(), HISTORY_URI, &headers).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let vary: Vec<String> = response
+            .headers()
+            .get_all("vary")
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(|value| value.split(','))
+            .map(|name| name.trim().to_ascii_lowercase())
+            .collect();
+        assert!(
+            vary.contains(&"accept".to_string()),
+            "Accept = {accept:?}, Vary = {vary:?}"
+        );
+        assert_eq!(header_of(&response, "access-control-allow-origin"), "*");
+        assert_eq!(header_of(&response, "cache-control"), "public, max-age=60");
+    }
+}
+
+/// Lignes du CSV (hors en-tête), découpées en colonnes.
+fn csv_rows(csv: &str) -> Vec<Vec<&str>> {
+    csv.lines()
+        .skip(1)
+        .map(|line| line.split(',').collect())
+        .collect()
+}
+
+/// Demande la même série en JSON puis en CSV et vérifie que les deux disent
+/// exactement la même chose : horodatages (même texte), intensités (même
+/// `f64`), millésimes, et les champs de tête du JSON répétés sur chaque ligne.
+/// Renvoie le nombre de lignes.
+async fn assert_csv_matches_json(app: axum::Router, uri: &str) -> usize {
+    let json = json_body(get(app.clone(), uri).await).await;
+    let response = get_with(app, uri, &[("accept", "text/csv")]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let csv = text_body(response).await;
+
+    assert_eq!(
+        csv.lines().next(),
+        Some("timestamp,intensity,unit,region,methodology,vintage")
+    );
+    assert!(csv.ends_with('\n'));
+    let rows = csv_rows(&csv);
+    let data = json["data"].as_array().unwrap();
+    assert_eq!(rows.len(), data.len());
+    assert_eq!(rows.len() as u64, json["count"].as_u64().unwrap());
+    for (row, point) in rows.iter().zip(data) {
+        assert_eq!(row.len(), 6, "{row:?}");
+        assert_eq!(row[0], point["timestamp"].as_str().unwrap());
+        assert_eq!(
+            row[1].parse::<f64>().unwrap(),
+            point["intensity"].as_f64().unwrap()
+        );
+        assert_eq!(row[2], json["unit"].as_str().unwrap());
+        assert_eq!(row[3], json["region"].as_str().unwrap());
+        assert_eq!(row[4], json["methodology"].as_str().unwrap());
+        assert_eq!(row[5], point["vintage"].as_str().unwrap());
+    }
+    rows.len()
+}
+
+/// Mêmes valeurs en CSV et en JSON, y compris pour des intensités fractionnaires,
+/// nulles ou à plusieurs chiffres, les trois millésimes et une région.
+#[tokio::test]
+async fn intensity_date_csv_carries_the_same_values_as_json() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let series: Vec<Measurement> = [
+        (12.558000000000002, Vintage::Tr),
+        (0.0, Vintage::Consolidated),
+        (38.84702345, Vintage::Definitive),
+        (1000.5, Vintage::Tr),
+        (52.0, Vintage::Definitive),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (grams, vintage))| Measurement {
+        at: t0 + Duration::minutes(15 * i as i64),
+        region: Region::Bretagne,
+        intensity: CarbonIntensity::new(grams).unwrap(),
+        methodology: Methodology::acv_ademe(),
+        vintage,
+        mix: None,
+    })
+    .collect();
+
+    let rows = assert_csv_matches_json(
+        app_with_series(series),
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T02:00:00Z\
+         &region=bretagne&methodology=acv-ademe",
+    )
+    .await;
+    assert_eq!(rows, 5);
+}
+
+/// Le chemin `acv-ademe@2` (consommation, série calculée à la lecture) sort
+/// aussi en CSV, avec les valeurs du JSON.
+#[tokio::test]
+async fn intensity_date_consumption_v2_csv() {
+    let uri = "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T05:00:00Z\
+               &methodology=acv-ademe&version=2";
+    let app = build(consumption_history_repo(3));
+    assert_eq!(assert_csv_matches_json(app.clone(), uri).await, 3);
+
+    let response = get_with(app, uri, &[("accept", "text/csv")]).await;
+    assert_eq!(
+        header_of(&response, "content-type"),
+        "text/csv; charset=utf-8"
+    );
+    for row in csv_rows(&text_body(response).await) {
+        assert_eq!(row[3], "national");
+        assert_eq!(row[4], "acv-ademe");
+        // Import charbon → au-dessus de la production seule (~12,56), comme en JSON.
+        assert!(row[1].parse::<f64>().unwrap() > 12.56, "{row:?}");
+    }
+}
+
+/// Plage sans mesure : l'en-tête seul, en `200` — comme le JSON à `data` vide.
+#[tokio::test]
+async fn intensity_date_csv_of_an_empty_range_is_header_only() {
+    let response = get_with(app(None), HISTORY_URI, &[("accept", "text/csv")]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        text_body(response).await,
+        "timestamp,intensity,unit,region,methodology,vintage\n"
+    );
+}
+
+/// Les erreurs de requête restent des Problem Details (`application/problem+json`),
+/// jamais un CSV, quelle que soit la manière de demander le CSV — et ne portent
+/// ni `Content-Disposition` ni `Cache-Control`.
+#[tokio::test]
+async fn intensity_date_errors_stay_problem_json_when_csv_is_requested() {
+    let bad_requests = [
+        // `to` manquant.
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z",
+        // Fenêtre inversée.
+        "/v1/intensity/date?from=1970-01-02T00:00:00Z&to=1970-01-01T00:00:00Z",
+        // Fenêtre au-delà de 366 jours.
+        "/v1/intensity/date?from=2020-01-01T00:00:00Z&to=2024-01-01T00:00:00Z",
+        // Région et méthodologie inconnues.
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T03:00:00Z&region=atlantide",
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T03:00:00Z&methodology=x",
+        // `acv-ademe@2` régional, puis au-delà de 92 jours.
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T05:00:00Z\
+         &region=bretagne&methodology=acv-ademe&version=2",
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-04-15T00:00:00Z\
+         &methodology=acv-ademe&version=2",
+    ];
+    for uri in bad_requests {
+        for (uri, accept) in [
+            (uri.to_string(), Some("text/csv")),
+            (format!("{uri}&format=csv"), None),
+        ] {
+            let response = get_with(
+                app_with_series(hourly_series()),
+                &uri,
+                &accept_header(accept),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+            assert_eq!(
+                header_of(&response, "content-type"),
+                "application/problem+json",
+                "{uri}"
+            );
+            assert_eq!(header_of(&response, "content-disposition"), "", "{uri}");
+            assert_eq!(header_of(&response, "cache-control"), "", "{uri}");
+            assert_eq!(json_body(response).await["code"], "bad_request", "{uri}");
+        }
+    }
+}
+
+/// Une panne de stockage reste un 500 Problem Details `internal` quand le CSV
+/// est demandé : l'erreur survient avant tout octet de CSV.
+#[tokio::test]
+async fn intensity_date_server_error_stays_problem_json_when_csv_is_requested() {
+    let repo = FakeRepo {
+        range_fails: true,
+        ..Default::default()
+    };
+    for (uri, accept) in [
+        (HISTORY_URI.to_string(), Some("text/csv")),
+        (format!("{HISTORY_URI}&format=csv"), None),
+    ] {
+        let response = get_with(build(repo.clone()), &uri, &accept_header(accept)).await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            header_of(&response, "content-type"),
+            "application/problem+json"
+        );
+        assert_eq!(header_of(&response, "content-disposition"), "");
+        assert_eq!(header_of(&response, "cache-control"), "");
+        assert_eq!(json_body(response).await["code"], "internal");
+    }
+}
+
+/// Une année pleine au pas de 15 minutes (la fenêtre maximale de 366 jours, soit
+/// 35 040 mesures) sort en CSV valide, **en flux** : le corps arrive en une
+/// centaine de paquets bornés, jamais en un bloc, et chaque paquet finit sur une
+/// ligne entière.
+#[tokio::test]
+async fn intensity_date_csv_streams_a_full_year_in_bounded_chunks() {
+    use futures_util::StreamExt;
+
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let n = 365 * 96;
+    let series: Vec<Measurement> = (0..n)
+        .map(|i| point(t0 + Duration::minutes(15 * i as i64), (i % 200) as f64))
+        .collect();
+    let response = get_with(
+        app_with_series(series),
+        // 1970-01-01 → 1971-01-02 : 366 jours, le plafond exact.
+        "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1971-01-02T00:00:00Z",
+        &[("accept", "text/csv")],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let mut body = response.into_body().into_data_stream();
+    let (mut chunks, mut lines, mut biggest) = (0_usize, 0_usize, 0_usize);
+    let mut first_line = None;
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.unwrap();
+        assert!(
+            chunk.ends_with(b"\n"),
+            "un paquet doit finir sur une ligne entière"
+        );
+        if first_line.is_none() {
+            first_line = chunk
+                .split(|&byte| byte == b'\n')
+                .next()
+                .map(|line| line.to_vec());
+        }
+        chunks += 1;
+        lines += chunk.iter().filter(|&&byte| byte == b'\n').count();
+        biggest = biggest.max(chunk.len());
+    }
+    assert_eq!(
+        first_line.as_deref(),
+        Some(&b"timestamp,intensity,unit,region,methodology,vintage"[..])
+    );
+    assert_eq!(lines, 1 + n);
+    assert!(chunks > 100, "corps servi en {chunks} paquet(s) seulement");
+    assert!(biggest < 64 * 1024, "paquet de {biggest} octets");
 }
 
 #[tokio::test]

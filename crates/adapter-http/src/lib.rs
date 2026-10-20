@@ -18,7 +18,8 @@
 //!
 //! - **Intensité** : `GET /v1/intensity/now`, `/v1/intensity/now/all` (les 13
 //!   régions en un appel), `/v1/intensity/date?from=&to=`
-//!   (fenêtre ≤ 366 jours, ≤ 92 jours en `acv-ademe@2`),
+//!   (fenêtre ≤ 366 jours, ≤ 92 jours en `acv-ademe@2` ; JSON par défaut,
+//!   **CSV** écrit en flux avec `?format=csv` ou `Accept: text/csv`),
 //!   `/v1/intensity/stats?from=&to=[&interval=hour|day]` (résumé exact sur les
 //!   mesures brutes ; série agrégée optionnelle depuis les rollups) ;
 //!   `GET /v1/mix` (mix de production, MW par filière).
@@ -60,6 +61,7 @@ mod carbonfr_openapi;
 mod dto;
 mod eligibility_uc;
 mod error;
+mod export;
 mod handlers;
 mod hydrogene;
 

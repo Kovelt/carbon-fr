@@ -68,6 +68,7 @@ bru run --env Production                              # la collection entière :
 | Régions — catalogue | `200`, 13 entrées, national en premier |
 | Facteurs — acv-ademe | `200`, unité, filières |
 | Intensité date — historique | `200` |
+| Intensité date — export CSV (`format=csv`) | `200`, corps `text/csv` : en-tête `timestamp,intensity,unit,region,methodology,vintage` |
 | Intensité stats — résumé / série journalière | `200`, `intervals` |
 | Échanges transfrontaliers — courant / historique | `200`, `net_flow_mw`, `snapshots` |
 | Météo nationale — courant / historique | `200`, `wind_kmh`, `irradiance_wm2` |

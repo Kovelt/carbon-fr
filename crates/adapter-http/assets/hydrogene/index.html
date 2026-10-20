@@ -230,17 +230,20 @@ a { color: var(--seq-3); }
   // Le produit est son propre premier client de /v1/intensity/now/all (plan
   // I8). Garde équivalente aux 12 appels d'avant : en cas d'erreur réseau ou
   // de réponse non 200, la carte se dégrade en « sans donnée », rien d'autre
-  // ne casse.
+  // ne casse. Le repli polling (plus bas) rappelle ce même appel.
   const intensites = {}; // slug -> {value, at}
-  try {
-    const r = await fetch('/v1/intensity/now/all?methodology=acv-ademe');
-    if (r.ok) {
+  // Met `intensites` à jour. En cas d'échec, les valeurs déjà connues restent.
+  async function fetchIntensites() {
+    try {
+      const r = await fetch('/v1/intensity/now/all?methodology=acv-ademe');
+      if (!r.ok) return;
       const j = await r.json();
       for (const m of j.regions) {
         intensites[m.region] = { value: m.intensity.value, at: m.timestamp };
       }
-    }
-  } catch (e) { /* toutes les régions en « sans donnée » */ }
+    } catch (e) { /* toutes les régions en « sans donnée » */ }
+  }
+  await fetchIntensites();
 
   function classe(v) {
     let i = 0;
@@ -324,14 +327,72 @@ a { color: var(--seq-3); }
     } catch (e) { /* bandeau reste sur la dernière valeur */ }
   }
   await pollNow();
-  try {
-    const es = new EventSource('/v1/intensity/stream');
-    es.addEventListener('intensity', (evt) => {
+
+  // Repli quand le flux SSE est refusé. Au plafond de connexions
+  // (CARBONFR_SSE_MAX_CONNECTIONS) le serveur répond 503 + Retry-After. Or, par
+  // spec, un EventSource dont la réponse n'est pas un 200 text/event-stream
+  // « échoue » : readyState passe à EventSource.CLOSED, un seul événement
+  // `error` part et le navigateur ne reconnecte JAMAIS (le script ne voit ni le
+  // statut ni Retry-After). Sur une coupure réseau ordinaire, au contraire,
+  // readyState reste CONNECTING et le navigateur reconnecte seul. Dans le cas
+  // CLOSED on prend donc le relais : chaque minute, le national rte-direct du
+  // bandeau (/v1/intensity/now, comme pollNow) et les couleurs régionales
+  // (/v1/intensity/now/all), et toutes les 5 minutes une nouvelle tentative
+  // d'ouverture du flux ; dès qu'il s'ouvre (événement `open`), le polling
+  // s'arrête.
+  const POLL_MS = 60 * 1000;
+  const SSE_RETRY_MS = 5 * 60 * 1000;
+  const LIVE_TITLE = $('live').title; // infobulle nominale : national rte-direct, temps réel
+  const POLL_TITLE = 'Intensité carbone nationale (rte-direct), actualisée chaque minute — flux temps réel indisponible';
+  let es = null;         // flux SSE courant
+  let pollTimer = null;  // setInterval du polling ; non null = repli actif
+  let retryTimer = null; // setInterval de réouverture du flux, actif avec le polling
+
+  // Deux appels par minute. Le bandeau reste en rte-direct (pollNow), comme avec
+  // le flux : sa valeur ne change pas de méthodologie selon que le flux est là
+  // ou non. Les couleurs régionales (acv-ademe) viennent de /v1/intensity/now/all.
+  async function pollAll() {
+    const avant = JSON.stringify(intensites);
+    await Promise.all([pollNow(), fetchIntensites()]);
+    // La donnée ne change qu'au cycle du poller (15 min) : on ne redessine la
+    // carte que si une valeur a bougé.
+    if (JSON.stringify(intensites) !== avant) render(vueId);
+  }
+  function startFallback() {
+    if (pollTimer !== null) return; // déjà en repli : jamais de second timer
+    $('live').title = POLL_TITLE;
+    pollTimer = setInterval(pollAll, POLL_MS);
+    retryTimer = setInterval(openStream, SSE_RETRY_MS);
+  }
+  function stopFallback() {
+    if (pollTimer === null) return; // cas nominal : rien à arrêter
+    clearInterval(pollTimer);
+    clearInterval(retryTimer);
+    pollTimer = retryTimer = null;
+    $('live').title = LIVE_TITLE;
+  }
+  function openStream() {
+    if (es) es.close(); // une tentative précédente peut encore être en cours
+    let src;
+    try {
+      src = es = new EventSource('/v1/intensity/stream');
+    } catch (e) { startFallback(); return; } // EventSource indisponible
+    src.addEventListener('open', stopFallback);
+    src.addEventListener('intensity', (evt) => {
       const j = JSON.parse(evt.data);
       setLive(j.intensity, j.timestamp, true);
     });
-    es.onerror = () => { $('live').classList.remove('on'); };
-  } catch (e) { setInterval(pollNow, 60000); }
+    src.onerror = () => {
+      $('live').classList.remove('on');
+      // CONNECTING : coupure ordinaire, le navigateur reconnecte seul.
+      // CLOSED : refus définitif (503 au plafond SSE…), il ne reconnectera pas.
+      if (src.readyState === EventSource.CLOSED) {
+        src.close();
+        startFallback();
+      }
+    };
+  }
+  openStream();
 
   // ---- fenêtres favorables (les 2 cadres, réponse additive) ----
   async function fenetre(cadre, elId) {

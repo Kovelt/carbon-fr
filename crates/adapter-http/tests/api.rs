@@ -2155,6 +2155,45 @@ async fn hydrogene_page_and_datasets_are_served() {
 }
 
 #[tokio::test]
+async fn hydrogene_page_falls_back_to_polling_when_the_stream_is_refused() {
+    // Au plafond de connexions SSE le serveur répond 503 (`Retry-After: 30`) ;
+    // un `EventSource` natif passe alors en `CLOSED` et ne reconnecte jamais :
+    // sans repli, la carte resterait figée. La page détecte ce cas et bascule
+    // sur un polling (bandeau `/v1/intensity/now` + couleurs régionales
+    // `/v1/intensity/now/all`), avec une nouvelle tentative d'ouverture du
+    // flux. La CI n'a pas de moteur JS : on verrouille ici la présence du
+    // mécanisme (pas son exécution, vérifiée dans un navigateur).
+    let response = get(build(FakeRepo::default()), "/hydrogene").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let page = String::from_utf8_lossy(&bytes);
+    for (marker, role) in [
+        (
+            "readyState === EventSource.CLOSED",
+            "détection du refus définitif du flux",
+        ),
+        ("setInterval(pollAll", "polling de repli"),
+        (
+            "Promise.all([pollNow(), fetchIntensites()])",
+            "bandeau national en rte-direct (comme avec le flux) + couleurs régionales",
+        ),
+        (
+            "setInterval(openStream",
+            "nouvelle tentative d'ouverture du flux",
+        ),
+        (
+            "clearInterval(pollTimer)",
+            "arrêt du polling quand le flux se rouvre",
+        ),
+    ] {
+        assert!(
+            page.contains(marker),
+            "repli /hydrogene : `{marker}` absent ({role})"
+        );
+    }
+}
+
+#[tokio::test]
 async fn hydrogene_page_is_embeddable_by_the_site_only() {
     // Le site vitrine iframe la carte : `frame-ancestors` prime sur le
     // `X-Frame-Options: SAMEORIGIN` posé globalement par le reverse proxy.

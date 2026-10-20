@@ -8,8 +8,11 @@ nominaux (national + régional, `rte-direct` + `acv-ademe`) et cas d'erreur
 
 1. Ouvrir le dossier `bruno/` dans Bruno (*Open Collection*).
 2. Sélectionner l'environnement **Local** (variable `baseUrl`, défaut
-   `http://localhost:8080`).
-3. Lancer l'API : `DATABASE_URL=… cargo run -p server` (voir le README racine).
+   `http://localhost:8080`) — ou **Production**, voir
+   [plus bas](#environnement-production).
+3. Lancer l'API en local (PostgreSQL jetable + `cargo run -p server`) : pas à
+   pas dans [Lancer l'API en local](../README.md#lancer-lapi-en-local), au
+   README racine.
 
 En ligne de commande (Bruno CLI) :
 
@@ -28,6 +31,26 @@ bru run --env Local
 > `DATABASE_URL=… cargo run -p server -- mint-key` (affichée une seule fois) ; positionner
 > `apiKey` en variable d'environnement. `{{webhookId}}` (pour la suppression)
 > se copie depuis le `id` renvoyé par la requête de création.
+
+## Environnement Production
+
+L'environnement **Production** (`environments/Production.bru`) pointe `baseUrl`
+sur l'instance hébergée, `https://carbon-fr-api.kovelt.fr`. Depuis `bruno/` :
+
+```bash
+bru run intensity-now-national.bru --env Production   # une requête : à privilégier
+bru run --env Production                              # la collection entière : à éviter
+```
+
+> ⚠️ **Prudence : c'est la production, pas un bac à sable.** L'instance
+> hébergée peut activer la limite de débit anonyme (60 req/min, `429`
+> au-delà — cf. « Tier hébergé » au README racine ; désactivée au 2026-10-20,
+> aucun en-tête `RateLimit-*` servi) : ne pas enchaîner la collection
+> entière. Elle contient aussi des requêtes qui **écrivent** :
+> `visit-record.bru` (« Enregistrer une visite ») incrémente le compteur
+> public de visites, et les `webhook-*.bru` exigent une clé API (`{{apiKey}}`)
+> puis créent ou suppriment de vrais abonnements. Lancer plutôt les requêtes de
+> lecture une à une, depuis Bruno ou avec `bru run <fichier>.bru`.
 
 ## Contenu
 

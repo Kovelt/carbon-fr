@@ -8,6 +8,49 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Ajouté
+
+- **OpenAPI : exemples et en-têtes** (PROD-API-6, plan I10) : un exemple de
+  réponse `200` sur les quatre lectures les plus consultées
+  (`/v1/intensity/now`, `/v1/mix`, `/v1/intensity/forecast`,
+  `/v1/intensity/greenest-window`), tirés de réponses réelles du 2026-10-20
+  (horodatages tels que servis, valeurs arrondies, paramètres cités dans la
+  description), `now` et `forecast` portant l'`index` (ADR-0033) — Swagger UI
+  les affiche pré-remplis ; deux tests les valident contre leur schéma (clés,
+  types, enum, bornes, propriétés requises) et contre eux-mêmes (`index` =
+  bande de la valeur, `count` = taille de `data`, parts du mix à 1). Les
+  réponses et en-têtes posés par les middlewares, jusqu'ici absents du spec,
+  sont documentés en lisant les constantes du code (`CACHEABLE_PATHS`,
+  valeur du `Cache-Control`, noms des en-têtes de quota) :
+  `Cache-Control: public, max-age=60` sur la réponse `200` des 23 lectures
+  stables ; pour le tier hébergé (ADR-0015, opt-in), sur les 29 opérations
+  `/v1` : `RateLimit-Limit`/`RateLimit-Remaining` sur chaque réponse `2xx`
+  (posés sur toute réponse admise par le quota), et les réponses partagées
+  `429` `rate_limited` (`RateLimit-*` + `Retry-After`) et `401`
+  `unauthorized` (`WWW-Authenticate`) — jamais sur `/health*` ni sur un
+  préflight. Un test d'intégration confronte la spec aux en-têtes réellement
+  envoyés par un routeur au tier hébergé actif ; instantané régénéré.
+  **SemVer : aucun** (documentation du contrat, aucun comportement modifié).
+  Au passage (issue #161) : quand la série prévue vient du cache, `from` peut
+  précéder de moins de 15 min le premier point — à traiter à part.
+
+### Modifié
+
+- Trace HTTP : le `503` du plafond de connexions SSE (reconnaissable à son
+  `Retry-After`) n'est plus classé en défaillance par `TraceLayer` — il était
+  journalisé en `error` à chaque client refusé, alors que c'est un refus de
+  charge nominal, compté par `carbonfr_sse_connections_rejected_total`. Le
+  handler le journalise désormais en `warn` (plafond et total des refus). Les
+  autres 5xx, dont le 503 du délai de traitement, restent en `error`
+  (classifieur `ExpectedOverloadAsSuccess`, testé unitairement).
+
+### Corrigé
+
+- `carbonfr-adapter-webhook` : trois liens rustdoc vers des items privés ou
+  `#[cfg(test)]` faisaient échouer `cargo doc` strict sur tout le workspace
+  (sans effet sur la CI, qui ne documente que les crates publiées) ; remplacés
+  par de simples mentions de code.
+
 ### Sécurité
 
 - **`rustls-webpki`, `webpki-roots` et `webpki-root-certs` mis à jour sur trois
@@ -27,23 +70,6 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   que le déploiement n'utilise pas) ; `webpki-root-certs` reste dans le
   lockfile sans être résolu dans aucun jeu de features. Montée imposée par la
   porte CI ; aucun changement d'API ni de borne dans `Cargo.toml`.
-
-### Modifié
-
-- Trace HTTP : le `503` du plafond de connexions SSE (reconnaissable à son
-  `Retry-After`) n'est plus classé en défaillance par `TraceLayer` — il était
-  journalisé en `error` à chaque client refusé, alors que c'est un refus de
-  charge nominal, compté par `carbonfr_sse_connections_rejected_total`. Le
-  handler le journalise désormais en `warn` (plafond et total des refus). Les
-  autres 5xx, dont le 503 du délai de traitement, restent en `error`
-  (classifieur `ExpectedOverloadAsSuccess`, testé unitairement).
-
-### Corrigé
-
-- `carbonfr-adapter-webhook` : trois liens rustdoc vers des items privés ou
-  `#[cfg(test)]` faisaient échouer `cargo doc` strict sur tout le workspace
-  (sans effet sur la CI, qui ne documente que les crates publiées) ; remplacés
-  par de simples mentions de code.
 
 ### SDK TypeScript
 

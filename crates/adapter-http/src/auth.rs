@@ -484,8 +484,8 @@ pub async fn enforce(State(state): State<AuthState>, request: Request, next: Nex
         Some(remaining) => {
             let mut response = next.run(request).await;
             let h = response.headers_mut();
-            h.insert("ratelimit-limit", limit.into());
-            h.insert("ratelimit-remaining", remaining.into());
+            h.insert(RATELIMIT_LIMIT_HEADER, limit.into());
+            h.insert(RATELIMIT_REMAINING_HEADER, remaining.into());
             response
         }
         None => rate_limited_response(limit),
@@ -523,6 +523,12 @@ fn auth_failure_response(
     failure()
 }
 
+/// En-têtes de quota (brouillon IETF *RateLimit header fields*), posés par
+/// [`enforce`] sur **toute** réponse admise par le quota et sur le 429 ; les
+/// mêmes noms sont documentés dans l'OpenAPI (`carbonfr_openapi`).
+pub(crate) const RATELIMIT_LIMIT_HEADER: &str = "ratelimit-limit";
+pub(crate) const RATELIMIT_REMAINING_HEADER: &str = "ratelimit-remaining";
+
 /// 429 « quota dépassé » avec en-têtes `RateLimit-*` et `Retry-After`.
 fn rate_limited_response(limit: u32) -> Response {
     let mut response = error_response(
@@ -532,8 +538,8 @@ fn rate_limited_response(limit: u32) -> Response {
         "quota dépassé",
     );
     let h = response.headers_mut();
-    h.insert("ratelimit-limit", limit.into());
-    h.insert("ratelimit-remaining", 0.into());
+    h.insert(RATELIMIT_LIMIT_HEADER, limit.into());
+    h.insert(RATELIMIT_REMAINING_HEADER, 0.into());
     // Réessai au début de la minute suivante.
     let retry = 60 - (time::OffsetDateTime::now_utc().unix_timestamp() % 60);
     if let Ok(v) = retry.to_string().parse() {

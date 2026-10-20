@@ -725,7 +725,12 @@ where
 /// du poller (~15 min) ou au démarrage (catalogues, constantes versionnées).
 /// Exclus volontairement : le SSE (`/v1/intensity/stream`), les endpoints à
 /// clé (`/v1/webhooks…`), le compteur de visiteurs (`/v1/stats`) et les sondes.
-const CACHEABLE_PATHS: &[&str] = &[
+/// Valeur de `Cache-Control` posée sur les réponses `200` des lectures stables
+/// (middleware [`cache_control`]) — et documentée telle quelle dans l'OpenAPI
+/// (`carbonfr_openapi::document_middleware_responses`), pour ne jamais diverger.
+pub(crate) const STABLE_CACHE_CONTROL: &str = "public, max-age=60";
+
+pub(crate) const CACHEABLE_PATHS: &[&str] = &[
     "/v1/intensity/now",
     "/v1/intensity/now/all",
     "/v1/intensity/index",
@@ -768,7 +773,7 @@ async fn cache_control(
     if cacheable && response.status() == axum::http::StatusCode::OK {
         response.headers_mut().insert(
             axum::http::header::CACHE_CONTROL,
-            axum::http::HeaderValue::from_static("public, max-age=60"),
+            axum::http::HeaderValue::from_static(STABLE_CACHE_CONTROL),
         );
     }
     response

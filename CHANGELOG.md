@@ -6,6 +6,25 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### Modifié
+
+- Trace HTTP : le `503` du plafond de connexions SSE (reconnaissable à son
+  `Retry-After`) n'est plus classé en défaillance par `TraceLayer` — il était
+  journalisé en `error` à chaque client refusé, alors que c'est un refus de
+  charge nominal, compté par `carbonfr_sse_connections_rejected_total`. Le
+  handler le journalise désormais en `warn` (plafond et total des refus). Les
+  autres 5xx, dont le 503 du délai de traitement, restent en `error`
+  (classifieur `ExpectedOverloadAsSuccess`, testé unitairement).
+
+### Corrigé
+
+- `carbonfr-adapter-webhook` : trois liens rustdoc vers des items privés ou
+  `#[cfg(test)]` faisaient échouer `cargo doc` strict sur tout le workspace
+  (sans effet sur la CI, qui ne documente que les crates publiées) ; remplacés
+  par de simples mentions de code.
+
 ## [0.11.0] - 2026-10-20
 
 Clôture côté code de l'itération I9 du [plan](docs/plan-iterations.md) —

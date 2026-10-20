@@ -21,13 +21,14 @@ docs {
   `format=csv` (ou l'en-tête `Accept: text/csv`, qui revient au même ;
   `format` prime sur `Accept`). Réponse `text/csv; charset=utf-8` en pièce
   jointe (`Content-Disposition`), écrite en flux : une ligne d'en-tête
-  `timestamp,intensity,unit,region,methodology,methodology_version,vintage`
+  `timestamp,intensity,unit,region,methodology,methodology_version,vintage,index`
   puis une ligne par mesure (`methodology_version` : 1 pour `rte-direct`,
-  1 ou 2 pour `acv-ademe`). Nécessite que l'historique ait été backfillé
+  1 ou 2 pour `acv-ademe` ; `index` : l'index qualitatif du point, ADR-0033).
+  Nécessite que l'historique ait été backfillé
   (`carbonfr-server backfill`).
 }
 
 assert {
   res.status: eq 200
-  res.body: contains timestamp,intensity,unit,region,methodology,methodology_version,vintage
+  res.body: contains timestamp,intensity,unit,region,methodology,methodology_version,vintage,index
 }

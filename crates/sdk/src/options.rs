@@ -1,4 +1,4 @@
-//! Paramètres optionnels des 27 méthodes REST de `crate::methods` (le
+//! Paramètres optionnels des 28 méthodes REST de `crate::methods` (le
 //! flux SSE a les siens, `crate::stream::IntensityStreamOptions`) — un struct
 //! `#[derive(Default)]` à champs publics par méthode qui a au moins un
 //! paramètre réellement optionnel, sur le patron déjà posé par

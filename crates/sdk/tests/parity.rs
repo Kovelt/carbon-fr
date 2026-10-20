@@ -35,6 +35,7 @@ const COVERED: &[(&str, &str)] = &[
     ("greenest_window", "CarbonFr::greenest_window"),
     ("intensity_below", "CarbonFr::below"),
     ("intensity_date", "CarbonFr::intensity_date"),
+    ("intensity_index", "CarbonFr::intensity_index"),
     ("intensity_now", "CarbonFr::intensity_now"),
     ("intensity_now_all", "CarbonFr::intensity_now_all"),
     ("intensity_stats", "CarbonFr::intensity_stats"),

@@ -12,12 +12,13 @@
 //! [`Estimator`], [`EligibilityFramework`], [`Interval`], [`FlowDirection`],
 //! [`ThresholdDirection`], [`WebhookStatus`], [`EligibilitySignalVerdict`].
 //!
-//! **Ouvert** : [`EligibilitySignalProvenance`] (`sdk-spec.json`
-//! `enums_to_duplicate.EligibilitySignalProvenance.open = true`) — même
-//! doctrine que [`crate::Region`] : `#[non_exhaustive]` + variante
-//! [`EligibilitySignalProvenance::Other`], pour ne jamais faire échouer la
-//! désérialisation d'un signal si le serveur ajoute une provenance avant la
-//! prochaine version du SDK.
+//! **Ouverts** : [`EligibilitySignalProvenance`] (`sdk-spec.json`
+//! `enums_to_duplicate.EligibilitySignalProvenance.open = true`) et
+//! [`IntensityIndex`] (index qualitatif, ADR-0033) — même doctrine que
+//! [`crate::Region`] : `#[non_exhaustive]` + variante `Other`
+//! ([`EligibilitySignalProvenance::Other`], [`IntensityIndex::Other`]), pour
+//! ne jamais faire échouer la désérialisation d'une réponse si le serveur
+//! ajoute une provenance ou une bande avant la prochaine version du SDK.
 
 use std::fmt;
 
@@ -286,6 +287,103 @@ impl<'de> Deserialize<'de> for EligibilitySignalProvenance {
     }
 }
 
+/// Index qualitatif d'une intensité carbone (ADR-0033, barème `index@1`) :
+/// cinq bandes **absolues** en gCO₂eq/kWh, séparées par les bornes
+/// 20 · 64,8 · 100 · 200 — **basses incluses, hautes exclues** (`[a, b[` :
+/// 20 g est `low`, 19,9 g est `very-low`). Un seul barème pour toutes les
+/// méthodologies et toutes les régions ; le catalogue des bornes et de leurs
+/// sources est servi par `GET /v1/intensity/index`
+/// ([`CarbonFr::intensity_index`](crate::CarbonFr::intensity_index)).
+///
+/// Porté par le champ `index` de [`IntensityResponse`](crate::IntensityResponse),
+/// de [`HistoryPoint`](crate::HistoryPoint), de
+/// [`ForecastPointBody`](crate::ForecastPointBody) (calculé sur `expected`) et
+/// de chaque événement du flux SSE (`IntensityEvent`, feature `stream`) :
+/// `Some` face à un serveur ≥ 0.11, `None` face à un serveur plus ancien.
+///
+/// **Ouvert** : `#[non_exhaustive]` **et** variante [`IntensityIndex::Other`],
+/// comme [`crate::Region`] — une bande ajoutée un jour par le serveur
+/// (nouveau barème `index@2`, donc nouvel ADR) arrive en `Other(libellé)` au
+/// lieu de faire échouer la désérialisation de la réponse entière (doctrine
+/// d'ADR-0031 décision 5). Pas d'`Ord` : la variante `Other` n'a pas de rang
+/// connu ; pour ordonner des bandes, lire `min`/`max` du catalogue
+/// ([`IndexBand`](crate::IndexBand)).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum IntensityIndex {
+    /// `< 20` gCO₂eq/kWh.
+    VeryLow,
+    /// `20 ≤ x < 64,8` gCO₂eq/kWh — sous le seuil RFNBO de 18 gCO₂eq/MJ.
+    Low,
+    /// `64,8 ≤ x < 100` gCO₂eq/kWh — sous le seuil de la taxonomie européenne.
+    Moderate,
+    /// `100 ≤ x < 200` gCO₂eq/kWh.
+    High,
+    /// `≥ 200` gCO₂eq/kWh.
+    VeryHigh,
+    /// Libellé de bande non reconnu par cette version du SDK — transmis tel
+    /// quel.
+    Other(String),
+}
+
+impl IntensityIndex {
+    /// Libellé HTTP, identique à la valeur servie dans le champ `index` :
+    /// `very-low`, `low`, `moderate`, `high` ou `very-high` ; pour
+    /// [`IntensityIndex::Other`], le libellé tel que reçu.
+    pub fn as_str(&self) -> &str {
+        match self {
+            IntensityIndex::VeryLow => "very-low",
+            IntensityIndex::Low => "low",
+            IntensityIndex::Moderate => "moderate",
+            IntensityIndex::High => "high",
+            IntensityIndex::VeryHigh => "very-high",
+            IntensityIndex::Other(label) => label.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for IntensityIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for IntensityIndex {
+    fn from(label: &str) -> Self {
+        match label {
+            "very-low" => IntensityIndex::VeryLow,
+            "low" => IntensityIndex::Low,
+            "moderate" => IntensityIndex::Moderate,
+            "high" => IntensityIndex::High,
+            "very-high" => IntensityIndex::VeryHigh,
+            other => IntensityIndex::Other(other.to_string()),
+        }
+    }
+}
+
+impl From<String> for IntensityIndex {
+    fn from(label: String) -> Self {
+        IntensityIndex::from(label.as_str())
+    }
+}
+
+/// Sérialisé comme le libellé HTTP (`as_str`), comme [`crate::Region`].
+impl Serialize for IntensityIndex {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// Désérialisé depuis n'importe quel libellé (`From<String>` : un libellé
+/// inconnu devient [`IntensityIndex::Other`], jamais une erreur — cf. la doc
+/// du type), comme [`crate::Region`].
+impl<'de> Deserialize<'de> for IntensityIndex {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let label = String::deserialize(deserializer).map_err(D::Error::custom)?;
+        Ok(IntensityIndex::from(label))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,5 +438,56 @@ mod tests {
             EligibilitySignalProvenance::from("measured-2027"),
             EligibilitySignalProvenance::Other(_)
         ));
+    }
+
+    #[test]
+    fn intensity_index_round_trips_known_slugs() {
+        for (slug, expected) in [
+            ("very-low", IntensityIndex::VeryLow),
+            ("low", IntensityIndex::Low),
+            ("moderate", IntensityIndex::Moderate),
+            ("high", IntensityIndex::High),
+            ("very-high", IntensityIndex::VeryHigh),
+        ] {
+            let index = IntensityIndex::from(slug);
+            assert_eq!(index, expected);
+            assert_eq!(index.as_str(), slug);
+            assert_eq!(index.to_string(), slug);
+            assert_eq!(IntensityIndex::from(slug.to_string()), expected);
+        }
+    }
+
+    #[test]
+    fn intensity_index_unknown_slug_stays_open() {
+        let index = IntensityIndex::from("nouvelle-bande");
+        assert_eq!(index.as_str(), "nouvelle-bande");
+        assert_eq!(index.to_string(), "nouvelle-bande");
+        assert!(matches!(index, IntensityIndex::Other(_)));
+        assert!(matches!(
+            IntensityIndex::from("nouvelle-bande".to_string()),
+            IntensityIndex::Other(_)
+        ));
+    }
+
+    #[test]
+    fn intensity_index_serde_round_trips_known_and_unknown_slugs() {
+        for slug in ["very-low", "low", "moderate", "high", "very-high"] {
+            let index = IntensityIndex::from(slug);
+            assert!(!matches!(index, IntensityIndex::Other(_)), "{slug}");
+            let json = serde_json::to_string(&index).expect("sérialisation");
+            assert_eq!(json, format!("\"{slug}\""));
+            let back: IntensityIndex = serde_json::from_str(&json).expect("désérialisation");
+            assert_eq!(back, index);
+        }
+
+        // Un libellé inconnu se désérialise en `Other` (jamais d'erreur) et
+        // se réserialise à l'identique.
+        let unknown: IntensityIndex =
+            serde_json::from_str("\"nouvelle-bande\"").expect("libellé inconnu toléré");
+        assert_eq!(unknown, IntensityIndex::Other("nouvelle-bande".to_string()));
+        let json = serde_json::to_string(&unknown).expect("sérialisation");
+        assert_eq!(json, "\"nouvelle-bande\"");
+        let back: IntensityIndex = serde_json::from_str(&json).expect("désérialisation");
+        assert_eq!(back, unknown);
     }
 }

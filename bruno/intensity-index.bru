@@ -1,0 +1,22 @@
+meta {
+  name: Index qualitatif — barème
+  type: http
+  seq: 48
+}
+
+get {
+  url: {{baseUrl}}/v1/intensity/index
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.version: eq 1
+  res.body.unit: eq gCO2eq/kWh
+  res.body.bands.length: eq 5
+  res.body.bands[0].label: eq very-low
+  res.body.bands[4].label: eq very-high
+  res.body.thresholds.length: eq 4
+  res.body.thresholds[1].value: eq 64.8
+}

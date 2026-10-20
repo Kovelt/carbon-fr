@@ -27,6 +27,7 @@ use futures_core::Stream;
 use serde::Deserialize;
 
 use crate::client::CarbonFr;
+use crate::enums::IntensityIndex;
 use crate::error::{CarbonFrError, ProblemDetails};
 use crate::region::Region;
 
@@ -105,6 +106,10 @@ pub struct IntensityEvent {
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: time::OffsetDateTime,
     pub intensity: f64,
+    /// Index qualitatif de `intensity` (ADR-0033), `None` face à un serveur
+    /// ≤ 0.10.
+    #[serde(default)]
+    pub index: Option<IntensityIndex>,
     pub methodology: String,
     pub methodology_version: u32,
     pub unit: String,
@@ -467,11 +472,29 @@ mod tests {
         (format!("http://{addr}"), handle)
     }
 
+    /// Bande de l'index qualitatif (ADR-0033, barème `index@1` : bornes
+    /// 20 · 64,8 · 100 · 200, basses incluses, hautes exclues) d'une valeur,
+    /// pour que chaque trame de test porte l'`index` que servirait le serveur.
+    fn index_slug(intensity: f64) -> &'static str {
+        if intensity < 20.0 {
+            "very-low"
+        } else if intensity < 64.8 {
+            "low"
+        } else if intensity < 100.0 {
+            "moderate"
+        } else if intensity < 200.0 {
+            "high"
+        } else {
+            "very-high"
+        }
+    }
+
     fn intensity_frame(region: &str, intensity: f64) -> AxumSseEvent {
         let body = serde_json::json!({
             "region": region,
             "timestamp": "2026-09-25T12:00:00Z",
             "intensity": intensity,
+            "index": index_slug(intensity),
             "methodology": "rte-direct",
             "methodology_version": 1,
             "unit": "gCO2eq/kWh",
@@ -569,9 +592,38 @@ mod tests {
         let first = stream.next().await.expect("1er événement").expect("ok");
         assert_eq!(first.region, "national");
         assert!((first.intensity - 42.0).abs() < f64::EPSILON);
+        assert_eq!(first.index, Some(IntensityIndex::Low));
 
         let second = stream.next().await.expect("2e événement").expect("ok");
         assert_eq!(second.region, "bretagne");
+        assert_eq!(second.index, Some(IntensityIndex::VeryLow));
+    }
+
+    // --- Index qualitatif (ADR-0033) ------------------------------------------
+
+    /// `index` est optionnel : un serveur ≤ 0.10 ne l'envoie pas (`None`, jamais
+    /// une erreur de décodage), et une bande inconnue d'un serveur plus récent
+    /// reste ouverte (`IntensityIndex::Other`).
+    #[test]
+    fn event_index_is_optional_and_open() {
+        let mut body = serde_json::json!({
+            "region": "national",
+            "timestamp": "2026-09-25T12:00:00Z",
+            "intensity": 42.0,
+            "methodology": "rte-direct",
+            "methodology_version": 1,
+            "unit": "gCO2eq/kWh",
+        });
+        let legacy: IntensityEvent =
+            serde_json::from_value(body.clone()).expect("événement d'un serveur ancien");
+        assert_eq!(legacy.index, None);
+
+        body["index"] = serde_json::json!("nouvelle-bande");
+        let future: IntensityEvent = serde_json::from_value(body).expect("bande inconnue tolérée");
+        assert_eq!(
+            future.index,
+            Some(IntensityIndex::Other("nouvelle-bande".to_string()))
+        );
     }
 
     // --- Reconnexion après coupure serveur ----------------------------------

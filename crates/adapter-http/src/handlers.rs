@@ -578,13 +578,15 @@ pub(crate) struct DateRangeQuery {
 /// servi en pièce jointe (`text/csv; charset=utf-8`, avec
 /// `Content-Disposition: attachment; filename="carbon-fr_intensity_<région>_<from>_<to>.csv"`)
 /// et écrit en flux : une ligne d'en-tête
-/// `timestamp,intensity,unit,region,methodology,methodology_version,vintage`,
+/// `timestamp,intensity,unit,region,methodology,methodology_version,vintage,index`,
 /// puis une ligne par mesure (séparateur `,`, fin de ligne `\n`, aucun
 /// guillemet), avec les mêmes valeurs que `data` en JSON. La colonne
 /// `methodology_version` (entier : `acv-ademe` 1 = production, 2 =
 /// consommation ; `rte-direct` = 1) n'existe qu'en CSV et distingue les deux
-/// versions d'`acv-ademe`. Une plage sans mesure donne l'en-tête seul. Le
-/// format pouvant dépendre de `Accept`, la réponse porte `Vary: Accept`.
+/// versions d'`acv-ademe` ; `index` (dernière colonne, ADR-0033) est l'index
+/// qualitatif du point, identique à `data[].index` en JSON. Une plage sans
+/// mesure donne l'en-tête seul. Le format pouvant dépendre de `Accept`, la
+/// réponse porte `Vary: Accept`.
 ///
 /// Les **erreurs** (400, 404, 5xx) restent des Problem Details
 /// (`application/problem+json`), même quand le CSV est demandé. La fenêtre
@@ -601,7 +603,7 @@ pub(crate) struct DateRangeQuery {
                 (HistoryResponse = "application/json"),
                 (
                     String = "text/csv",
-                    example = json!("timestamp,intensity,unit,region,methodology,methodology_version,vintage\n2024-01-01T00:00:00Z,52,gCO2eq/kWh,national,rte-direct,1,definitive\n2024-01-01T00:15:00Z,51,gCO2eq/kWh,national,rte-direct,1,definitive\n")
+                    example = json!("timestamp,intensity,unit,region,methodology,methodology_version,vintage,index\n2024-01-01T00:00:00Z,52,gCO2eq/kWh,national,rte-direct,1,definitive,low\n2024-01-01T00:15:00Z,51,gCO2eq/kWh,national,rte-direct,1,definitive,low\n")
                 )
             )
         ),
@@ -1792,6 +1794,21 @@ pub(crate) async fn methodologies() -> Json<MethodologiesResponse> {
 )]
 pub(crate) async fn regions() -> Json<RegionsResponse> {
     Json(RegionsResponse::catalog())
+}
+
+/// `GET /v1/intensity/index` — catalogue du barème de l'index qualitatif
+/// (ADR-0033, `index@1`) : les cinq bandes `very-low` → `very-high`, leurs
+/// bornes (`[min, max[`, gCO₂eq/kWh) et la source de chaque borne. Même rôle
+/// que `/v1/factors` pour l'ACV : la légende est **auditable** ; la carte
+/// `/hydrogene` la lit au chargement au lieu de coder ses classes en dur.
+#[utoipa::path(
+    get,
+    path = "/v1/intensity/index",
+    responses((status = 200, description = "Barème de l'index qualitatif (5 bandes, 4 bornes sourcées)", body = crate::dto::IntensityIndexResponse)),
+    tag = "intensité"
+)]
+pub(crate) async fn intensity_index() -> Json<crate::dto::IntensityIndexResponse> {
+    Json(crate::dto::IntensityIndexResponse::catalog())
 }
 
 /// Paramètre de `GET /v1/factors`.

@@ -61,3 +61,16 @@ Enquête préalable (2026-07-03, sources et licences vérifiées sur pièces —
 - **Inclure ADEME `hyd01-sites` tout de suite** — *reporté* : licence non taguée sur ce dataset précis ; demande écrite d'abord (gouvernance, précédent ADR-0024).
 - **GISCO/NUTS pour les contours** — *écarté* : clause commerciale EuroGeographics (famille des clauses NC déjà refusées).
 - **Éligibilité affichée par site** — *rejeté* : violerait le périmètre d'ADR-0025 (donnée niveau site absente) et la neutralité — c'est un garde-fou, pas une limitation technique.
+
+---
+
+## Addendum 2026-10-20 — légende alignée sur l'index qualitatif (ADR-0033)
+
+La décision 5 classait les régions en cinq couleurs sur `<25, 25-45, 45-70, 70-100, ≥100 gCO₂eq/kWh` : des bornes choisies pour l'**étalement visuel** de la rampe bleue sur le régional `acv-ademe`, sans source et sans exposition par l'API. L'[ADR-0033](0033-index-qualitatif-intensite.md) (point 4 de la décision de Morgan du 2026-10-20) les **remplace** par les cinq bandes de son barème `index@1` — `very-low` `< 20`, `low` `20 – 64,8`, `moderate` `64,8 – 100`, `high` `100 – 200`, `very-high` `≥ 200` gCO₂eq/kWh —, des seuils sourcés (facteurs ADEME, RFNBO 18 gCO₂eq/MJ, taxonomie européenne, demi-facteur gaz). Ce qui change et ce qui ne change pas :
+
+- **La légende lit l'API** : les bandes sont **lues au chargement dans `GET /v1/intensity/index`** au lieu d'être codées dans la page ; si le catalogue est injoignable, la page se replie sur les mêmes bornes (`20 · 64,8 · 100 · 200`), embarquées.
+- **Couleurs inchangées** : la rampe séquentielle bleue à 5 classes (une par mode clair/sombre, retournée en sombre) et sa validation par script restent celles de la décision 5 ; seules les bornes et les libellés de la légende changent.
+- **Couleur par l'`index` servi** : chaque région est colorée par l'`index` que l'API sert avec sa mesure (`GET /v1/intensity/now/all?methodology=acv-ademe`), et non plus par la comparaison de sa valeur à des classes locales ; l'infobulle d'une région et le bandeau national affichent la **bande** à côté de la valeur (pour le bandeau, celle de la valeur `rte-direct`, qu'elle vienne du flux SSE ou du repli en polling).
+- **Conséquence visuelle assumée** : moins de nuances entre les régions nucléaires (Centre-Val de Loire, Auvergne-Rhône-Alpes, Normandie : presque toujours `very-low`), plus de contraste pour les régions à pointe fossile (Île-de-France, Bretagne, Pays de la Loire, PACA) — c'est l'information, pas l'esthétique, qui prime. **Une seule échelle dans le produit** : l'API, les SDK et la carte parlent des mêmes bandes.
+
+La décision 6 (neutralité) est inchangée : la couleur reste un signal **réseau**, jamais une éligibilité du site, et la réserve d'`acv-ademe` « basé production » (ADR-0008) vaut pour les bandes comme pour les valeurs — une région importatrice peut apparaître `high` ou `very-high` quand ses centrales de pointe tournent.

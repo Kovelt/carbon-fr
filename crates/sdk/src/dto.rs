@@ -49,7 +49,7 @@ use time::OffsetDateTime;
 
 use crate::enums::{
     EligibilityFramework, EligibilitySignalProvenance, EligibilitySignalVerdict, Estimator,
-    FlowDirection, Interval, Methodology, ThresholdDirection, WebhookStatus,
+    FlowDirection, IntensityIndex, Interval, Methodology, ThresholdDirection, WebhookStatus,
 };
 use crate::region::Region;
 
@@ -69,6 +69,10 @@ pub struct IntensityResponse {
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
     pub intensity: IntensityValue,
+    /// Index qualitatif de `intensity` (ADR-0033), `None` face à un serveur
+    /// ≤ 0.10.
+    #[serde(default)]
+    pub index: Option<IntensityIndex>,
     pub methodology: Methodology,
     pub methodology_version: u32,
     /// Étiquette de révision de la mesure (ADR-0006) — pas un horodatage,
@@ -96,6 +100,10 @@ pub struct HistoryPoint {
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
     pub intensity: f64,
+    /// Index qualitatif de `intensity` (ADR-0033), `None` face à un serveur
+    /// ≤ 0.10.
+    #[serde(default)]
+    pub index: Option<IntensityIndex>,
     pub vintage: String,
 }
 
@@ -176,6 +184,10 @@ pub struct ForecastPointBody {
     pub expected: f64,
     pub lower: f64,
     pub upper: f64,
+    /// Index qualitatif de `expected` (ADR-0033), `None` face à un serveur
+    /// ≤ 0.10.
+    #[serde(default)]
+    pub index: Option<IntensityIndex>,
 }
 
 /// Réponse de `GET /v1/intensity/forecast`.
@@ -530,6 +542,58 @@ pub struct FactorsResponse {
     /// Facteur de pertes T&D appliqué, `None` hors méthode consommation.
     pub td_loss_factor: Option<f64>,
     pub factors: Vec<FactorEntry>,
+}
+
+// --- Index qualitatif (`/v1/intensity/index`) ------------------------------
+
+/// Une bande du barème de l'index qualitatif (`IntensityIndexResponse::bands`),
+/// intervalle `[min, max[` en gCO₂eq/kWh.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct IndexBand {
+    /// La valeur servie dans le champ `index` des réponses.
+    pub label: IntensityIndex,
+    /// Borne basse **incluse** (gCO₂eq/kWh), `None` pour la première bande.
+    pub min: Option<f64>,
+    /// Borne haute **exclue** (gCO₂eq/kWh), `None` pour la dernière bande.
+    pub max: Option<f64>,
+    /// Ce que la bande signifie, en une phrase.
+    pub description: String,
+}
+
+/// Une borne du barème et ce qui la fonde (`IntensityIndexResponse::thresholds`).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct IndexThreshold {
+    /// Valeur de la borne (gCO₂eq/kWh) : haute **exclue** de `below`, basse
+    /// **incluse** de `above`.
+    pub value: f64,
+    /// Bande sous la borne.
+    pub below: IntensityIndex,
+    /// Bande à partir de la borne.
+    pub above: IntensityIndex,
+    /// Source de la borne : texte réglementaire ou facteur publié.
+    pub source: String,
+    /// Où la vérifier : URL absolue d'un texte officiel, ou chemin relatif à
+    /// cette API (`/v1/factors?…`) — d'où un `String`, pas un type `Url`.
+    pub url: String,
+}
+
+/// Réponse de `GET /v1/intensity/index` — barème de l'index qualitatif
+/// (ADR-0033) : même rôle que `/v1/factors` pour l'ACV, la légende du champ
+/// `index` est **auditable** (bornes et sources) au lieu d'être codée en dur
+/// côté client. Serveur ≥ 0.11 (404 avant).
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct IntensityIndexResponse {
+    /// Version du barème (`index@1`) : immuable, toute révision est une
+    /// nouvelle version.
+    pub version: u32,
+    pub unit: String,
+    /// Les cinq bandes, de la plus basse à la plus haute (`[min, max[`).
+    pub bands: Vec<IndexBand>,
+    /// Les quatre bornes, croissantes, chacune avec sa source.
+    pub thresholds: Vec<IndexThreshold>,
+    /// Ce que l'index dit — et ne dit pas.
+    pub note: String,
+    pub source: String,
 }
 
 // --- Prix (`/v1/price*`, `/v1/cost-reference`) ------------------------------

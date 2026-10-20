@@ -1,4 +1,4 @@
-//! Les 27 méthodes REST du contrat `/v1` restant après le socle + le flux SSE
+//! Les 28 méthodes REST du contrat `/v1` restant après le socle + le flux SSE
 //! (ADR-0031 décision 8 ; `intensity_stream` vit dans `crate::stream`). Un
 //! seul `impl CarbonFr` : chaque méthode résout l'URL (`CarbonFr::url`),
 //! ajoute ses paramètres de requête (`crate::query::QueryPairsExt`), envoie
@@ -15,10 +15,10 @@ use crate::client::CarbonFr;
 use crate::dto::{
     CostReferenceResponse, CreateWebhookRequest, CreatedWebhookResponse, ExchangesHistoryResponse,
     ExchangesResponse, FactorsResponse, ForecastResponse, GreenestWindowResponse, HistoryResponse,
-    IntensityAllResponse, IntensityResponse, MethodologiesResponse, MixResponse,
-    PriceHistoryResponse, PriceResponse, RegionsResponse, RenewableResponse, RulesetsResponse,
-    ScheduleResponse, SlotsResponse, StatsResponse, VisitStatsResponse, WeatherHistoryResponse,
-    WeatherResponse, WebhookListResponse,
+    IntensityAllResponse, IntensityIndexResponse, IntensityResponse, MethodologiesResponse,
+    MixResponse, PriceHistoryResponse, PriceResponse, RegionsResponse, RenewableResponse,
+    RulesetsResponse, ScheduleResponse, SlotsResponse, StatsResponse, VisitStatsResponse,
+    WeatherHistoryResponse, WeatherResponse, WebhookListResponse,
 };
 use crate::error::CarbonFrError;
 use crate::options::{
@@ -345,6 +345,15 @@ impl CarbonFr {
                 .opt_display("version", options.version);
         }
         self.request_json(self.request_for_url(Method::GET, url))
+            .await
+    }
+
+    // --- Index qualitatif (`/v1/intensity/index`) --------------------------
+
+    /// `GET /v1/intensity/index` — barème de l'index qualitatif (ADR-0033) :
+    /// cinq bandes, bornes et sources ; serveur ≥ 0.11 (404 avant).
+    pub async fn intensity_index(&self) -> Result<IntensityIndexResponse, CarbonFrError> {
+        self.request_json(self.request(Method::GET, "v1/intensity/index")?)
             .await
     }
 

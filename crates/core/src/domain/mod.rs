@@ -13,6 +13,7 @@ mod forecast;
 mod forecast_acv;
 mod forecast_point;
 mod horizon_bands;
+mod index;
 mod intensity;
 mod load;
 mod measurement;
@@ -48,6 +49,7 @@ pub use forecast::{
 pub use forecast_acv::{ACV_FORECAST_ID, ACV_FORECAST_VERSION, acv_ademe_forecast};
 pub use forecast_point::{ForecastPoint, ModelVersion};
 pub use horizon_bands::HorizonBands;
+pub use index::IntensityIndex;
 pub use intensity::CarbonIntensity;
 pub use load::LoadRecord;
 pub use measurement::{GenerationMix, Measurement, MeasurementKey};

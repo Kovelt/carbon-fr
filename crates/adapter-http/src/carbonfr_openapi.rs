@@ -34,6 +34,7 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
         crate::handlers::intensity_now,
         crate::handlers::intensity_now_all,
         crate::handlers::intensity_date,
+        crate::handlers::intensity_index,
         crate::handlers::intensity_stats,
         crate::handlers::mix,
         crate::handlers::exchanges,
@@ -65,6 +66,10 @@ use utoipa::openapi::OpenApi as OpenApiDoc;
     components(schemas(
         crate::dto::IntensityResponse,
         crate::dto::IntensityAllResponse,
+        crate::dto::IntensityIndexLabel,
+        crate::dto::IntensityIndexResponse,
+        crate::dto::IndexBand,
+        crate::dto::IndexThreshold,
         crate::dto::HistoryResponse,
         crate::dto::StatsResponse,
         crate::dto::MixResponse,
@@ -226,6 +231,7 @@ mod tests {
             "/v1/intensity/now",
             "/v1/intensity/now/all",
             "/v1/intensity/date",
+            "/v1/intensity/index",
             "/v1/intensity/stats",
             "/v1/mix",
             "/v1/regions",
@@ -373,6 +379,29 @@ mod tests {
         assert!(all.iter().all(|p| p["name"] != "region"));
     }
 
+    /// L'exemple `text/csv` de `/v1/intensity/date` dans le document OpenAPI
+    /// commence par l'en-tête réellement écrit (`export::HEADER`) : la doc
+    /// publiée ne peut pas dériver du contrat CSV (colonne `index` comprise).
+    #[test]
+    fn csv_example_header_matches_the_export_contract() {
+        let doc = serde_json::to_value(document()).expect("sérialisation OpenAPI");
+        let example = doc["paths"]["/v1/intensity/date"]["get"]["responses"]["200"]["content"]
+            ["text/csv"]["example"]
+            .as_str()
+            .expect("exemple text/csv de /v1/intensity/date");
+        assert_eq!(
+            example.lines().next(),
+            Some(crate::export::HEADER.trim_end())
+        );
+        for row in example.lines().skip(1) {
+            assert_eq!(
+                row.split(',').count(),
+                crate::export::HEADER.trim_end().split(',').count(),
+                "{row}"
+            );
+        }
+    }
+
     #[test]
     fn document_lists_servers() {
         let doc = document();
@@ -392,6 +421,10 @@ mod tests {
         for schema in [
             "IntensityResponse",
             "IntensityAllResponse",
+            "IntensityIndexLabel",
+            "IntensityIndexResponse",
+            "IndexBand",
+            "IndexThreshold",
             "RegionsResponse",
             "RegionInfo",
             "MixResponse",

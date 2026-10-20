@@ -1470,10 +1470,10 @@ const HISTORY_URI: &str = "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-
 
 /// Le CSV exact attendu pour [`hourly_series`] sur [`HISTORY_URI`] : l'en-tête
 /// puis une ligne par mesure.
-const HISTORY_CSV: &str = "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n\
-    1970-01-01T00:00:00Z,20,gCO2eq/kWh,national,rte-direct,1,definitive\n\
-    1970-01-01T01:00:00Z,21,gCO2eq/kWh,national,rte-direct,1,definitive\n\
-    1970-01-01T02:00:00Z,22,gCO2eq/kWh,national,rte-direct,1,definitive\n";
+const HISTORY_CSV: &str = "timestamp,intensity,unit,region,methodology,methodology_version,vintage,index\n\
+    1970-01-01T00:00:00Z,20,gCO2eq/kWh,national,rte-direct,1,definitive,low\n\
+    1970-01-01T01:00:00Z,21,gCO2eq/kWh,national,rte-direct,1,definitive,low\n\
+    1970-01-01T02:00:00Z,22,gCO2eq/kWh,national,rte-direct,1,definitive,low\n";
 
 /// En-tête de requête `Accept` optionnel, au format attendu par [`get_with`].
 fn accept_header(accept: Option<&str>) -> Vec<(&str, &str)> {
@@ -1628,7 +1628,7 @@ async fn intensity_date_defaults_to_unchanged_json() {
             .map(String::as_str)
             .collect();
         point_keys.sort_unstable();
-        assert_eq!(point_keys, ["intensity", "timestamp", "vintage"]);
+        assert_eq!(point_keys, ["index", "intensity", "timestamp", "vintage"]);
         assert_eq!(body["count"], 3);
     }
 }
@@ -1664,8 +1664,8 @@ async fn intensity_date_csv_headers() {
     assert_eq!(header_of(&response, "cache-control"), "public, max-age=60");
     assert_eq!(
         text_body(response).await,
-        "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n\
-         1970-01-01T00:00:00Z,30,gCO2eq/kWh,bretagne,acv-ademe,1,definitive\n"
+        "timestamp,intensity,unit,region,methodology,methodology_version,vintage,index\n\
+         1970-01-01T00:00:00Z,30,gCO2eq/kWh,bretagne,acv-ademe,1,definitive,low\n"
     );
 }
 
@@ -1719,7 +1719,7 @@ async fn assert_csv_matches_json(app: axum::Router, uri: &str, version: &str) ->
 
     assert_eq!(
         csv.lines().next(),
-        Some("timestamp,intensity,unit,region,methodology,methodology_version,vintage")
+        Some("timestamp,intensity,unit,region,methodology,methodology_version,vintage,index")
     );
     assert!(csv.ends_with('\n'));
     let rows = csv_rows(&csv);
@@ -1727,7 +1727,7 @@ async fn assert_csv_matches_json(app: axum::Router, uri: &str, version: &str) ->
     assert_eq!(rows.len(), data.len());
     assert_eq!(rows.len() as u64, json["count"].as_u64().unwrap());
     for (row, point) in rows.iter().zip(data) {
-        assert_eq!(row.len(), 7, "{row:?}");
+        assert_eq!(row.len(), 8, "{row:?}");
         assert_eq!(row[0], point["timestamp"].as_str().unwrap());
         assert_eq!(
             row[1].parse::<f64>().unwrap(),
@@ -1738,6 +1738,7 @@ async fn assert_csv_matches_json(app: axum::Router, uri: &str, version: &str) ->
         assert_eq!(row[4], json["methodology"].as_str().unwrap());
         assert_eq!(row[5], version, "{row:?}");
         assert_eq!(row[6], point["vintage"].as_str().unwrap());
+        assert_eq!(row[7], point["index"].as_str().unwrap());
     }
     rows.len()
 }
@@ -1820,7 +1821,7 @@ async fn intensity_date_csv_of_an_empty_range_is_header_only() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         text_body(response).await,
-        "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n"
+        "timestamp,intensity,unit,region,methodology,methodology_version,vintage,index\n"
     );
 }
 
@@ -1936,7 +1937,7 @@ async fn intensity_date_csv_streams_a_full_year_in_bounded_chunks() {
     }
     assert_eq!(
         first_line.as_deref(),
-        Some(&b"timestamp,intensity,unit,region,methodology,methodology_version,vintage"[..])
+        Some(&b"timestamp,intensity,unit,region,methodology,methodology_version,vintage,index"[..])
     );
     assert_eq!(lines, 1 + n);
     assert!(chunks > 100, "corps servi en {chunks} paquet(s) seulement");
@@ -3947,4 +3948,210 @@ async fn tiny_responses_are_left_uncompressed() {
     assert!(header(&response, "content-encoding").is_none());
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     assert_eq!(&body[..], b"ok");
+}
+
+// ---- Index qualitatif (ADR-0033) ------------------------------------------
+
+/// `GET /v1/intensity/now` porte `index`, dérivé de la mesure (15 g → `very-low`).
+#[tokio::test]
+async fn intensity_now_carries_the_qualitative_index() {
+    let body = json_body(get(app(Some(national_measurement())), "/v1/intensity/now").await).await;
+    assert_eq!(body["index"], "very-low");
+
+    let mut hot = national_measurement();
+    hot.intensity = CarbonIntensity::new(64.8).unwrap();
+    let body = json_body(get(app(Some(hot)), "/v1/intensity/now").await).await;
+    assert_eq!(body["index"], "moderate");
+}
+
+/// Chaque entrée de `/v1/intensity/now/all` porte son propre index.
+#[tokio::test]
+async fn intensity_now_all_entries_carry_the_index() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let repo = FakeRepo {
+        series: vec![
+            acv_measurement(Region::National, t0, 19.9),
+            acv_measurement(Region::Bretagne, t0, 250.0),
+            acv_measurement(Region::Occitanie, t0, 100.0),
+        ],
+        ..Default::default()
+    };
+    let body =
+        json_body(get(build(repo), "/v1/intensity/now/all?methodology=acv-ademe").await).await;
+    let bands: Vec<&str> = body["regions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["index"].as_str().unwrap())
+        .collect();
+    assert_eq!(bands, ["very-low", "very-high", "high"]);
+}
+
+/// `/v1/intensity/date` : un index par point, bornes basses incluses.
+#[tokio::test]
+async fn intensity_date_points_carry_the_index() {
+    let t0 = OffsetDateTime::UNIX_EPOCH;
+    let series = [0.0, 20.0, 64.8, 100.0, 200.0]
+        .into_iter()
+        .enumerate()
+        .map(|(i, g)| point(t0 + Duration::minutes(15 * i as i64), g))
+        .collect();
+    let body = json_body(
+        get(
+            app_with_series(series),
+            "/v1/intensity/date?from=1970-01-01T00:00:00Z&to=1970-01-01T02:00:00Z",
+        )
+        .await,
+    )
+    .await;
+    let bands: Vec<&str> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["index"].as_str().unwrap())
+        .collect();
+    assert_eq!(bands, ["very-low", "low", "moderate", "high", "very-high"]);
+}
+
+/// La prévision indexe son estimation centrale `expected` (historique
+/// constant à 150 g → `high`), pas ses bornes.
+#[tokio::test]
+async fn forecast_points_carry_the_index_of_expected() {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 150.0))
+        .collect();
+    let body = json_body(
+        get(
+            app_with_series(series),
+            "/v1/intensity/forecast?from=1970-03-02T00:00:00Z&horizon_hours=1",
+        )
+        .await,
+    )
+    .await;
+    let points = body["data"].as_array().unwrap();
+    assert_eq!(points.len(), 4);
+    for pt in points {
+        let expected = pt["expected"].as_f64().unwrap();
+        assert!((expected - 150.0).abs() < 1.0, "expected = {expected}");
+        assert_eq!(pt["index"], "high");
+    }
+}
+
+/// Chaque événement du flux SSE porte `index`.
+#[tokio::test]
+async fn stream_events_carry_the_index() {
+    use tokio_stream::StreamExt;
+
+    let (app, _limiter, updates) =
+        app_with_limits(FakeRepo::default(), 10, std::time::Duration::from_secs(5));
+    let response = get(app, "/v1/intensity/stream").await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let mut hot = national_measurement();
+    hot.intensity = CarbonIntensity::new(250.0).unwrap();
+    updates
+        .send(carbonfr_core::domain::IntensityUpdate::from_measurement(
+            &hot,
+        ))
+        .unwrap();
+    let mut data = response.into_body().into_data_stream();
+    let chunk = tokio::time::timeout(std::time::Duration::from_secs(2), data.next())
+        .await
+        .expect("un événement attendu")
+        .expect("un événement attendu")
+        .unwrap();
+    let text = String::from_utf8_lossy(&chunk);
+    let json = text
+        .lines()
+        .find_map(|line| line.strip_prefix("data: "))
+        .expect("ligne data");
+    let event: serde_json::Value = serde_json::from_str(json).unwrap();
+    assert_eq!(event["intensity"], 250.0);
+    assert_eq!(event["index"], "very-high");
+    assert_eq!(event["unit"], "gCO2eq/kWh");
+}
+
+/// `GET /v1/intensity/index` : le barème `index@1`, auditable (5 bandes
+/// jointives, 4 bornes sourcées), servi avec `Cache-Control` comme les
+/// autres catalogues.
+#[tokio::test]
+async fn intensity_index_catalog_is_served_and_cacheable() {
+    let response = get(app(None), "/v1/intensity/index").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(header_of(&response, "cache-control"), "public, max-age=60");
+    let body = json_body(response).await;
+    assert_eq!(body["version"], 1);
+    assert_eq!(body["unit"], "gCO2eq/kWh");
+
+    let bands = body["bands"].as_array().unwrap();
+    let labels: Vec<&str> = bands.iter().map(|b| b["label"].as_str().unwrap()).collect();
+    assert_eq!(labels, ["very-low", "low", "moderate", "high", "very-high"]);
+    assert!(bands[0]["min"].is_null());
+    assert!(bands[4]["max"].is_null());
+    for pair in bands.windows(2) {
+        assert_eq!(pair[0]["max"], pair[1]["min"]);
+        assert!(!pair[0]["description"].as_str().unwrap().is_empty());
+    }
+
+    let thresholds = body["thresholds"].as_array().unwrap();
+    let values: Vec<f64> = thresholds
+        .iter()
+        .map(|t| t["value"].as_f64().unwrap())
+        .collect();
+    assert_eq!(values, [20.0, 64.8, 100.0, 200.0]);
+    assert_eq!(thresholds[1]["below"], "low");
+    assert_eq!(thresholds[1]["above"], "moderate");
+    assert!(
+        thresholds[1]["source"]
+            .as_str()
+            .unwrap()
+            .contains("2023/1184")
+    );
+    assert!(
+        thresholds[1]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("https://eur-lex.europa.eu/")
+    );
+    // Les bornes ancrées sur les facteurs ADEME renvoient vers `/v1/factors`.
+    assert!(
+        thresholds[0]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("/v1/factors")
+    );
+    assert!(!body["note"].as_str().unwrap().is_empty());
+}
+
+/// La carte `/hydrogene` lit le barème de l'index dans `/v1/intensity/index`
+/// (ADR-0033 §4) au lieu de coder ses classes en dur, colore chaque région par
+/// l'`index` servi avec sa mesure et affiche la bande du national dans le
+/// bandeau. Sans moteur JS en CI : présence des marqueurs, pas exécution.
+#[tokio::test]
+async fn hydrogene_page_reads_the_index_catalog() {
+    let page = text_body(get(build(FakeRepo::default()), "/hydrogene").await).await;
+    for (marker, role) in [
+        (
+            "fetch('/v1/intensity/index')",
+            "lecture du barème dans l'API",
+        ),
+        (
+            "id=\"legende-bandes\"",
+            "légende rendue depuis les bandes du barème",
+        ),
+        ("index: m.index", "index servi avec chaque mesure régionale"),
+        (
+            "bands.findIndex((b) => b.label === mes.index)",
+            "couleur par l'index servi",
+        ),
+        ("id=\"live-index\"", "bande du national dans le bandeau"),
+    ] {
+        assert!(page.contains(marker), "carte : `{marker}` absent ({role})");
+    }
+    assert!(
+        !page.contains("CLASSES = [25, 45, 70, 100]"),
+        "les anciennes classes codées en dur ne doivent plus exister"
+    );
 }

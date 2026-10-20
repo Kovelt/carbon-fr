@@ -28,14 +28,16 @@
 //!   méthodologie **du point** (le JSON de cette route ne porte que
 //!   l'identifiant) — `acv-ademe` 1 (production) et 2 (consommation) se
 //!   distinguent, `rte-direct` vaut 1 — ; `vintage` : le millésime du point ;
+//!   `index` : l'index qualitatif du point (ADR-0033, `very-low` → `very-high`),
+//!   le même que le champ `index` du JSON, en dernière colonne ;
 //! - une plage sans mesure donne l'en-tête seul (le même `200` que le JSON à
 //!   `data` vide).
 //!
 //! **Rien à échapper.** Aucune des valeurs écrites ne peut contenir `,`, `"` ni
 //! retour à la ligne : horodatage RFC 3339, nombre fini, unité constante, slug
 //! de région, identifiant de méthodologie validé contre une liste fermée,
-//! version entière (un `u32`) et code de millésime sont tous issus d'ensembles
-//! fermés ou de formats fixes. Le test
+//! version entière (un `u32`), code de millésime et slug d'index sont tous
+//! issus d'ensembles fermés ou de formats fixes. Le test
 //! `csv_fields_never_need_escaping` garde cet invariant : toute valeur future
 //! qui l'enfreindrait doit faire écrire un vrai échappement (RFC 4180) ici, pas
 //! y échapper silencieusement.
@@ -56,16 +58,18 @@
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::{IntoResponse, Response};
-use carbonfr_core::domain::Measurement;
+use carbonfr_core::domain::{IntensityIndex, Measurement};
 use time::{OffsetDateTime, UtcOffset};
 
 use crate::dto::{INTENSITY_UNIT, to_rfc3339};
 use crate::error::ApiError;
 
 /// Ligne d'en-tête du CSV : les noms des champs du JSON, plus
-/// `methodology_version` (propre au CSV : le JSON de la route n'a pas de version).
-/// Ordre et noms sont un contrat — les lecteurs positionnels en dépendent.
-const HEADER: &str = "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n";
+/// `methodology_version` (propre au CSV : le JSON de la route n'a pas de version),
+/// et `index` en dernière colonne (ADR-0033). Ordre et noms sont un contrat —
+/// les lecteurs positionnels en dépendent : une colonne ne s'ajoute qu'à la fin.
+pub(crate) const HEADER: &str =
+    "timestamp,intensity,unit,region,methodology,methodology_version,vintage,index\n";
 
 /// Nombre de lignes de mesure rendues par paquet de flux. Une ligne fait de ~60 à
 /// ~100 octets : un paquet pèse donc de 15 à 26 Kio — assez pour amortir le coût
@@ -276,10 +280,11 @@ fn render_rows(
         // Écrire dans un `String` ne peut pas échouer.
         let _ = writeln!(
             out,
-            "{at},{},{INTENSITY_UNIT},{region},{methodology},{},{}",
+            "{at},{},{INTENSITY_UNIT},{region},{methodology},{},{},{}",
             m.intensity.value(),
             m.methodology.version,
-            m.vintage.code()
+            m.vintage.code(),
+            IntensityIndex::of(m.intensity).slug()
         );
     }
     Ok((!out.is_empty()).then(|| Bytes::from(out)))
@@ -442,9 +447,9 @@ mod tests {
             .collect();
         assert_eq!(
             String::from_utf8(text).unwrap(),
-            "timestamp,intensity,unit,region,methodology,methodology_version,vintage\n\
-             1970-01-01T00:00:00Z,20,gCO2eq/kWh,national,rte-direct,1,definitive\n\
-             1970-01-01T00:15:00Z,38.84702345,gCO2eq/kWh,national,rte-direct,1,definitive\n"
+            "timestamp,intensity,unit,region,methodology,methodology_version,vintage,index\n\
+             1970-01-01T00:00:00Z,20,gCO2eq/kWh,national,rte-direct,1,definitive,low\n\
+             1970-01-01T00:15:00Z,38.84702345,gCO2eq/kWh,national,rte-direct,1,definitive,low\n"
         );
     }
 
@@ -480,6 +485,41 @@ mod tests {
             .map(|line| line.split(',').nth(5).unwrap())
             .collect();
         assert_eq!(versions, ["1", "1", "2"]);
+    }
+
+    /// `index` est dérivé de chaque point par le barème `index@1` (ADR-0033) :
+    /// une valeur sur une borne tombe dans la bande supérieure.
+    #[tokio::test]
+    async fn index_column_follows_the_band_of_each_point() {
+        let t0 = OffsetDateTime::UNIX_EPOCH;
+        let series = [0.0, 19.9, 20.0, 64.8, 100.0, 250.0]
+            .into_iter()
+            .enumerate()
+            .map(|(i, g)| measurement(t0 + time::Duration::minutes(15 * i as i64), g))
+            .collect();
+        let body = csv_body("national", "rte-direct", series).unwrap();
+        let text: Vec<u8> = chunks_of(body)
+            .await
+            .into_iter()
+            .flat_map(|chunk| chunk.unwrap())
+            .collect();
+        let text = String::from_utf8(text).unwrap();
+        let bands: Vec<&str> = text
+            .lines()
+            .skip(1)
+            .map(|line| line.split(',').nth(7).unwrap())
+            .collect();
+        assert_eq!(
+            bands,
+            [
+                "very-low",
+                "very-low",
+                "low",
+                "moderate",
+                "high",
+                "very-high"
+            ]
+        );
     }
 
     /// Plage vide : l'en-tête seul, en un seul paquet.
@@ -576,6 +616,9 @@ mod tests {
         for vintage in [Vintage::Tr, Vintage::Consolidated, Vintage::Definitive] {
             assert!(!needs_escaping(vintage.code()), "{}", vintage.code());
         }
+        for band in IntensityIndex::ALL {
+            assert!(!needs_escaping(band.slug()), "{}", band.slug());
+        }
         for methodology in crate::handlers::KNOWN_METHODOLOGIES {
             assert!(!needs_escaping(methodology), "{methodology}");
         }
@@ -585,8 +628,9 @@ mod tests {
             let text = version.to_string();
             assert!(text.chars().all(|c| c.is_ascii_digit()), "{text}");
         }
-        // L'en-tête : les 7 colonnes du contrat, dans l'ordre, sur une seule
-        // ligne, sans guillemets.
+        // L'en-tête : les 8 colonnes du contrat, dans l'ordre, sur une seule
+        // ligne, sans guillemets — `index` (ADR-0033) ajoutée en dernier : une
+        // colonne ne s'ajoute qu'à la fin (contrat de `HEADER`).
         assert_eq!(
             HEADER.trim_end().split(',').collect::<Vec<_>>(),
             [
@@ -596,7 +640,8 @@ mod tests {
                 "region",
                 "methodology",
                 "methodology_version",
-                "vintage"
+                "vintage",
+                "index"
             ]
         );
         assert_eq!(HEADER.matches('\n').count(), 1);

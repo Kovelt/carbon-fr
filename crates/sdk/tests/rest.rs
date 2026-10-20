@@ -1,4 +1,4 @@
-//! Tests hermétiques des 27 méthodes REST (`crate::methods` — le flux SSE a
+//! Tests hermétiques des 28 méthodes REST (`crate::methods` — le flux SSE a
 //! les siens dans `src/stream.rs`) : un serveur `axum` local par test
 //! (patron déjà posé par `client.rs`/`stream.rs`, `crates/adapter-webhook`)
 //! vérifie (a) la méthode HTTP et le chemin reçus, (b) certains paramètres de
@@ -205,7 +205,44 @@ async fn intensity_now_hits_expected_path_and_decodes_fixture() {
     assert_eq!(resp.region, Region::National); // valeur de la fixture, pas de la requête
     assert_eq!(resp.methodology, Methodology::RteDirect);
     assert!((resp.intensity.value - 34.0).abs() < f64::EPSILON);
+    assert_eq!(resp.index, Some(IntensityIndex::Low)); // 34 g : [20 ; 64,8[
     assert_eq!(resp.vintage, "tr");
+}
+
+/// Un serveur ≤ 0.10 ne sert pas `index` : le champ se décode en `None`, jamais
+/// en erreur ; une bande inconnue d'un serveur plus récent reste ouverte
+/// (`IntensityIndex::Other`, ADR-0033).
+#[tokio::test]
+async fn index_is_optional_for_older_servers() {
+    let legacy = r#"{"region":"national","timestamp":"2026-09-25T04:00:00Z","intensity":{"value":34.0,"unit":"gCO2eq/kWh"},"methodology":"rte-direct","methodology_version":1,"vintage":"tr"}"#;
+    let (base_url, _captured, _server) = spawn(
+        Method::GET,
+        "/v1/intensity/now",
+        FixtureResponse::json(legacy),
+    )
+    .await;
+    let resp = client(&base_url)
+        .intensity_now(IntensityNowOptions::default())
+        .await
+        .expect("réponse 200 (serveur ancien)");
+    assert_eq!(resp.index, None);
+    assert!((resp.intensity.value - 34.0).abs() < f64::EPSILON);
+
+    let future = r#"{"region":"national","timestamp":"2026-09-25T04:00:00Z","intensity":{"value":34.0,"unit":"gCO2eq/kWh"},"index":"nouvelle-bande","methodology":"rte-direct","methodology_version":1,"vintage":"tr"}"#;
+    let (base_url, _captured, _server) = spawn(
+        Method::GET,
+        "/v1/intensity/now",
+        FixtureResponse::json(future),
+    )
+    .await;
+    let resp = client(&base_url)
+        .intensity_now(IntensityNowOptions::default())
+        .await
+        .expect("réponse 200 (bande inconnue)");
+    assert_eq!(
+        resp.index,
+        Some(IntensityIndex::Other("nouvelle-bande".to_string()))
+    );
 }
 
 #[tokio::test]
@@ -235,6 +272,8 @@ async fn intensity_date_sends_required_from_to_and_decodes_series() {
     assert_eq!(resp.count, 94);
     assert_eq!(resp.data.len(), 94);
     assert_eq!(resp.data[0].vintage, "tr");
+    assert_eq!(resp.data[0].index, Some(IntensityIndex::Low)); // 21 g
+    assert_eq!(resp.data[1].index, Some(IntensityIndex::VeryLow)); // 19 g
 }
 
 #[tokio::test]
@@ -316,6 +355,7 @@ async fn forecast_decodes_confidence_interval() {
     assert_eq!(resp.count, 96);
     assert!(resp.data[0].lower <= resp.data[0].expected);
     assert!(resp.data[0].expected <= resp.data[0].upper);
+    assert_eq!(resp.data[0].index, Some(IntensityIndex::Low)); // expected = 35,9 g
 }
 
 #[tokio::test]
@@ -452,6 +492,7 @@ async fn intensity_now_all_decodes_regions_and_sends_methodology() {
     assert_eq!(resp.count, 3);
     assert_eq!(resp.regions.len(), 3);
     assert_eq!(resp.regions[0].region, Region::National);
+    assert_eq!(resp.regions[0].index, Some(IntensityIndex::Low)); // 41,7 g
     assert_eq!(resp.regions[1].region, Region::Bretagne);
     assert_eq!(resp.regions[2].methodology, Methodology::AcvAdeme);
 }
@@ -696,6 +737,71 @@ async fn factors_decodes_table() {
     assert_eq!(resp.methodology, Methodology::AcvAdeme);
     assert_eq!(resp.td_loss_factor, Some(0.072));
     assert!(resp.factors.iter().any(|f| f.filiere == "nucleaire"));
+}
+
+// --- Index qualitatif (ADR-0033) -------------------------------------------
+
+/// Le barème de l'index qualitatif (ADR-0033) se décode : cinq bandes
+/// jointives ouvertes aux deux extrémités, quatre bornes sourcées.
+#[tokio::test]
+async fn intensity_index_decodes_catalog() {
+    let (base_url, captured, _server) = spawn(
+        Method::GET,
+        "/v1/intensity/index",
+        FixtureResponse::json(fixture("intensity_index.json")),
+    )
+    .await;
+
+    let resp = client(&base_url)
+        .intensity_index()
+        .await
+        .expect("réponse 200");
+
+    let req = captured.take();
+    assert_eq!(req.method, "GET");
+    assert_eq!(req.path, "/v1/intensity/index");
+    assert_eq!(resp.version, 1);
+    assert_eq!(resp.unit, "gCO2eq/kWh");
+    assert!(!resp.note.is_empty());
+
+    // Cinq bandes, de la plus basse à la plus haute.
+    let labels: Vec<IntensityIndex> = resp.bands.iter().map(|b| b.label.clone()).collect();
+    assert_eq!(
+        labels,
+        vec![
+            IntensityIndex::VeryLow,
+            IntensityIndex::Low,
+            IntensityIndex::Moderate,
+            IntensityIndex::High,
+            IntensityIndex::VeryHigh,
+        ]
+    );
+    // Ouvertes aux extrémités, jointives entre elles : la borne haute (exclue)
+    // d'une bande est la borne basse (incluse) de la suivante.
+    assert_eq!(resp.bands[0].min, None);
+    assert_eq!(resp.bands[4].max, None);
+    for pair in resp.bands.windows(2) {
+        assert!(pair[0].max.is_some(), "{:?}", pair[0]);
+        assert_eq!(pair[0].max, pair[1].min);
+    }
+
+    // Quatre bornes croissantes, chacune entre deux bandes voisines et sourcée.
+    let values: Vec<f64> = resp.thresholds.iter().map(|t| t.value).collect();
+    assert_eq!(values, [20.0, 64.8, 100.0, 200.0]);
+    for (i, threshold) in resp.thresholds.iter().enumerate() {
+        assert_eq!(threshold.below, labels[i]);
+        assert_eq!(threshold.above, labels[i + 1]);
+        assert_eq!(Some(threshold.value), resp.bands[i].max);
+        assert!(!threshold.source.is_empty());
+        assert!(!threshold.url.is_empty());
+    }
+    assert_eq!(resp.thresholds[1].below, IntensityIndex::Low);
+    assert_eq!(resp.thresholds[1].above, IntensityIndex::Moderate);
+    assert!(
+        resp.thresholds[1]
+            .url
+            .starts_with("https://eur-lex.europa.eu/")
+    );
 }
 
 // --- Prix et coût de référence ----------------------------------------------

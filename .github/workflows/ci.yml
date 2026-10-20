@@ -136,6 +136,11 @@ jobs:
         run: npm ci
       - name: Typecheck + build
         run: npm run build
+      # Tests `node:test` du flux SSE (serveur HTTP local, sans réseau) ; ils
+      # importent `dist/`, d'où leur place après le build. Motif explicite :
+      # depuis Node 21, `node --test <dossier>` n'explore plus le dossier.
+      - name: Tests (node:test)
+        run: node --test test/*.test.mjs
 
   # Les trois jobs suivants concernent les crates publiées/publiables sur
   # crates.io : carbonfr-core et carbonfr-eligibility (ADR-0030 §1), rejointes

@@ -18,7 +18,6 @@ import type {
   MixResponse,
   PriceHistoryResponse,
   PriceResponse,
-  ProblemDetails,
   Region,
   RegionsResponse,
   RenewableResponse,
@@ -32,6 +31,8 @@ import type {
   WeatherResponse,
   WebhookListResponse,
 } from "./types.js";
+import { errorFromResponse } from "./errors.js";
+import { streamEvents, type StreamOptions } from "./stream.js";
 
 /** Instance hébergée par défaut. */
 export const DEFAULT_BASE_URL = "https://carbon-fr-api.kovelt.fr";
@@ -44,25 +45,6 @@ export interface CarbonFrOptions {
   apiKey?: string;
   /** Implémentation `fetch` à utiliser (défaut : `globalThis.fetch`). */
   fetch?: typeof fetch;
-}
-
-/**
- * Erreur API : porte le code HTTP et le corps **Problem Details** (RFC 9457).
- * `code` est l'identifiant court stable (`no_data`, `bad_request`, …) ; le
- * message reprend `detail` (sinon `title`).
- */
-export class CarbonFrError extends Error {
-  readonly status: number;
-  readonly code: string;
-  /** Corps Problem Details brut, si disponible. */
-  readonly problem: Partial<ProblemDetails>;
-  constructor(status: number, body: Partial<ProblemDetails>) {
-    super(body.detail ?? body.title ?? `HTTP ${status}`);
-    this.name = "CarbonFrError";
-    this.status = status;
-    this.code = body.code ?? "error";
-    this.problem = body;
-  }
 }
 
 type QueryValue = string | number | boolean | undefined | null;
@@ -416,48 +398,33 @@ export class CarbonFr {
   // ─── Flux live (SSE) ────────────────────────────────────────────────────
 
   /**
-   * Flux temps réel des mises à jour d'intensité (Server-Sent Events).
+   * Flux temps réel des mises à jour d'intensité (Server-Sent Events), sans
+   * timeout total, avec **reconnexion automatique** (défaut ; `reconnect:
+   * false` la désactive).
+   *
+   * Fermeture du flux par le serveur, erreur de transport, délai d'inactivité
+   * dépassé (`idleTimeoutMs`, défaut 45 s sans aucun octet, keep-alive
+   * compris) ou réponse transitoire (408, 429, 5xx — dont le `503` du plafond
+   * de connexions SSE) : nouvelle connexion après un backoff exponentiel (par
+   * défaut 1 s, ×2, plafonné à 30 s ; remis au délai initial dès qu'une
+   * connexion aboutit). La reconnexion est silencieuse : la boucle reçoit
+   * simplement l'événement suivant. Les autres 4xx (clé ou paramètre
+   * invalide) lèvent aussitôt une `CarbonFrError`. Pas de `Last-Event-ID` :
+   * **des événements peuvent être perdus pendant une coupure**.
+   *
+   * L'arrêt par `signal` termine le générateur proprement (sans lever), même
+   * pendant une attente de reconnexion ou une lecture bloquée ; sortir de la
+   * boucle (`break`) ferme aussi la connexion.
    *
    * ```ts
    * const ac = new AbortController();
    * for await (const e of cf.stream({ below: 50, signal: ac.signal })) { ... }
    * ```
    */
-  async *stream(
-    opts: { region?: Region; below?: number; signal?: AbortSignal } = {},
-  ): AsyncGenerator<StreamEvent, void, unknown> {
-    const res = await this.fetchImpl(
-      this.buildUrl("/v1/intensity/stream", { region: opts.region, below: opts.below }),
-      { headers: { Accept: "text/event-stream", ...this.authHeaders() }, signal: opts.signal },
-    );
-    if (!res.ok || !res.body) throw await this.toError(res);
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let sep: number;
-      // Une trame SSE est terminée par une ligne vide (\n\n).
-      while ((sep = buffer.indexOf("\n\n")) >= 0) {
-        const frame = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        const data = frame
-          .split("\n")
-          .filter((l) => l.startsWith("data:"))
-          .map((l) => l.slice(5).trimStart())
-          .join("\n");
-        if (data) {
-          try {
-            yield JSON.parse(data) as StreamEvent;
-          } catch {
-            // Commentaire/keep-alive non-JSON : ignoré.
-          }
-        }
-      }
-    }
+  async *stream(opts: StreamOptions = {}): AsyncGenerator<StreamEvent, void, unknown> {
+    const url = this.buildUrl("/v1/intensity/stream", { region: opts.region, below: opts.below });
+    const headers = { Accept: "text/event-stream", ...this.authHeaders() };
+    yield* streamEvents((signal) => this.fetchImpl(url, { headers, signal }), opts);
   }
 
   // ─── Internes ───────────────────────────────────────────────────────────
@@ -479,7 +446,7 @@ export class CarbonFr {
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-    if (!res.ok) throw await this.toError(res);
+    if (!res.ok) throw await errorFromResponse(res);
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
@@ -496,15 +463,5 @@ export class CarbonFr {
 
   private authHeaders(): Record<string, string> {
     return this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {};
-  }
-
-  private async toError(res: Response): Promise<CarbonFrError> {
-    let body: Partial<ProblemDetails> = {};
-    try {
-      body = (await res.json()) as Partial<ProblemDetails>;
-    } catch {
-      // Corps non-JSON.
-    }
-    return new CarbonFrError(res.status, body);
   }
 }

@@ -69,6 +69,39 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `EventSource` absent).
   **SemVer : patch.**
 
+### SDK TypeScript
+
+- **`@carbon-fr/sdk` 0.4.0** (DX-2, publication npm par le tag `sdk-v0.4.0`
+  après merge) : `stream()` se **reconnecte automatiquement**, en parité avec
+  le SDK Rust, au lieu de s'arrêter en silence à la première coupure.
+  Fermeture du flux par le serveur, erreur de transport, délai d'inactivité
+  dépassé (aucun octet reçu, keep-alive compris ; il borne aussi l'attente
+  des en-têtes) ou réponse `408`/`429`/`5xx` — dont le `503` du plafond de
+  connexions SSE, `Retry-After` non lu — relancent une connexion après un
+  backoff exponentiel (×2, plafonné, remis au délai initial dès qu'une
+  connexion aboutit), sans limite de tentatives ni erreur intermédiaire.
+  Pas de `Last-Event-ID` : des événements peuvent être perdus pendant une
+  coupure (documenté).
+- **Options** (type exporté `StreamOptions` ; appel sans option inchangé) :
+  `idleTimeoutMs` (défaut `DEFAULT_IDLE_TIMEOUT_MS`, 45 000) et `reconnect`
+  — `false`, ou une `ReconnectPolicy` `{ initialBackoffMs, maxBackoffMs }`
+  (défauts `DEFAULT_INITIAL_BACKOFF_MS`, 1 000, et `DEFAULT_MAX_BACKOFF_MS`,
+  30 000). Une durée nulle, négative ou `NaN` lève une `RangeError`.
+- **Écart assumé avec le SDK Rust** : les autres 4xx (clé ou paramètre
+  invalide) lèvent aussitôt une `CarbonFrError`, sans rejouer — erreur de
+  configuration, pas panne passagère ; le Rust rejoue toute réponse.
+- **Changements de comportement** : aborter le `signal` termine désormais la
+  boucle proprement, sans exception, même pendant un backoff ou une lecture
+  bloquée (l'`AbortError` remontait à l'appelant en 0.3.0) ; un `break` ferme
+  la connexion. Avec `reconnect: false`, une fermeture serveur termine la
+  boucle et une erreur de transport ou HTTP est levée, comme en 0.3.0 ; le
+  délai d'inactivité y lève une `DOMException` nommée `TimeoutError`.
+- **Tests** : premiers tests du SDK TS, `node:test` sans dépendance (31 cas,
+  ~1,5 s, serveur `node:http` local) — réception et keep-alive, reconnexion
+  (fermeture, transport, inactivité, en-têtes), statuts rejoués ou levés,
+  arrêt, reconnexion désactivée, options. `npm test` (build puis
+  `node --test`) ; nouvelle étape « Tests (node:test) » du job CI du SDK.
+
 ### Documentation
 
 - Limite de descripteurs de fichiers (constat du déploiement du 2026-10-19) :

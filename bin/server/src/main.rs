@@ -38,9 +38,9 @@
 //! |------------------------------|----------------|-----------------------------------|
 //! | `DATABASE_URL`               | — (requis)     | DSN PostgreSQL                    |
 //! | `CARBONFR_BIND`              | `0.0.0.0:8080` | adresse d'écoute de l'API         |
-//! | `CARBONFR_HEADER_READ_TIMEOUT_SECS` | `30`    | délai hyper de lecture des en-têtes HTTP/1.1, **aussi** délai d'inactivité keep-alive entre deux requêtes (réarmé à chaque requête ; connexion fermée sans réponse au dépassement ; un flux SSE en cours n'est jamais concerné), > 0 — SEC-4. Derrière un proxy qui met ses connexions amont en pool (Traefik : `idleConnTimeout` 90 s), poser une valeur **supérieure** (ex. `120`) pour que le proxy ferme en premier |
+//! | `CARBONFR_HEADER_READ_TIMEOUT_SECS` | `180`   | délai hyper de lecture des en-têtes HTTP/1.1, **aussi** délai d'inactivité keep-alive entre deux requêtes (réarmé à chaque requête ; connexion fermée sans réponse au dépassement ; un flux SSE en cours n'est jamais concerné), > 0 — SEC-4. Le défaut dépasse les délais d'inactivité des pools amont courants (Traefik `idleConnTimeout` 90 s, Caddy 2 min, `reqwest`/Go 90 s) ; derrière un proxy en pool, garder une valeur **supérieure** au délai du proxy pour que ce soit lui qui ferme en premier (prod Kovelt : `120`) |
 //! | `CARBONFR_REQUEST_TIMEOUT_SECS` | `60`        | délai de traitement d'une requête (auth, corps, handler) → 503 `unavailable` au-delà ; n'affecte jamais un flux SSE ouvert ; garder ≥ 2 × `CARBONFR_DB_STATEMENT_TIMEOUT_MS` pour que Postgres tranche d'abord, > 0 — SEC-4 |
-//! | `CARBONFR_MAX_CONNECTIONS`   | `10000`        | plafond brut de connexions TCP servies simultanément (une tâche par connexion) : au-delà, l'accept **attend** qu'une connexion se termine (le backlog du noyau absorbe), rien n'est refusé ; borne mémoire/descripteurs en plus du plafond SSE, 1 à 1 000 000 — SEC-4 |
+//! | `CARBONFR_MAX_CONNECTIONS`   | `10000`        | plafond brut de connexions TCP servies simultanément (une tâche par connexion) : au-delà, l'accept **attend** qu'une connexion se termine (le backlog du noyau absorbe), rien n'est refusé ; borne mémoire/descripteurs en plus du plafond SSE, 1 à 1 000 000 — SEC-4. Chaque connexion consomme un descripteur de fichier : relever `ulimit -n` en conséquence (conteneur : soft 1 024 par défaut → `ulimits: nofile` dans le compose, `LimitNOFILE` en systemd, cf. `deploy/README.md` §2) |
 //! | `CARBONFR_SSE_MAX_CONNECTIONS` | `300`        | plafond global de connexions SSE simultanées (`/v1/intensity/stream`) → 503 `unavailable` + `Retry-After: 30` au-delà ; jauges `carbonfr_sse_connections_{active,max}`, compteur `carbonfr_sse_connections_rejected_total`, > 0 — SEC-1/PERF-2, ADR-0014 addendum 2026-09-26 |
 //! | `CARBONFR_POLL_SECS`         | `900` (15 min) | période d'ingestion ODRÉ (et TTL des caches de prévision), > 0 |
 //! | `CARBONFR_POLL_WINDOW_HOURS` | `3`            | largeur de la fenêtre glissante relue à chaque cycle (`IngestRecent`, rattrape un retard de publication ODRÉ sans appel supplémentaire), > 0, ADR-0003 addendum 2026-09-25 |
@@ -2059,10 +2059,14 @@ impl ServerConfig {
 }
 
 /// Délai par défaut de lecture des en-têtes / d'inactivité keep-alive
-/// (`CARBONFR_HEADER_READ_TIMEOUT_SECS`) : le défaut de hyper — que
-/// `axum::serve` laissait inactif faute de timer. Vise le self-hosting sans
-/// reverse proxy ; derrière un proxy en pool, poser plus (cf. docstring).
-const DEFAULT_HEADER_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+/// (`CARBONFR_HEADER_READ_TIMEOUT_SECS`) : 180 s, **au-dessus** des délais
+/// d'inactivité des pools amont courants (Traefik 90 s, Caddy 2 min,
+/// `reqwest`/Go 90 s), pour qu'un auto-hébergeur gardant le défaut ne voie
+/// jamais de `502` sur une connexion de pool fermée côté serveur (revue de
+/// release du 2026-10-19, plan I9) — et toujours borné face à un client lent
+/// sur ses en-têtes (slowloris). Le défaut de hyper (30 s), retenu jusqu'à la
+/// 0.10.0, était d'ailleurs inactif avec `axum::serve` faute de timer.
+const DEFAULT_HEADER_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// Plafond brut par défaut de connexions TCP servies simultanément
 /// (`CARBONFR_MAX_CONNECTIONS`). Large : borne de sûreté (mémoire, descripteurs,
@@ -2095,7 +2099,7 @@ fn parse_bounded_u64(name: &str, raw: Option<&str>, default: u64, max: u64) -> a
     Ok(value)
 }
 
-/// `CARBONFR_HEADER_READ_TIMEOUT_SECS` (défaut 30 s, 1 s à 1 j) — cf. `serve_http`.
+/// `CARBONFR_HEADER_READ_TIMEOUT_SECS` (défaut 180 s, 1 s à 1 j) — cf. `serve_http`.
 fn parse_header_read_timeout_secs(raw: Option<&str>) -> anyhow::Result<std::time::Duration> {
     parse_bounded_u64(
         "CARBONFR_HEADER_READ_TIMEOUT_SECS",
@@ -2942,7 +2946,7 @@ mod tests {
 
         assert_eq!(
             parse_header_read_timeout_secs(None).unwrap(),
-            Duration::from_secs(30)
+            Duration::from_secs(180)
         );
         assert_eq!(
             parse_header_read_timeout_secs(Some("120")).unwrap(),

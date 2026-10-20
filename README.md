@@ -184,7 +184,7 @@ Image de production via le [`Dockerfile`](Dockerfile) multi-stage (binaire `--re
 
 ```bash
 docker build -t carbon-fr .
-docker run -e DATABASE_URL=postgres://… -e CARBONFR_VISIT_SALT=… -p 8080:8080 carbon-fr
+docker run -e DATABASE_URL=postgres://… -e CARBONFR_VISIT_SALT=… -p 8080:8080 --ulimit nofile=65536:524288 carbon-fr
 ```
 
 Configuration via variables d'environnement — voir [`.env.example`](.env.example). Sondes : `GET /health` (liveness) et `GET /health/ready` (vérifie la base). Métriques **Prometheus** sous `GET /metrics` (fraîcheur du poller, volume ingéré, appels amont — à restreindre au scrapeur côté proxy en prod). Les migrations sont appliquées au démarrage.

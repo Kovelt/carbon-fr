@@ -22,6 +22,14 @@ carbon.example.fr {
 	# On l'écrase explicitement (audit 2026-08) — requis si l'API est configurée
 	# avec CARBONFR_REAL_IP_HEADER=x-real-ip (sinon l'en-tête est ignoré : le
 	# défaut de l'API lit le dernier segment de X-Forwarded-For).
+	# Pool de connexions amont : Caddy garde ses connexions inactives 2 min par
+	# défaut (transport http › keepalive). Le défaut de l'API
+	# (CARBONFR_HEADER_READ_TIMEOUT_SECS=180) est au-dessus : Caddy ferme en
+	# premier, jamais de 502 sur une connexion de pool fermée côté serveur. Si
+	# vous abaissez ce délai côté API, abaissez le keepalive ici EN DESSOUS :
+	#   transport http {
+	#       keepalive 60s
+	#   }
 	reverse_proxy 127.0.0.1:8080 {
 		header_up X-Real-IP {remote_host}
 		health_uri /health/ready

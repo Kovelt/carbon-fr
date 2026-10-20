@@ -37,6 +37,22 @@ export type FlowDirection = "import" | "export" | "balanced";
 /** Sens de franchissement d'un seuil de webhook. */
 export type ThresholdDirection = "below" | "above";
 
+/**
+ * Index qualitatif d'une intensité (ADR-0033, barème `index@1`) : cinq bandes
+ * absolues, bornes basses incluses et hautes exclues, en gCO₂eq/kWh —
+ * `very-low` < 20 ≤ `low` < 64,8 ≤ `moderate` < 100 ≤ `high` < 200 ≤ `very-high`.
+ * Un seul barème pour toutes les méthodologies et régions ; catalogue des
+ * bornes et de leurs sources : `intensityIndex()` (`GET /v1/intensity/index`).
+ * Tolère une future bande inconnue sans perdre l'autocomplétion.
+ */
+export type IntensityIndex =
+  | "very-low"
+  | "low"
+  | "moderate"
+  | "high"
+  | "very-high"
+  | (string & {});
+
 export interface IntensityValue {
   value: number;
   unit: string;
@@ -47,6 +63,8 @@ export interface IntensityResponse {
   region: string;
   timestamp: string;
   intensity: IntensityValue;
+  /** Index qualitatif de `intensity` (serveur ≥ 0.11 ; absent avant). */
+  index?: IntensityIndex;
   methodology: string;
   methodology_version: number;
   vintage: string;
@@ -101,6 +119,8 @@ export interface MixResponse {
 export interface HistoryPoint {
   timestamp: string;
   intensity: number;
+  /** Index qualitatif de `intensity` (serveur ≥ 0.11 ; absent avant). */
+  index?: IntensityIndex;
   vintage: string;
 }
 
@@ -146,6 +166,8 @@ export interface ForecastPoint {
   lower: number;
   /** Borne haute. */
   upper: number;
+  /** Index qualitatif de `expected` (serveur ≥ 0.11 ; absent avant). */
+  index?: IntensityIndex;
 }
 
 /** `GET /v1/intensity/forecast`. */
@@ -442,6 +464,43 @@ export interface FactorsResponse {
   td_loss_factor: number | null;
 }
 
+/** Une bande de l'index qualitatif (`IntensityIndexResponse.bands`). */
+export interface IndexBand {
+  /** La valeur servie dans le champ `index` des réponses. */
+  label: IntensityIndex;
+  /** Borne basse incluse (gCO₂eq/kWh) ; `null` pour la première bande. */
+  min: number | null;
+  /** Borne haute exclue (gCO₂eq/kWh) ; `null` pour la dernière bande. */
+  max: number | null;
+  description: string;
+}
+
+/** Une borne du barème et ce qui la fonde (`IntensityIndexResponse.thresholds`). */
+export interface IndexThreshold {
+  /** Valeur de la borne (gCO₂eq/kWh) : haute exclue de `below`, basse incluse de `above`. */
+  value: number;
+  below: IntensityIndex;
+  above: IntensityIndex;
+  /** Texte réglementaire ou facteur publié qui fonde la borne. */
+  source: string;
+  /** Où la vérifier (texte officiel, ou `/v1/factors` de cette API). */
+  url: string;
+}
+
+/** `GET /v1/intensity/index` : le barème de l'index qualitatif (ADR-0033), auditable. */
+export interface IntensityIndexResponse {
+  /** Version du barème (`index@1`), immuable. */
+  version: number;
+  unit: string;
+  /** Les cinq bandes, de la plus basse à la plus haute. */
+  bands: IndexBand[];
+  /** Les quatre bornes, croissantes, chacune avec sa source. */
+  thresholds: IndexThreshold[];
+  /** Ce que l'index dit — et ne dit pas. */
+  note: string;
+  source: string;
+}
+
 /** Une composante du prix (`GET /v1/price`). */
 export interface PriceComponent {
   /** `energie` | `acheminement` | `accise` | `commercialisation` | `tva`. */
@@ -564,6 +623,8 @@ export interface StreamEvent {
   region: string;
   timestamp: string;
   intensity: number;
+  /** Index qualitatif de `intensity` (serveur ≥ 0.11 ; absent avant). */
+  index?: IntensityIndex;
   methodology: string;
   methodology_version: number;
   unit: string;

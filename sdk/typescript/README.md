@@ -6,7 +6,7 @@ Client **TypeScript** de l'API [carbon-fr](https://github.com/Kovelt/carbon-fr) 
 - **Typé de bout en bout** : chaque endpoint de **données** `/v1` a sa méthode et son type de réponse (les endpoints d'exploitation/spec — `/health`, `/metrics`, `/v1/openapi.json` — ne sont pas exposés).
 - **Flux live** (SSE) exposé en `AsyncGenerator`, avec reconnexion automatique.
 
-> **Versions** : ce README documente la **0.4.0** (publication npm par le tag `sdk-v0.4.0`). Jusqu'à la 0.3.0, `stream()` n'a ni reconnexion ni délai d'inactivité (il s'arrête en silence à la première coupure) et un abort y lève une `AbortError` ; la 0.2.0 n'expose ni `intensityNowAll`, ni `regions`, ni `MixResponse.shares` ; la 0.1.0 n'expose ni `price`/`priceHistory`, ni `costReference`, ni `eligibilityRulesets`, ni l'option `eligibility` de `greenestWindow` — vérifier la version installée (`npm ls @carbon-fr/sdk`).
+> **Versions** : ce README documente la **0.5.0** (publication npm par le tag `sdk-v0.5.0`). Jusqu'à la 0.4.0, ni le champ `index` (index qualitatif, serveur ≥ 0.11) ni `intensityIndex()` n'existent ; jusqu'à la 0.3.0, `stream()` n'a ni reconnexion ni délai d'inactivité (il s'arrête en silence à la première coupure) et un abort y lève une `AbortError` ; la 0.2.0 n'expose ni `intensityNowAll`, ni `regions`, ni `MixResponse.shares` ; la 0.1.0 n'expose ni `price`/`priceHistory`, ni `costReference`, ni `eligibilityRulesets`, ni l'option `eligibility` de `greenestWindow` — vérifier la version installée (`npm ls @carbon-fr/sdk`).
 
 ## Installation
 
@@ -114,6 +114,7 @@ const cf = new CarbonFr({
 | `weather` · `weatherHistory` | `GET /v1/weather[/date]` |
 | `renewable` | `GET /v1/renewable` |
 | `methodologies` · `factors` · `regions` | méthodes, facteurs & catalogue des régions (`GET /v1/regions`) |
+| `intensityIndex` | `GET /v1/intensity/index` : barème de l'**index qualitatif** (`very-low` → `very-high`, bornes sourcées) — le champ `index` porté par `intensityNow`, `intensityNowAll`, `intensityDate`, `forecast` et `stream` (serveur ≥ 0.11) |
 | `price` · `priceHistory` | `GET /v1/price[/date]` (décomposition TRV, national uniquement — `region` accepté mais toute valeur non nationale renvoie une 400) |
 | `costReference` | `GET /v1/cost-reference` (LCOE, estimation) |
 | `visitStats` · `recordVisit` | compteur RGPD-friendly |

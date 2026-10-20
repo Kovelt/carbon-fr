@@ -1,7 +1,7 @@
 import type {
   CostReferenceResponse,
-  CreateWebhookRequest,
   CreatedWebhookResponse,
+  CreateWebhookRequest,
   EligibilityFramework,
   Estimator,
   ExchangesHistoryResponse,
@@ -11,6 +11,7 @@ import type {
   GreenestWindowResponse,
   HistoryResponse,
   IntensityAllResponse,
+  IntensityIndexResponse,
   IntensityResponse,
   Interval,
   MethodologiesResponse,
@@ -323,6 +324,15 @@ export class CarbonFr {
       methodology: opts.methodology,
       version: opts.version,
     });
+  }
+
+  /**
+   * Barème de l'index qualitatif (`index@1`, ADR-0033) : les cinq bandes
+   * `very-low` → `very-high`, leurs bornes et la source de chaque borne —
+   * la légende du champ `index`, auditable. Serveur ≥ 0.11 (404 avant).
+   */
+  intensityIndex() {
+    return this.get<IntensityIndexResponse>("/v1/intensity/index");
   }
 
   // ─── Prix (ADR-0023/0024) ───────────────────────────────────────────────

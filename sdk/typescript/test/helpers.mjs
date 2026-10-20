@@ -40,12 +40,22 @@ export function openSse(res) {
   res.flushHeaders();
 }
 
+/** Bande de l'index qualitatif d'une intensité (barème `index@1`, ADR-0033). */
+export function indexOf(intensity) {
+  if (intensity < 20) return "very-low";
+  if (intensity < 64.8) return "low";
+  if (intensity < 100) return "moderate";
+  if (intensity < 200) return "high";
+  return "very-high";
+}
+
 /** Trame SSE d'un événement `intensity` (corps `StreamEventBody` du serveur). */
 export function eventFrame(region, intensity) {
   const body = {
     region,
     timestamp: "2026-10-20T12:00:00Z",
     intensity,
+    index: indexOf(intensity),
     methodology: "rte-direct",
     methodology_version: 1,
     unit: "gCO2eq/kWh",

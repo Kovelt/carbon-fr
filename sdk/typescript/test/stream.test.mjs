@@ -54,10 +54,10 @@ describe("réception", () => {
     const events = await take(cf.stream({ region: "bretagne", below: 50, signal }), 2);
 
     assert.deepEqual(
-      events.map((e) => [e.region, e.intensity, e.methodology]),
+      events.map((e) => [e.region, e.intensity, e.index, e.methodology]),
       [
-        ["bretagne", 42, "rte-direct"],
-        ["bretagne", 12.5, "rte-direct"],
+        ["bretagne", 42, "low", "rte-direct"],
+        ["bretagne", 12.5, "very-low", "rte-direct"],
       ],
     );
     const url = new URL(request.url, baseUrl);

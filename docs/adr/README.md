@@ -44,7 +44,7 @@ Chaque décision structurante est tracée ici au format **contexte → décision
 | [0030](0030-politique-publication-crates-io.md) | Politique de publication crates.io : `carbonfr-core` + `carbonfr-eligibility` (versions couplées au workspace, `#[non_exhaustive]` enum par enum, MSRV 1.88, 1re publication manuelle puis Trusted Publishing) — amende ADR-0019 | Accepté |
 | [0031](0031-conception-sdk-rust.md) | Conception du SDK Rust `carbonfr-sdk` (écriture manuelle + test de parité OpenAPI, `reqwest` 0.13 + `ring`, SSE `eventsource-stream`, axe `rust-sdk-v*`) | Accepté |
 | [0032](0032-generation-types-sdk-et-doc.md) | Types du SDK TypeScript : pas de génération depuis l'OpenAPI, test de parité à la place ; doc rustdoc des crates internes non publiée (déclencheur : Phase B) | Accepté |
-| [0033](0033-index-qualitatif-intensite.md) | Index qualitatif d'intensité (`index` : very-low → very-high) : cinq bandes absolues à seuils sourcés 20 · 64,8 · 100 · 200 gCO₂eq/kWh, un barème pour toutes les méthodes et régions, catalogue `/v1/intensity/index`, carte `/hydrogene` alignée — 4 points à trancher par Morgan | Proposé |
+| [0033](0033-index-qualitatif-intensite.md) | Index qualitatif d'intensité (`index` : very-low → very-high) : cinq bandes absolues à seuils sourcés 20 · 64,8 · 100 · 200 gCO₂eq/kWh, un barème pour toutes les méthodes et régions, catalogue `/v1/intensity/index`, carte `/hydrogene` alignée — proposition retenue par Morgan le 2026-10-20, implémentation à suivre | Accepté |
 
 ## Gabarit
 

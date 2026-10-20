@@ -1,20 +1,20 @@
 # ADR-0033 — Index qualitatif d'intensité carbone (`index` : very-low → very-high)
 
-- **Statut** : Proposé — **4 points à trancher par Morgan** (encadré ci-dessous) ; la fusion de la PR vaut acceptation, le premier commit d'implémentation n'arrive qu'après (principe 3 du plan I9)
+- **Statut** : Accepté le 2026-10-20 — Morgan a retenu la proposition telle quelle (« garde les seuils proposés »), les quatre points de l'encadré ci-dessous compris ; le premier commit d'implémentation n'arrive qu'après cette acceptation (principe 3 du plan I9)
 - **Date** : 2026-10-20
 - **Décideurs** : Morgan (Kovelt / carbon-fr)
 - **ADR liés** : ADR-0005 (méthodologies versionnées, immuables), ADR-0007 (contrat `/v1` additif), ADR-0008 (facteurs ACV ADEME = constante de domaine versionnée), ADR-0010 §7 (vérifiabilité : `/v1/factors`), ADR-0014 (flux SSE), ADR-0019 (champ/route ajoutés = *minor* en 0.x), ADR-0025/0026 (éligibilité électrolyseur : seuil RFNBO 18 gCO₂eq/MJ), ADR-0029 (carte `/hydrogene`, classes `<25, 25-45, 45-70, 70-100, ≥100`), ADR-0030 §3 (SDK Rust : champ public ajouté = *minor*), ADR-0031/0032 (SDK)
 
-> ### Décision de Morgan requise avant fusion
+> ### Décision de Morgan du 2026-10-20 : la proposition, telle quelle
 >
-> | # | Point | Proposition de cet ADR | Variante(s) |
+> | # | Point | Retenu (proposition de cet ADR) | Variante(s) écartée(s) |
 > |---|---|---|---|
 > | 1 | **Seuils** des 5 bandes (gCO₂eq/kWh) | **20 · 64,8 · 100 · 200**, absolus et sourcés (§ Décision 1) | arrondir 64,8 → 65 (perd la source exacte) ; 200 → 250 ; classes de la carte `25 · 45 · 70 · 100` (non sourcées) |
 > | 2 | **Libellés** JSON | `very-low`, `low`, `moderate`, `high`, `very-high` (kebab-case, comme tous les slugs de l'API) | `very low`… avec espace (parité littérale NESO) ; libellés français `tres-faible`… |
 > | 3 | **Catalogue** `GET /v1/intensity/index` (bornes, sources, version) | **oui** — même rôle que `/v1/factors` pour l'ACV : la légende est auditable, pas un chiffre opaque | non : seuils seulement dans la doc |
 > | 4 | **Carte `/hydrogene`** alignée sur l'index | **oui** — une seule échelle dans le produit (légende = bandes de l'index) | garder les 5 classes dataviz actuelles |
 >
-> Sans réponse, la proposition s'applique telle quelle à la fusion. Si le point 1 conclut que **tout seuil est trop disputé**, l'item I9 se limite à cet ADR (statut *Déprécié*, index non servi) — risque explicitement prévu par le plan.
+> Les quatre points sont tranchés dans le sens de la proposition (réponse de Morgan du 2026-10-20 : « garde les seuils proposés pour l'ADR »). Les variantes restent consignées pour mémoire ; le risque prévu par le plan — des seuils trop disputés pour servir un index — ne s'est pas réalisé.
 
 ---
 

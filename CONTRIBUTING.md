@@ -26,12 +26,36 @@ Si une contribution fait fuiter de l'infrastructure dans le domaine, elle sera r
 ## Conventions de code
 
 - `cargo fmt --all` et `cargo clippy --all-targets -- -D warnings` doivent passer.
-- `cargo test --workspace` doit passer. Le `core` se teste **sans IO**, avec des *fakes* en mémoire implémentant les ports.
-- `cargo deny check` doit passer (licences permissives, avis RustSec, sources de confiance — voir [`deny.toml`](deny.toml)). Toute dépendance à licence inédite force une décision explicite dans `deny.toml`.
+- `cargo test --workspace` doit passer. Le `core` se teste **sans IO**, avec des *fakes* en mémoire implémentant les ports. Les tests Postgres exigent `DATABASE_URL` (voir [Tests d'intégration](#tests-dintégration)).
+- `cargo deny --all-features --workspace check` doit passer — les mêmes options que la CI, à placer **avant** `check` (licences permissives, avis RustSec, sources de confiance — voir [`deny.toml`](deny.toml)). Toute dépendance à licence inédite force une décision explicite dans `deny.toml`.
 - Pas d'`unwrap()` / `expect()` hors tests et hors bootstrap du binaire.
 - Erreurs : `thiserror` dans les bibliothèques ; `anyhow` toléré uniquement dans le binaire.
 - Unité canonique : **gCO₂eq/kWh**. L'horodatage est porté explicitement par chaque mesure.
 - **Méthodologie carbone** : c'est un attribut **versionné** porté par chaque mesure (voir ADR-0005). On ne modifie **jamais** silencieusement une méthode publiée ; toute nouvelle méthode = nouvelle version + nouvel ADR.
+
+## Tests d'intégration
+
+`cargo test --workspace` est **hermétique par défaut** (ni réseau ni base) : deux familles de tests ne tournent que sur demande.
+
+**PostgreSQL.** Les tests de [`crates/adapter-postgres/tests/pg.rs`](crates/adapter-postgres/tests/pg.rs) s'exécutent contre un vrai serveur et sont pilotés par la variable `DATABASE_URL`. ⚠️ Sans elle, ils **s'auto-sautent mais comptent comme réussis** (message `SKIP : DATABASE_URL non défini`, visible avec `-- --nocapture`) : un `cargo test --workspace` vert en local ne dit donc rien de la couche Postgres. La CI, elle, la définit (job `tests (avec PostgreSQL)`, service `postgres:17-alpine`, même version majeure que la prod) et les exécute pour de bon. **Lance-les en local dès que tu touches `crates/adapter-postgres/`** (requêtes, migrations) ou un port de persistance du `core` :
+
+```bash
+# PostgreSQL jetable, configuré comme le service de la CI (la base carbonfr_test est créée au démarrage)
+podman run -d --name carbonfr-pg-test \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=carbonfr_test \
+  -p 127.0.0.1:5432:5432 docker.io/library/postgres:17-alpine
+
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/carbonfr_test \
+  cargo test -p carbonfr-adapter-postgres --test pg
+
+podman rm -f carbonfr-pg-test        # supprime la base jetable
+```
+
+- La **base doit exister** (les tests ne la créent pas) et le rôle doit pouvoir y créer des tables ; les **migrations sont appliquées par les tests eux-mêmes** (idempotentes, sans extension — ADR-0004). Sans identifiants dans l'URL, `sqlx` prend `PGUSER`/`PGPASSWORD`, puis le nom de l'utilisateur système.
+- **Base jetable uniquement** (jamais celle de dev ni de prod) : les tests tournent en parallèle et s'isolent par des méthodologies `test-pg-*` et des plages de dates dédiées, mais l'un d'eux vide la table `visit` et rien n'est nettoyé en fin de run.
+- `DATABASE_URL` définie mais base injoignable : les tests **échouent** (ils ne sautent pas). L'image `postgres-alpine` redémarre pendant son initialisation — attends qu'une vraie requête SQL passe, pas seulement `pg_isready`.
+
+**API réelles (ODRÉ, ENTSO-E, Open-Meteo).** Les tests « live » (`tests/live.rs` d'`adapter-odre`, `adapter-entsoe` et `adapter-meteo`) frappent les vraies API : ils sont `#[ignore]` (réseau ; quota ODRÉ de 50 000 appels/mois par jeu de données — ADR-0003) et la CI ne les lance jamais. À la demande seulement, par exemple `cargo test -p carbonfr-adapter-odre --test live -- --ignored` ; ENTSO-E exige en plus un jeton dans `CARBONFR_ENTSOE_TOKEN`. Le mainteneur rejoue le test ENTSO-E après toute montée de `reqwest` ou de `quick-xml` et tout changement du parseur, et date le rejeu dans `crates/adapter-entsoe/src/lib.rs`.
 
 ## Crates publiées / publiables (`carbonfr-core`, `carbonfr-eligibility`, `carbonfr-sdk`)
 
@@ -40,7 +64,7 @@ Ces trois crates — et elles seules, les autres membres du workspace restent
 [ADR-0031](docs/adr/0031-conception-sdk-rust.md)). `carbonfr-core` et
 `carbonfr-eligibility` y sont publiées depuis le 2026-09-24, à chaque tag
 `vX.Y.Z` (version du workspace, `release-crates.yml`) ; `carbonfr-sdk` y est
-publiée depuis le 2026-09-25 (0.1.0, puis 0.1.1 ; 0.2.0 le 2026-09-27) sur
+publiée depuis le 2026-09-25 (0.1.0, puis 0.1.1 ; 0.2.0 le 2026-09-27 ; 0.3.0 le 2026-10-20) sur
 son **axe de version propre** — `version` dans `crates/sdk/Cargo.toml`, tag
 `rust-sdk-vX.Y.Z`, `release-rust-sdk.yml` (addendum ADR-0019, ADR-0031
 décision 12). Toute contribution qui les touche doit respecter ces règles
@@ -88,7 +112,7 @@ depuis I6) — pas de job requis supplémentaire pour ça.
 1. Fork + branche dédiée (`feat/…`, `fix/…`, `docs/…`).
 2. Commits clairs et articulés (un commit = une intention). Les [Conventional Commits](https://www.conventionalcommits.org/) sont appréciés mais non obligatoires. Les commits **signés** (GPG/SSH) sont **recommandés**, sans être exigés.
 3. Ouvre une Pull Request en décrivant le **quoi** et le **pourquoi**, en liant l'issue / l'ADR concerné (un gabarit de PR est proposé automatiquement).
-4. La CI doit être **verte sur les huit contrôles** : `fmt + clippy`, `cargo-deny (licences + advisories)`, `tests (avec PostgreSQL)`, `build release`, `SDK TypeScript` et les trois contrôles des crates publiées (§ ci-dessus : MSRV, semver, rustdoc + package).
+4. La CI doit être **verte sur les huit contrôles** : `fmt + clippy`, `cargo-deny (licences + advisories)`, `tests (avec PostgreSQL)`, `build release (artefact déployable)`, `SDK TypeScript (typecheck + build)` et les trois contrôles des crates publiées (§ ci-dessus : MSRV, semver, rustdoc + package).
 
 ## Revue & fusion — `main` est protégée
 
@@ -104,7 +128,7 @@ En phase solo, aucune approbation humaine n'est exigée (un mainteneur ne peut p
 
 ## Langue
 
-La documentation et les ADR sont en **français**. Les issues et PR peuvent être en français ou en anglais.
+La documentation et les ADR sont en **français** (exception : le README et les métadonnées `Cargo.toml` des crates publiées sur crates.io sont en anglais, pour l'audience de crates.io/docs.rs). Les issues et PR peuvent être en français ou en anglais.
 
 ## Licence des contributions
 

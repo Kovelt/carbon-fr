@@ -31,8 +31,8 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   préflight. Un test d'intégration confronte la spec aux en-têtes réellement
   envoyés par un routeur au tier hébergé actif ; instantané régénéré.
   **SemVer : aucun** (documentation du contrat, aucun comportement modifié).
-  Au passage (issue #161) : quand la série prévue vient du cache, `from` peut
-  précéder de moins de 15 min le premier point — à traiter à part.
+  Au passage, l'issue #161 (série prévue servie du cache : premier point ≠
+  `from`) a été ouverte, puis corrigée (voir « Corrigé »).
 
 ### Modifié
 
@@ -51,6 +51,28 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ### Corrigé
 
+- **Prévision servie depuis le cache : série ré-ancrée sur le `from` de
+  chaque requête** (issue #161). Le `CachedForecaster` (audit perf 2026-08)
+  partage une série par quart d'heure, calculée pour le `from` exact du
+  premier appelant du seau ; les requêtes suivantes du même seau la
+  recevaient telle quelle : `from` différait du premier point (jusqu'à
+  15 min, dans les deux sens, décalage horaire du premier appelant compris),
+  la queue de l'horizon demandé manquait, un créneau de `greenest-window`,
+  `schedule`, `schedule/slots` ou `below` pouvait commencer avant la requête,
+  et une échéance de `/v1/schedule` était jugée depuis l'instant du premier
+  appelant (faux positif reproduit en prod). La série en cache est désormais
+  **translatée** sur le `from` de la requête (horodatages décalés de
+  `from − from₀`, valeurs inchangées, rendue dans le décalage horaire de la
+  requête) : le contrat déjà documenté — `from` = premier point,
+  `timestamp = from + k × 15 min`, `[from, from + horizon)` couvert,
+  `start ≥ from` — redevient vrai à l'exécution. Hypothèse consignée dans la
+  rustdoc : le modèle enrobé est invariant par translation dans le quart
+  d'heure (vrai pour `climatology@1` et `acv-clim@1`, climatologie par créneau
+  de semaine au pas de 15 min ; faux pour `gbdt@1`, non servi). Cinq tests
+  unitaires (reproduction de l'issue, décalage négatif, décalage horaire,
+  équivalence avec un calcul direct, créneau et échéance) et un test
+  d'intégration HTTP. **SemVer : correctif** — contrat `/v1`, instantané
+  OpenAPI et SDK inchangés.
 - `carbonfr-adapter-webhook` : trois liens rustdoc vers des items privés ou
   `#[cfg(test)]` faisaient échouer `cargo doc` strict sur tout le workspace
   (sans effet sur la CI, qui ne documente que les crates publiées) ; remplacés

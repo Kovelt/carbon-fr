@@ -29,8 +29,16 @@ const DEFAULT_WEEKS: i64 = 10;
 /// Pas d'alignement du seau de cache de [`CachedForecaster`] : la cadence
 /// quart d'heure canonique des mesures éCO2mix. Les requêtes d'un même seau
 /// partagent la série calculée (la donnée sous-jacente ne change qu'au cycle
-/// du poller).
+/// du poller), chacune **ré-ancrée** sur son propre `from` (issue #161). Cette
+/// translation n'est exacte que si la grille des seaux coïncide avec celle des
+/// créneaux du modèle servi (`week_slot` du domaine : pas de 900 s aligné sur
+/// le jour UTC) — garde-fou ci-dessous.
 const CACHE_BUCKET_SECS: i64 = 900;
+
+// La grille des seaux doit diviser le jour UTC, comme celle des créneaux de
+// semaine du domaine : sinon deux `from` d'un même seau pourraient tomber dans
+// deux créneaux différents et la translation changerait les valeurs.
+const _: () = assert!(86_400 % CACHE_BUCKET_SECS == 0);
 
 /// Plafond d'entrées du cache : la cardinalité réelle est minuscule
 /// (13 régions × ~2 méthodologies × quelques horizons) — borne dure contre
@@ -47,7 +55,9 @@ impl Clock for SystemClock {
 }
 
 /// Clé de cache d'une prévision : cible `(region, methodology)`, seau de
-/// départ (`from` aligné sur le pas quart d'heure) et horizon.
+/// départ (`from` aligné sur le pas quart d'heure) et horizon. Le `from` exact
+/// n'en fait pas partie : il est mémorisé dans l'entrée et sert à ré-ancrer la
+/// série sur chaque requête du seau.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct CacheKey {
     region: Region,
@@ -56,9 +66,11 @@ struct CacheKey {
     horizon_secs: i64,
 }
 
-/// Série mise en cache, datée pour l'expiration TTL.
+/// Série mise en cache, datée pour l'expiration TTL, avec le `from` exact pour
+/// lequel elle a été calculée (ancre de la translation, issue #161).
 struct CacheEntry {
     stored_at: std::time::Instant,
+    computed_from: OffsetDateTime,
     points: Arc<Vec<ForecastPoint>>,
 }
 
@@ -73,9 +85,24 @@ struct CacheEntry {
 ///
 /// Prudence de sémantique : **seul le trafic `from ≈ maintenant`** (le seau
 /// quart d'heure courant — l'écrasante majorité, `from` vaut `now` par défaut)
-/// est mis en cache. Un `from` arbitraire (passé ou futur) contourne le cache
-/// et garde exactement le comportement d'avant — sans lui, la clé serait de
-/// cardinalité non bornée. Les erreurs ne sont jamais mises en cache.
+/// est mis en cache. Un `from` hors du quart d'heure courant (passé ou futur)
+/// contourne le cache et garde exactement le comportement d'avant — sans lui,
+/// la clé serait de cardinalité non bornée. Les erreurs ne sont jamais mises en
+/// cache.
+///
+/// **Ré-ancrage** (issue #161) : la série mémorisée a été calculée pour le
+/// `from` exact du premier appelant du seau ; chaque autre requête du seau la
+/// reçoit **translatée** sur son propre `from` (`at = from + (at − from₀)`,
+/// décalage < 15 min, rendue dans le décalage horaire de la requête), de sorte
+/// que le contrat du port tient : la série commence à `from`, couvre
+/// `[from, from + horizon)` et aucun créneau ne précède la requête. Hypothèse,
+/// vraie pour `climatology@1` et `acv-clim@1` (climatologie par créneau de
+/// semaine au pas de 15 min, bandes indexées par `t − from`) : la valeur d'un
+/// point ne dépend que de son créneau et de son rang, pas de la seconde exacte
+/// de `from` — invariance par translation à l'intérieur du seau, au seul terme
+/// de persistance près (`exp(−dt/τ)`, τ = 14 j : moins de 0,1 % de ce terme
+/// sur 15 min). Un modèle qui n'est pas invariant par translation (`gbdt@1`,
+/// à features horodatées — non servi) ne doit pas être enrobé.
 ///
 /// ADR-0009 intact : la prévision reste « calculée à la lecture, jamais
 /// persistée » — le cache est un mémo **en mémoire**, sans millésime ni base.
@@ -112,16 +139,18 @@ impl<F> CachedForecaster<F> {
         self.cache.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    /// Série en cache pour `key`, si présente et non expirée.
-    fn lookup(&self, key: &CacheKey) -> Option<Vec<ForecastPoint>> {
+    /// Série en cache pour `key`, si présente et non expirée, avec le `from`
+    /// pour lequel elle a été calculée.
+    fn lookup(&self, key: &CacheKey) -> Option<(OffsetDateTime, Arc<Vec<ForecastPoint>>)> {
         let cache = self.lock();
         let entry = cache.get(key)?;
-        (entry.stored_at.elapsed() < self.ttl).then(|| entry.points.as_ref().clone())
+        (entry.stored_at.elapsed() < self.ttl)
+            .then(|| (entry.computed_from, Arc::clone(&entry.points)))
     }
 
     /// Mémorise la série : purge les entrées expirées, borne la taille (évince
     /// la plus ancienne au plafond), puis insère.
-    fn store(&self, key: CacheKey, points: &[ForecastPoint]) {
+    fn store(&self, key: CacheKey, computed_from: OffsetDateTime, points: &[ForecastPoint]) {
         let mut cache = self.lock();
         cache.retain(|_, e| e.stored_at.elapsed() < self.ttl);
         if cache.len() >= CACHE_MAX_ENTRIES
@@ -136,6 +165,7 @@ impl<F> CachedForecaster<F> {
             key,
             CacheEntry {
                 stored_at: std::time::Instant::now(),
+                computed_from,
                 points: Arc::new(points.to_vec()),
             },
         );
@@ -146,6 +176,26 @@ impl<F> CachedForecaster<F> {
 /// avant l'époque Unix).
 fn bucket(t: OffsetDateTime) -> i64 {
     t.unix_timestamp().div_euclid(CACHE_BUCKET_SECS)
+}
+
+/// Translate une série calculée pour `computed_from` sur `from` (issue #161) :
+/// chaque point garde ses valeurs et son rang, seul l'horodatage est décalé de
+/// `from − computed_from` et rendu dans le décalage horaire de `from` (comme le
+/// ferait le modèle appelé directement). `None` si un horodatage déborde —
+/// impossible en pratique, le décalage est inférieur au seau.
+fn reanchor(
+    points: &[ForecastPoint],
+    computed_from: OffsetDateTime,
+    from: OffsetDateTime,
+) -> Option<Vec<ForecastPoint>> {
+    let shift = from - computed_from;
+    points
+        .iter()
+        .map(|p| {
+            let at = p.at.checked_add(shift)?.to_offset(from.offset());
+            Some(ForecastPoint { at, ..p.clone() })
+        })
+        .collect()
 }
 
 #[async_trait]
@@ -171,14 +221,16 @@ impl<F: ForecastModel> ForecastModel for CachedForecaster<F> {
             from_bucket: bucket(from),
             horizon_secs: horizon.whole_seconds(),
         };
-        if let Some(points) = self.lookup(&key) {
+        if let Some((computed_from, cached)) = self.lookup(&key)
+            && let Some(points) = reanchor(&cached, computed_from, from)
+        {
             return Ok(points);
         }
         let points = self
             .inner
             .forecast(region, methodology_id, from, horizon)
             .await?;
-        self.store(key, &points);
+        self.store(key, from, &points);
         Ok(points)
     }
 }
@@ -685,6 +737,249 @@ mod tests {
             calls.load(Ordering::SeqCst),
             4,
             "chaque clé calcule une fois"
+        );
+    }
+
+    // ---- Ré-ancrage de la série en cache (issue #161) ----------------------
+
+    use carbonfr_core::domain::{WindowEstimator, greenest_window, greenest_window_before};
+    use time::UtcOffset;
+
+    /// Modèle factice « sur grille » : `n` points à `from + k × 15 min`, de
+    /// valeur `10 + k` (le rang se lit dans la valeur), et compte ses appels.
+    struct GridModel {
+        calls: Arc<AtomicUsize>,
+        n: usize,
+    }
+
+    #[async_trait]
+    impl ForecastModel for GridModel {
+        async fn forecast(
+            &self,
+            region: Region,
+            methodology_id: &str,
+            from: OffsetDateTime,
+            _horizon: Duration,
+        ) -> Result<Vec<ForecastPoint>, ForecastError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok((0..self.n)
+                .map(|k| {
+                    let g = CarbonIntensity::new(10.0 + k as f64).unwrap();
+                    ForecastPoint::new(
+                        from + Duration::minutes(15) * k as i32,
+                        region,
+                        g,
+                        g,
+                        g,
+                        Methodology::new(methodology_id, 1),
+                        ModelVersion::new("climatology", 1),
+                    )
+                })
+                .collect())
+        }
+    }
+
+    fn cached_grid(
+        now: OffsetDateTime,
+        n: usize,
+    ) -> (CachedForecaster<GridModel>, Arc<AtomicUsize>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let model = GridModel {
+            calls: calls.clone(),
+            n,
+        };
+        (
+            CachedForecaster::new(model, std::time::Duration::from_secs(900))
+                .with_clock(Arc::new(FixedClock(now))),
+            calls,
+        )
+    }
+
+    /// Début d'un seau quart d'heure : UNIX_EPOCH + 60 j est un multiple de 900 s.
+    fn bucket_start() -> OffsetDateTime {
+        OffsetDateTime::UNIX_EPOCH + Duration::days(60)
+    }
+
+    #[tokio::test]
+    async fn cache_hit_is_reanchored_on_the_request_from() {
+        // Reproduit #161 : premier appel à T+2:38.486, second à T+10:02.421,
+        // même seau. Avant le correctif, le second recevait la série du premier.
+        let t0 = bucket_start();
+        let from1 = t0 + Duration::seconds(158) + Duration::milliseconds(486);
+        let from2 = t0 + Duration::seconds(602) + Duration::milliseconds(421);
+        let (forecaster, calls) = cached_grid(from2, 4);
+
+        let first = forecaster
+            .forecast(Region::National, "rte-direct", from1, Duration::hours(1))
+            .await
+            .unwrap();
+        let second = forecaster
+            .forecast(Region::National, "rte-direct", from2, Duration::hours(1))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "un seul calcul : cache partagé"
+        );
+        assert_eq!(first[0].at, from1);
+        assert_eq!(second.len(), first.len());
+        for (k, (a, b)) in first.iter().zip(&second).enumerate() {
+            assert_eq!(
+                b.at,
+                from2 + Duration::minutes(15) * k as i32,
+                "point {k} ré-ancré sur from2"
+            );
+            assert_eq!(b.expected, a.expected, "valeurs inchangées");
+            assert_eq!(b.lower, a.lower);
+            assert_eq!(b.upper, a.upper);
+        }
+        // La série couvre bien [from2, from2 + 1 h) : rien au-delà de l'horizon.
+        assert!(second.last().unwrap().at < from2 + Duration::hours(1));
+    }
+
+    #[tokio::test]
+    async fn cache_hit_reanchors_an_earlier_explicit_from() {
+        // `from` explicite antérieur au premier appelant, dans le même seau :
+        // décalage négatif, même mécanisme.
+        let t0 = bucket_start();
+        let from1 = t0 + Duration::minutes(14);
+        let from2 = t0 + Duration::seconds(30);
+        let (forecaster, calls) = cached_grid(from1, 4);
+
+        forecaster
+            .forecast(Region::National, "rte-direct", from1, Duration::hours(1))
+            .await
+            .unwrap();
+        let second = forecaster
+            .forecast(Region::National, "rte-direct", from2, Duration::hours(1))
+            .await
+            .unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(second[0].at, from2);
+        assert_eq!(second[3].at, from2 + Duration::minutes(45));
+    }
+
+    #[tokio::test]
+    async fn reanchored_series_keeps_the_request_offset() {
+        // Le décalage horaire du premier appelant ne fuit pas : la série est
+        // rendue dans celui de la requête courante, comme sans cache.
+        let t0 = bucket_start();
+        let from1 = t0 + Duration::minutes(2);
+        let from2 = (t0 + Duration::minutes(5)).to_offset(UtcOffset::from_hms(2, 0, 0).unwrap());
+        let (forecaster, calls) = cached_grid(t0 + Duration::minutes(5), 2);
+
+        forecaster
+            .forecast(Region::National, "rte-direct", from1, Duration::hours(1))
+            .await
+            .unwrap();
+        let second = forecaster
+            .forecast(Region::National, "rte-direct", from2, Duration::hours(1))
+            .await
+            .unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(second[0].at, from2);
+        // Même instant et même décalage ⇒ même chaîne RFC 3339 que le `from`
+        // demandé (le test HTTP d'`adapter-http` le vérifie sur la réponse).
+        assert_eq!(second[0].at.offset(), from2.offset());
+    }
+
+    #[tokio::test]
+    async fn reanchored_series_matches_a_fresh_computation() {
+        // Vrai `ClimatologyForecaster` : la série ré-ancrée est celle qu'un
+        // calcul direct pour `from2` produirait — mêmes horodatages, mêmes
+        // valeurs à la décroissance de persistance près (< 0,1 % du biais).
+        let t0 = bucket_start();
+        let step = Duration::minutes(15);
+        let from1 = t0 + Duration::seconds(158);
+        let from2 = t0 + Duration::seconds(602);
+        // 8 semaines de motif horaire, puis une dernière observation hors motif
+        // à `t0` → biais de persistance non nul.
+        let mut history = seed_pattern(t0, step, 8 * 7 * 96);
+        history.push(point(t0, Region::National, "rte-direct", 65.0));
+        let params = ClimatologyParams {
+            step,
+            tau: Duration::days(14),
+        };
+        let direct = ClimatologyForecaster::with_config(
+            FakeRepo {
+                points: history.clone(),
+            },
+            8,
+            params,
+        );
+        let cached = CachedForecaster::new(
+            ClimatologyForecaster::with_config(FakeRepo { points: history }, 8, params),
+            std::time::Duration::from_secs(900),
+        )
+        .with_clock(Arc::new(FixedClock(from2)));
+
+        cached
+            .forecast(Region::National, "rte-direct", from1, Duration::hours(2))
+            .await
+            .unwrap();
+        let reanchored = cached
+            .forecast(Region::National, "rte-direct", from2, Duration::hours(2))
+            .await
+            .unwrap();
+        let fresh = direct
+            .forecast(Region::National, "rte-direct", from2, Duration::hours(2))
+            .await
+            .unwrap();
+
+        assert_eq!(reanchored[0].at, from2);
+        assert_eq!(reanchored.len(), fresh.len());
+        for (a, b) in reanchored.iter().zip(&fresh) {
+            assert_eq!(a.at, b.at);
+            for (x, y) in [
+                (a.expected.value(), b.expected.value()),
+                (a.lower.value(), b.lower.value()),
+                (a.upper.value(), b.upper.value()),
+            ] {
+                assert!((x - y).abs() < 0.1, "{x} vs {y} à {}", a.at);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn reanchored_series_never_starts_before_the_request() {
+        // Les cas d'usage aval (créneau vert, échéance) raisonnent sur la série
+        // ré-ancrée : un créneau ne précède jamais la requête et une échéance
+        // est jugée depuis l'instant courant — plus depuis le `from` du premier
+        // appelant (faux positif observé sur /v1/schedule, #161).
+        let t0 = bucket_start();
+        let from1 = t0 + Duration::seconds(30);
+        let from2 = t0 + Duration::minutes(14) + Duration::seconds(50);
+        let (forecaster, _) = cached_grid(from2, 8);
+        forecaster
+            .forecast(Region::National, "rte-direct", from1, Duration::hours(2))
+            .await
+            .unwrap();
+        let series = forecaster
+            .forecast(Region::National, "rte-direct", from2, Duration::hours(2))
+            .await
+            .unwrap();
+
+        let window =
+            greenest_window(&series, Duration::minutes(60), WindowEstimator::Central).unwrap();
+        assert!(
+            window.start >= from2,
+            "le créneau ne commence pas avant la requête"
+        );
+        // Échéance à from2 + 55 min : aucun créneau de 60 min ne tient. Sur la
+        // série du premier appelant (14 min plus tôt), un créneau tenait — le
+        // faux positif de l'issue.
+        assert!(
+            greenest_window_before(
+                &series,
+                Duration::minutes(60),
+                from2 + Duration::minutes(55),
+                WindowEstimator::Central,
+            )
+            .is_none()
         );
     }
 

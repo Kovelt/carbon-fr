@@ -8,6 +8,26 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Sécurité
+
+- **`rustls-webpki`, `webpki-roots` et `webpki-root-certs` mis à jour sur trois
+  advisories RustSec** publiées le 2026-10-20 (porte `cargo-deny` de la CI,
+  rouge sur toute PR à partir de ce jour) : RUSTSEC-2026-0382 (`rustls-webpki`
+  0.103.15 → **0.103.16** : la vérification de chemin pouvait accepter des
+  intermédiaires emSign retirés de confiance, dont les clés privées sont
+  désormais connues ; la 0.103.16 rejette les chemins contenant ces clés),
+  RUSTSEC-2026-0381 (`webpki-roots` 1.0.7 → **1.0.10**) et RUSTSEC-2026-0383
+  (`webpki-root-certs` 1.0.9 → **1.0.10**) : les racines embarquées
+  contenaient `emSign ECC Root CA - G3`, qui ouvrait ces chemins ; la 1.0.10
+  retire cette racine. **Exposition réelle de carbon-fr : limitée** —
+  `rustls-webpki` est sur le chemin de tous les clients TLS (`reqwest` des
+  adapters ODRÉ/ENTSO-E/météo/webhook et du SDK Rust, via
+  `rustls-platform-verifier` et le magasin système) ; `webpki-roots` n'est
+  tiré que par `sqlx-core` (racines embarquées d'une connexion Postgres TLS,
+  que le déploiement n'utilise pas) ; `webpki-root-certs` reste dans le
+  lockfile sans être résolu dans aucun jeu de features. Montée imposée par la
+  porte CI ; aucun changement d'API ni de borne dans `Cargo.toml`.
+
 ### Modifié
 
 - Trace HTTP : le `503` du plafond de connexions SSE (reconnaissable à son

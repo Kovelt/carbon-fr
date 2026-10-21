@@ -397,7 +397,9 @@ pub(crate) struct ForecastResponse {
     methodology: String,
     /// Identité versionnée du modèle de prévision (ex. `climatology@1`).
     model: String,
-    /// Début de l'horizon (RFC 3339).
+    /// Début de l'horizon (RFC 3339, UTC) : l'instant de la requête, fraction de
+    /// seconde comprise — les points suivent au pas du modèle (15 min), sans
+    /// alignement sur la grille horaire.
     from: String,
     /// Profondeur de l'horizon, en heures.
     horizon_hours: u32,
@@ -408,6 +410,8 @@ pub(crate) struct ForecastResponse {
 
 #[derive(Serialize, ToSchema)]
 struct ForecastPointBody {
+    /// Instant prévu (RFC 3339, UTC) : `from` + k × 15 min, fraction de seconde
+    /// comprise.
     timestamp: String,
     /// Estimation centrale (gCO₂eq/kWh).
     expected: f64,
@@ -464,9 +468,10 @@ pub(crate) struct GreenestWindowResponse {
     methodology: String,
     /// Identité versionnée du modèle de prévision (ex. `climatology@1`).
     model: String,
-    /// Début du créneau (RFC 3339).
+    /// Début du créneau (RFC 3339, UTC) : un instant de la série prévue, au pas
+    /// de 15 min depuis l'instant de la requête (fraction de seconde comprise).
     start: String,
-    /// Fin du créneau (RFC 3339, exclue).
+    /// Fin du créneau (RFC 3339, exclue) : `start` + `window_minutes`.
     end: String,
     unit: &'static str,
     /// Intensité carbone moyenne prévue sur le créneau.

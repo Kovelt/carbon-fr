@@ -209,7 +209,8 @@ fn parse_timestamp(name: &str, raw: &str) -> Result<OffsetDateTime, ApiError> {
     path = "/v1/intensity/now",
     params(RegionQuery),
     responses(
-        (status = 200, description = "Dernière mesure", body = IntensityResponse),
+        (status = 200, description = "Dernière mesure (exemple : réponse réelle du 2026-10-20, paramètres par défaut)", body = IntensityResponse,
+            example = json!({"region": "national", "timestamp": "2026-10-20T18:45:00Z", "intensity": {"value": 34.0, "unit": "gCO2eq/kWh"}, "index": "low", "methodology": "rte-direct", "methodology_version": 1, "vintage": "tr"})),
         (status = 400, description = "Région ou méthodologie invalide", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 404, description = "Aucune donnée", body = ProblemDetails, content_type = "application/problem+json"),
     ),
@@ -310,7 +311,17 @@ where
     path = "/v1/mix",
     params(RegionQuery),
     responses(
-        (status = 200, description = "Mix de production (MW)", body = MixResponse),
+        (status = 200, description = "Mix de production (MW) (exemple : réponse réelle du 2026-10-20, paramètres par défaut, parts arrondies)", body = MixResponse,
+            example = json!({"region": "national", "timestamp": "2026-10-20T18:45:00Z", "unit": "MW",
+                "mix": {"nucleaire": 37949.0, "gaz": 3303.0, "charbon": 0.0, "fioul": 37.0, "hydraulique": 6804.0, "eolien": 7583.0, "solaire": 0.0, "bioenergies": 951.0, "pompage": 0.0, "echanges": -5136.0},
+                "shares": [
+                    {"filiere": "nucleaire", "label": "Nucléaire", "share": 0.6702, "output_mw": 37949.0},
+                    {"filiere": "hydraulique", "label": "Hydraulique", "share": 0.1202, "output_mw": 6804.0},
+                    {"filiere": "eolien", "label": "Éolien", "share": 0.1339, "output_mw": 7583.0},
+                    {"filiere": "bioenergies", "label": "Bioénergies", "share": 0.0168, "output_mw": 951.0},
+                    {"filiere": "gaz", "label": "Gaz", "share": 0.0583, "output_mw": 3303.0},
+                    {"filiere": "fioul", "label": "Fioul", "share": 0.0007, "output_mw": 37.0}
+                ]})),
         (status = 400, description = "Région ou méthodologie invalide", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 404, description = "Aucune donnée / mix indisponible", body = ProblemDetails, content_type = "application/problem+json"),
     ),
@@ -862,7 +873,14 @@ pub(crate) struct ForecastQuery {
     path = "/v1/intensity/forecast",
     params(ForecastQuery),
     responses(
-        (status = 200, description = "Série prévue", body = ForecastResponse),
+        (status = 200, description = "Série prévue (exemple : réponse réelle du 2026-10-20 pour `horizon_hours=1`, valeurs arrondies ; les points partent de `from` au pas de 15 min, sans alignement sur la grille horaire)", body = ForecastResponse,
+            example = json!({"region": "national", "methodology": "rte-direct", "model": "climatology@1", "from": "2026-10-20T19:23:58.195578244Z", "horizon_hours": 1, "unit": "gCO2eq/kWh", "count": 4,
+                "data": [
+                    {"timestamp": "2026-10-20T19:23:58.195578244Z", "expected": 34.9, "lower": 32.5, "upper": 37.1, "index": "low"},
+                    {"timestamp": "2026-10-20T19:38:58.195578244Z", "expected": 34.3, "lower": 30.9, "upper": 37.1, "index": "low"},
+                    {"timestamp": "2026-10-20T19:53:58.195578244Z", "expected": 33.8, "lower": 29.6, "upper": 36.9, "index": "low"},
+                    {"timestamp": "2026-10-20T20:08:58.195578244Z", "expected": 32.9, "lower": 28.5, "upper": 36.2, "index": "low"}
+                ]})),
         (status = 400, description = "Paramètre invalide", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 404, description = "Historique insuffisant pour prévoir", body = ProblemDetails, content_type = "application/problem+json"),
     ),
@@ -1014,7 +1032,8 @@ fn resolve_estimator(raw: &Option<String>) -> Result<WindowEstimator, ApiError> 
     path = "/v1/intensity/greenest-window",
     params(GreenestWindowQuery),
     responses(
-        (status = 200, description = "Créneau le plus bas-carbone", body = GreenestWindowResponse),
+        (status = 200, description = "Créneau le plus bas-carbone (exemple : réponse réelle du 2026-10-20, paramètres par défaut — horizon 24 h, créneau de 60 min —, moyenne arrondie ; bornes au pas de 15 min depuis l'instant de la requête, fraction de seconde comprise)", body = GreenestWindowResponse,
+            example = json!({"region": "national", "methodology": "rte-direct", "model": "climatology@1", "start": "2026-10-21T11:38:58.076554347Z", "end": "2026-10-21T12:38:58.076554347Z", "unit": "gCO2eq/kWh", "average_intensity": 8.8})),
         (status = 400, description = "Paramètre invalide", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 404, description = "Série insuffisante pour déterminer un créneau", body = ProblemDetails, content_type = "application/problem+json"),
         (status = 503, description = "Overlay d'éligibilité demandé mais non câblé", body = ProblemDetails, content_type = "application/problem+json"),

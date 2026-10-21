@@ -4155,3 +4155,69 @@ async fn hydrogene_page_reads_the_index_catalog() {
         "les anciennes classes codées en dur ne doivent plus exister"
     );
 }
+
+/// PROD-API-6 : ce que l'OpenAPI dit des en-têtes posés par les middlewares
+/// est ce que le serveur envoie — routeur au tier hébergé actif (quota anonyme
+/// 3/min : la lecture de `/v1/openapi.json` elle-même en consomme une). Les
+/// noms documentés (`Cache-Control`, `RateLimit-*`, `Retry-After`,
+/// `WWW-Authenticate`) sont comparés aux en-têtes réels, réponse par réponse.
+#[tokio::test]
+async fn openapi_documents_the_headers_the_hosted_tier_really_sends() {
+    let app = app_with_auth(3);
+    // 1/3 : le document lui-même est une requête /v1 anonyme.
+    let doc = json_body(get(app.clone(), "/v1/openapi.json").await).await;
+    let documented = |status: &str| -> Vec<String> {
+        let mut node = &doc["paths"]["/v1/intensity/now"]["get"]["responses"][status];
+        if let Some(reference) = node["$ref"].as_str() {
+            // `#/components/responses/<Nom>` : résolu depuis la racine du document.
+            let mut target = &doc;
+            for segment in reference.trim_start_matches("#/").split('/') {
+                target = &target[segment];
+            }
+            node = target;
+        }
+        let mut names: Vec<String> = node["headers"]
+            .as_object()
+            .unwrap_or_else(|| panic!("réponse {status} : pas d'en-têtes documentés"))
+            .keys()
+            .map(|name| name.to_ascii_lowercase())
+            .collect();
+        names.sort();
+        names
+    };
+    let check = |response: &axum::response::Response, status: &str| {
+        for name in documented(status) {
+            assert!(
+                response.headers().contains_key(name.as_str()),
+                "{status} : en-tête documenté mais absent de la réponse : {name}"
+            );
+        }
+    };
+
+    // 2/3 : clé inconnue → 401, débité du seau anonyme.
+    let unauthorized = get_auth(app.clone(), "/v1/intensity/now", Some("wrong")).await;
+    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(documented("401"), ["www-authenticate"]);
+    check(&unauthorized, "401");
+
+    // 3/3 : requête anonyme admise → 200 avec Cache-Control et RateLimit-*.
+    let ok = get_auth(app.clone(), "/v1/intensity/now", None).await;
+    assert_eq!(ok.status(), StatusCode::OK);
+    assert_eq!(
+        documented("200"),
+        ["cache-control", "ratelimit-limit", "ratelimit-remaining"]
+    );
+    check(&ok, "200");
+    assert_eq!(header_of(&ok, "cache-control"), "public, max-age=60");
+    assert_eq!(header_of(&ok, "ratelimit-remaining"), "0");
+
+    // Seau épuisé → 429 avec RateLimit-* et Retry-After, corps Problem Details.
+    let limited = get_auth(app.clone(), "/v1/intensity/now", None).await;
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        documented("429"),
+        ["ratelimit-limit", "ratelimit-remaining", "retry-after"]
+    );
+    check(&limited, "429");
+    assert!(header_of(&limited, "content-type").starts_with("application/problem+json"));
+}

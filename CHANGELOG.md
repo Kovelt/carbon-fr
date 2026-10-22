@@ -36,6 +36,11 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ### Modifié
 
+- **`tokio` 1.54.0 → 1.54.1** (lockfile seul, aucune borne modifiée) : la
+  1.54.0 (2026-10-19) a été **retirée de crates.io** (*yank*) le 2026-10-21
+  pour une régression des timers (la 1.54.1 revient sur « remove the runtime
+  handle from timers », tokio-rs/tokio#8692) ; `cargo-deny` refuse les
+  versions retirées, et la porte CI était rouge sur toute PR depuis.
 - Trace HTTP : le `503` du plafond de connexions SSE (reconnaissable à son
   `Retry-After`) n'est plus classé en défaillance par `TraceLayer` — il était
   journalisé en `error` à chaque client refusé, alors que c'est un refus de

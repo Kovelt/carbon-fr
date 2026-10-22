@@ -4244,8 +4244,13 @@ async fn forecast_from_cache_is_reanchored_on_each_request() {
         ..Default::default()
     };
     let now = t0 + Duration::minutes(10) + Duration::seconds(2);
+    // L'espion compte les calculs : la seconde réponse doit venir du cache.
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let forecaster = carbonfr_adapter_forecast::CachedForecaster::new(
-        ClimatologyForecaster::new(repo.clone()),
+        SpyForecaster {
+            inner: ClimatologyForecaster::new(repo.clone()),
+            calls: calls.clone(),
+        },
         std::time::Duration::from_secs(900),
     )
     .with_clock(Arc::new(FixedClock(now)));
@@ -4258,16 +4263,17 @@ async fn forecast_from_cache_is_reanchored_on_each_request() {
         None,
     );
 
-    // Premier appelant du seau : la série est calculée pour son `from`.
+    // Premier appelant du seau (instants à la nanoseconde, comme en prod) : la
+    // série est calculée pour son `from`.
     let first = json_body(
         get(
             app.clone(),
-            "/v1/intensity/forecast?from=1970-03-02T00:02:38.486Z&horizon_hours=1",
+            "/v1/intensity/forecast?from=1970-03-02T00:02:38.4862783Z&horizon_hours=1",
         )
         .await,
     )
     .await;
-    assert_eq!(first["from"], "1970-03-02T00:02:38.486Z");
+    assert_eq!(first["from"], "1970-03-02T00:02:38.4862783Z");
     assert_eq!(first["data"][0]["timestamp"], first["from"]);
 
     // Second appelant, même seau, 7 min plus tard : série servie du cache et
@@ -4275,14 +4281,25 @@ async fn forecast_from_cache_is_reanchored_on_each_request() {
     let second = json_body(
         get(
             app,
-            "/v1/intensity/forecast?from=1970-03-02T00:10:02.421Z&horizon_hours=1",
+            "/v1/intensity/forecast?from=1970-03-02T00:10:02.421910722Z&horizon_hours=1",
         )
         .await,
     )
     .await;
-    assert_eq!(second["from"], "1970-03-02T00:10:02.421Z");
-    assert_eq!(second["data"][0]["timestamp"], "1970-03-02T00:10:02.421Z");
-    assert_eq!(second["data"][3]["timestamp"], "1970-03-02T00:55:02.421Z");
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "un seul calcul"
+    );
+    assert_eq!(second["from"], "1970-03-02T00:10:02.421910722Z");
+    assert_eq!(
+        second["data"][0]["timestamp"],
+        "1970-03-02T00:10:02.421910722Z"
+    );
+    assert_eq!(
+        second["data"][3]["timestamp"],
+        "1970-03-02T00:55:02.421910722Z"
+    );
     assert_eq!(second["count"], 4);
     assert_eq!(second["data"][0]["expected"], first["data"][0]["expected"]);
 }

@@ -60,19 +60,31 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   la queue de l'horizon demandé manquait, un créneau de `greenest-window`,
   `schedule`, `schedule/slots` ou `below` pouvait commencer avant la requête,
   et une échéance de `/v1/schedule` était jugée depuis l'instant du premier
-  appelant (faux positif reproduit en prod). La série en cache est désormais
-  **translatée** sur le `from` de la requête (horodatages décalés de
-  `from − from₀`, valeurs inchangées, rendue dans le décalage horaire de la
-  requête) : le contrat déjà documenté — `from` = premier point,
-  `timestamp = from + k × 15 min`, `[from, from + horizon)` couvert,
-  `start ≥ from` — redevient vrai à l'exécution. Hypothèse consignée dans la
-  rustdoc : le modèle enrobé est invariant par translation dans le quart
-  d'heure (vrai pour `climatology@1` et `acv-clim@1`, climatologie par créneau
-  de semaine au pas de 15 min ; faux pour `gbdt@1`, non servi). Cinq tests
-  unitaires (reproduction de l'issue, décalage négatif, décalage horaire,
-  équivalence avec un calcul direct, créneau et échéance) et un test
-  d'intégration HTTP. **SemVer : correctif** — contrat `/v1`, instantané
-  OpenAPI et SDK inchangés.
+  appelant (faux positif reproduit en prod le 2026-10-21, requêtes dans la
+  PR). La série en cache est désormais **translatée** sur le `from` de la
+  requête (horodatages décalés de `from − from₀`, valeurs inchangées, rendue
+  dans le décalage horaire de la requête) : le contrat déjà documenté —
+  `from` = premier point, `timestamp = from + k × 15 min`,
+  `[from, from + horizon)` couvert, `start ≥ from` — redevient vrai à
+  l'exécution. Effet visible : chaque requête reçoit la réponse qu'elle
+  aurait sans cache — sur `/v1/schedule?deadline=`, le verdict ne dépend plus
+  des autres requêtes du même quart d'heure (une échéance qui ne laisse pas la
+  place au job depuis `from` répond `404`, comme sans cache, au lieu d'un
+  créneau déjà entamé) ; les horodatages de `greenest-window` (overlay
+  `?eligibility=` compris), `schedule/slots` et `below` peuvent se décaler de
+  moins de 15 min par rapport à la v0.11.0. Hypothèse consignée dans la
+  rustdoc : à historique égal, le modèle enrobé est invariant par translation
+  dans le quart d'heure (vrai pour `climatology@1` et `acv-clim@1`,
+  climatologie par créneau de semaine au pas de 15 min ; faux pour `gbdt@1`,
+  non servi) — un `from` pile sur la borne du quart d'heure, dont la fenêtre
+  d'historique diffère, a sa propre entrée de cache, et un test épingle que le
+  pas servi est un multiple du seau. La rustdoc du port `ForecastModel`
+  (`carbonfr-core`) énonce désormais ce contrat de série (doc seule). Sept
+  tests unitaires (reproduction de l'issue à la nanoseconde, décalage
+  négatif, décalage horaire, équivalence avec un calcul direct, créneau et
+  échéance, entrée propre d'un `from` sur la grille, pas servi) et un test
+  d'intégration HTTP qui vérifie aussi qu'un seul calcul a lieu. **SemVer :
+  patch** — contrat `/v1`, instantané OpenAPI et SDK inchangés.
 - `carbonfr-adapter-webhook` : trois liens rustdoc vers des items privés ou
   `#[cfg(test)]` faisaient échouer `cargo doc` strict sur tout le workspace
   (sans effet sur la CI, qui ne documente que les crates publiées) ; remplacés

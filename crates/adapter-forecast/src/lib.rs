@@ -30,14 +30,16 @@ const DEFAULT_WEEKS: i64 = 10;
 /// quart d'heure canonique des mesures éCO2mix. Les requêtes d'un même seau
 /// partagent la série calculée (la donnée sous-jacente ne change qu'au cycle
 /// du poller), chacune **ré-ancrée** sur son propre `from` (issue #161). Cette
-/// translation n'est exacte que si la grille des seaux coïncide avec celle des
-/// créneaux du modèle servi (`week_slot` du domaine : pas de 900 s aligné sur
-/// le jour UTC) — garde-fou ci-dessous.
+/// translation n'est exacte que si le **pas du modèle enrobé est un multiple
+/// du seau** et si ses créneaux (`week_slot` du domaine) sont alignés sur le
+/// jour UTC : la constante ci-dessous ne vérifie que la seconde condition
+/// (nécessaire) ; le test `served_step_is_multiple_of_cache_bucket` épingle la
+/// première sur les paramètres servis (`ClimatologyParams::default()`).
 const CACHE_BUCKET_SECS: i64 = 900;
 
-// La grille des seaux doit diviser le jour UTC, comme celle des créneaux de
-// semaine du domaine : sinon deux `from` d'un même seau pourraient tomber dans
-// deux créneaux différents et la translation changerait les valeurs.
+// Condition nécessaire : la grille des seaux divise le jour UTC, comme celle
+// des créneaux de semaine du domaine. Elle ne suffit pas (un seau de 1 800 s la
+// satisfait et casserait la translation) : voir le test cité ci-dessus.
 const _: () = assert!(86_400 % CACHE_BUCKET_SECS == 0);
 
 /// Plafond d'entrées du cache : la cardinalité réelle est minuscule
@@ -55,14 +57,20 @@ impl Clock for SystemClock {
 }
 
 /// Clé de cache d'une prévision : cible `(region, methodology)`, seau de
-/// départ (`from` aligné sur le pas quart d'heure) et horizon. Le `from` exact
-/// n'en fait pas partie : il est mémorisé dans l'entrée et sert à ré-ancrer la
-/// série sur chaque requête du seau.
+/// départ (`from` aligné sur le pas quart d'heure), horizon, et le fait que
+/// `from` tombe ou non pile sur la grille. Le `from` exact n'en fait pas
+/// partie : il est mémorisé dans l'entrée et sert à ré-ancrer la série sur
+/// chaque requête du seau. Un `from` pile sur la borne du seau lit une fenêtre
+/// d'historique `[from − N sem., from)` qui diffère d'un échantillon à chaque
+/// bout de celle des `from` intérieurs (mesures sur la grille de 15 min) : il
+/// a sa propre entrée, pour que toutes les requêtes d'une même entrée
+/// partagent exactement le même historique.
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct CacheKey {
     region: Region,
     methodology: String,
     from_bucket: i64,
+    from_on_grid: bool,
     horizon_secs: i64,
 }
 
@@ -91,18 +99,25 @@ struct CacheEntry {
 /// cache.
 ///
 /// **Ré-ancrage** (issue #161) : la série mémorisée a été calculée pour le
-/// `from` exact du premier appelant du seau ; chaque autre requête du seau la
-/// reçoit **translatée** sur son propre `from` (`at = from + (at − from₀)`,
-/// décalage < 15 min, rendue dans le décalage horaire de la requête), de sorte
-/// que le contrat du port tient : la série commence à `from`, couvre
-/// `[from, from + horizon)` et aucun créneau ne précède la requête. Hypothèse,
-/// vraie pour `climatology@1` et `acv-clim@1` (climatologie par créneau de
-/// semaine au pas de 15 min, bandes indexées par `t − from`) : la valeur d'un
-/// point ne dépend que de son créneau et de son rang, pas de la seconde exacte
-/// de `from` — invariance par translation à l'intérieur du seau, au seul terme
-/// de persistance près (`exp(−dt/τ)`, τ = 14 j : moins de 0,1 % de ce terme
-/// sur 15 min). Un modèle qui n'est pas invariant par translation (`gbdt@1`,
-/// à features horodatées — non servi) ne doit pas être enrobé.
+/// `from` exact du premier appelant de l'entrée ; chaque autre requête de
+/// l'entrée la reçoit **translatée** sur son propre `from` (`at = from +
+/// (at − from₀)`, décalage < 15 min, rendue dans le décalage horaire de la
+/// requête), de sorte que le contrat du port tient : la série commence à
+/// `from`, couvre `[from, from + horizon)` et aucun créneau ne précède la
+/// requête. Hypothèse, vraie pour `climatology@1` et `acv-clim@1`
+/// (climatologie par créneau de semaine au pas de 15 min, bandes indexées par
+/// `t − from`), **à historique égal** : la valeur d'un point ne dépend que de
+/// son créneau et de son rang, pas de la seconde exacte de `from` —
+/// invariance par translation à l'intérieur du seau, au seul terme de
+/// persistance près (`exp(−dt/τ)`, τ = 14 j : moins de 0,1 % de ce terme sur
+/// 15 min, par canal pour `acv-clim@1`). L'historique est le même pour tous
+/// les `from` strictement intérieurs au seau (fenêtre `[from − N sem., from)`
+/// et mesures sur la grille de 15 min) ; un `from` pile sur la borne a sa
+/// propre entrée (cf. la clé de cache). Une mesure ingérée entre deux
+/// requêtes n'est vue qu'à l'expiration de l'entrée (≤ TTL, comme avant). Un
+/// modèle qui n'est pas invariant par translation (`gbdt@1`, à features
+/// horodatées — non servi) ne doit pas être enrobé, pas plus qu'un modèle dont
+/// le pas n'est pas un multiple du seau.
 ///
 /// ADR-0009 intact : la prévision reste « calculée à la lecture, jamais
 /// persistée » — le cache est un mémo **en mémoire**, sans millésime ni base.
@@ -178,6 +193,11 @@ fn bucket(t: OffsetDateTime) -> i64 {
     t.unix_timestamp().div_euclid(CACHE_BUCKET_SECS)
 }
 
+/// `true` si `t` tombe pile sur la grille des seaux (à la nanoseconde près).
+fn on_grid(t: OffsetDateTime) -> bool {
+    t.unix_timestamp().rem_euclid(CACHE_BUCKET_SECS) == 0 && t.nanosecond() == 0
+}
+
 /// Translate une série calculée pour `computed_from` sur `from` (issue #161) :
 /// chaque point garde ses valeurs et son rang, seul l'horodatage est décalé de
 /// `from − computed_from` et rendu dans le décalage horaire de `from` (comme le
@@ -219,6 +239,7 @@ impl<F: ForecastModel> ForecastModel for CachedForecaster<F> {
             region,
             methodology: methodology_id.to_string(),
             from_bucket: bucket(from),
+            from_on_grid: on_grid(from),
             horizon_secs: horizon.whole_seconds(),
         };
         if let Some((computed_from, cached)) = self.lookup(&key)
@@ -805,8 +826,8 @@ mod tests {
         // Reproduit #161 : premier appel à T+2:38.486, second à T+10:02.421,
         // même seau. Avant le correctif, le second recevait la série du premier.
         let t0 = bucket_start();
-        let from1 = t0 + Duration::seconds(158) + Duration::milliseconds(486);
-        let from2 = t0 + Duration::seconds(602) + Duration::milliseconds(421);
+        let from1 = t0 + Duration::seconds(158) + Duration::nanoseconds(486_278_300);
+        let from2 = t0 + Duration::seconds(602) + Duration::nanoseconds(421_910_722);
         let (forecaster, calls) = cached_grid(from2, 4);
 
         let first = forecaster
@@ -883,15 +904,52 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(second[0].at, from2);
         // Même instant et même décalage ⇒ même chaîne RFC 3339 que le `from`
-        // demandé (le test HTTP d'`adapter-http` le vérifie sur la réponse).
+        // demandé (le test HTTP d'`adapter-http` vérifie la chaîne de la
+        // réponse pour un `from` en UTC).
         assert_eq!(second[0].at.offset(), from2.offset());
+    }
+
+    /// Décorateur de comptage : délègue à `inner` et compte les calculs.
+    struct Counting<F> {
+        inner: F,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl<F: ForecastModel> ForecastModel for Counting<F> {
+        async fn forecast(
+            &self,
+            region: Region,
+            methodology_id: &str,
+            from: OffsetDateTime,
+            horizon: Duration,
+        ) -> Result<Vec<ForecastPoint>, ForecastError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.inner
+                .forecast(region, methodology_id, from, horizon)
+                .await
+        }
+    }
+
+    /// Le pas servi en prod (`ClimatologyParams::default()`, câblé par
+    /// `ClimatologyForecaster::new` et `AcvAdemeForecaster::new`) doit être un
+    /// multiple du seau de cache : condition de la translation (issue #161).
+    /// Rougit si le seau passe à 1 800 s ou si le pas par défaut change.
+    #[test]
+    fn served_step_is_multiple_of_cache_bucket() {
+        assert_eq!(
+            ClimatologyParams::default().step.whole_seconds() % CACHE_BUCKET_SECS,
+            0
+        );
     }
 
     #[tokio::test]
     async fn reanchored_series_matches_a_fresh_computation() {
-        // Vrai `ClimatologyForecaster` : la série ré-ancrée est celle qu'un
-        // calcul direct pour `from2` produirait — mêmes horodatages, mêmes
-        // valeurs à la décroissance de persistance près (< 0,1 % du biais).
+        // Vrai `ClimatologyForecaster` (paramètres servis en prod : pas 15 min,
+        // τ = 14 j, 10 semaines) : la série ré-ancrée est celle qu'un calcul
+        // direct pour `from2` produirait — mêmes horodatages, mêmes valeurs à
+        // la décroissance de persistance près : |b|·(1 − e^(−444 s/τ)) ≈ 0,015
+        // pour un biais b ≈ 39 ici, d'où la tolérance 0,02.
         let t0 = bucket_start();
         let step = Duration::minutes(15);
         let from1 = t0 + Duration::seconds(158);
@@ -900,19 +958,15 @@ mod tests {
         // à `t0` → biais de persistance non nul.
         let mut history = seed_pattern(t0, step, 8 * 7 * 96);
         history.push(point(t0, Region::National, "rte-direct", 65.0));
-        let params = ClimatologyParams {
-            step,
-            tau: Duration::days(14),
-        };
-        let direct = ClimatologyForecaster::with_config(
-            FakeRepo {
-                points: history.clone(),
-            },
-            8,
-            params,
-        );
+        let direct = ClimatologyForecaster::new(FakeRepo {
+            points: history.clone(),
+        });
+        let calls = Arc::new(AtomicUsize::new(0));
         let cached = CachedForecaster::new(
-            ClimatologyForecaster::with_config(FakeRepo { points: history }, 8, params),
+            Counting {
+                inner: ClimatologyForecaster::new(FakeRepo { points: history }),
+                calls: calls.clone(),
+            },
             std::time::Duration::from_secs(900),
         )
         .with_clock(Arc::new(FixedClock(from2)));
@@ -930,6 +984,11 @@ mod tests {
             .await
             .unwrap();
 
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "la seconde série vient du cache"
+        );
         assert_eq!(reanchored[0].at, from2);
         assert_eq!(reanchored.len(), fresh.len());
         for (a, b) in reanchored.iter().zip(&fresh) {
@@ -939,9 +998,35 @@ mod tests {
                 (a.lower.value(), b.lower.value()),
                 (a.upper.value(), b.upper.value()),
             ] {
-                assert!((x - y).abs() < 0.1, "{x} vs {y} à {}", a.at);
+                assert!((x - y).abs() < 0.02, "{x} vs {y} à {}", a.at);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn from_on_grid_has_its_own_entry() {
+        // Un `from` pile sur la borne du seau lit une fenêtre d'historique
+        // différente de celle des `from` intérieurs : il ne partage pas leur
+        // entrée (deux calculs), alors que deux `from` intérieurs partagent.
+        let t0 = bucket_start();
+        let (forecaster, calls) = cached_grid(t0 + Duration::minutes(10), 4);
+        for from in [
+            t0,
+            t0 + Duration::seconds(158),
+            t0 + Duration::seconds(602),
+            t0,
+        ] {
+            let out = forecaster
+                .forecast(Region::National, "rte-direct", from, Duration::hours(1))
+                .await
+                .unwrap();
+            assert_eq!(out[0].at, from);
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "une entrée pour la borne, une pour l'intérieur du seau"
+        );
     }
 
     #[tokio::test]
@@ -949,11 +1034,12 @@ mod tests {
         // Les cas d'usage aval (créneau vert, échéance) raisonnent sur la série
         // ré-ancrée : un créneau ne précède jamais la requête et une échéance
         // est jugée depuis l'instant courant — plus depuis le `from` du premier
-        // appelant (faux positif observé sur /v1/schedule, #161).
+        // appelant (faux positif de /v1/schedule reproduit en prod le
+        // 2026-10-21, requêtes dans la PR qui corrige #161).
         let t0 = bucket_start();
         let from1 = t0 + Duration::seconds(30);
         let from2 = t0 + Duration::minutes(14) + Duration::seconds(50);
-        let (forecaster, _) = cached_grid(from2, 8);
+        let (forecaster, calls) = cached_grid(from2, 8);
         forecaster
             .forecast(Region::National, "rte-direct", from1, Duration::hours(2))
             .await
@@ -963,6 +1049,7 @@ mod tests {
             .await
             .unwrap();
 
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "la série vient du cache");
         let window =
             greenest_window(&series, Duration::minutes(60), WindowEstimator::Central).unwrap();
         assert!(
@@ -971,7 +1058,7 @@ mod tests {
         );
         // Échéance à from2 + 55 min : aucun créneau de 60 min ne tient. Sur la
         // série du premier appelant (14 min plus tôt), un créneau tenait — le
-        // faux positif de l'issue.
+        // faux positif reproduit en prod.
         assert!(
             greenest_window_before(
                 &series,

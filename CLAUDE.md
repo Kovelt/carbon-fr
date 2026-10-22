@@ -6,7 +6,7 @@ Contexte et conventions du projet `carbon-fr` pour les sessions Claude Code. Lis
 
 API d'intensité carbone de l'électricité française (gCO₂eq/kWh), souveraine, open source et dev-first — l'équivalent français de [carbonintensity.org.uk](https://carbonintensity.org.uk/), basée sur les données ouvertes RTE/éCO2mix via ODRÉ.
 
-> **Nom** : `carbon-fr`. Les crates sont préfixées `carbonfr-*` (ex. `carbonfr-core`, `carbonfr-adapter-odre`) même si les dossiers restent `crates/core`, `crates/adapter-odre`, etc. ; seules `carbonfr-core`, `carbonfr-eligibility` et `carbonfr-sdk` sont publiées.
+> **Nom** : `carbon-fr`. Les crates de `crates/` sont préfixées `carbonfr-*` (ex. `carbonfr-core`, `carbonfr-adapter-odre`) même si leurs dossiers restent courts (`crates/core`, `crates/adapter-odre`, …) ; le binaire `bin/server` s'appelle `server`, et seules `carbonfr-core`, `carbonfr-eligibility` et `carbonfr-sdk` sont publiées.
 
 ## Où trouver quoi (sources faisant foi)
 

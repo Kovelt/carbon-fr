@@ -115,7 +115,7 @@ Périmètre : `National` + 12 régions métropolitaines (couverture éCO2mix ré
 
 ### Cycle de vie de la donnée (révisions)
 
-RTE **révise** ses données : le temps réel du mois M est remplacé par des données « consolidées » (annoncées par RTE « en milieu de M+1 », publiées en pratique par lots et en retard, de l'ordre d'un à trois mois selon les mois — cf. ADR-0003 addendum 2026-09-26), puis « définitives » (A+1). La donnée n'est donc **pas purement append-only**. Chaque mesure porte un **millésime** (`tr` | `consolidated` | `definitive`) ; l'ingestion fait un **upsert** sur la clé d'unicité et n'écrase une valeur que par un millésime de qualité supérieure ou égale (`definitive` > `consolidated` > `tr`). L'API sert toujours la meilleure version présente en base et expose le millésime (`vintage`) sur `/intensity/now`, `/intensity/now/all` et `/intensity/date` ; le poller et l'auto-réparation ne lisant que le temps réel, le consolidé et le définitif n'entrent en base que par la sous-commande `backfill` (§3). Détails et alternatives : **ADR-0006**.
+RTE **révise** ses données : le temps réel du mois M est remplacé par des données « consolidées » (annoncées par RTE « en milieu de M+1 », publiées en pratique par lots, avec un retard allant jusqu'à ~3 mois — cf. ADR-0003 addendum 2026-09-26 ; au 2026-10-22, le consolidé national couvre jusqu'au 31 août), puis « définitives » (A+1). La donnée n'est donc **pas purement append-only**. Chaque mesure porte un **millésime** (`tr` | `consolidated` | `definitive`) ; l'ingestion fait un **upsert** sur la clé d'unicité et n'écrase une valeur que par un millésime de qualité supérieure ou égale (`definitive` > `consolidated` > `tr`). L'API sert toujours la meilleure version présente en base et expose le millésime (`vintage`) sur `/intensity/now`, `/intensity/now/all` et `/intensity/date` ; le poller et l'auto-réparation ne lisant que le temps réel, le consolidé et le définitif n'entrent en base que par la sous-commande `backfill` (§3). Détails et alternatives : **ADR-0006**.
 
 **Stockage : PostgreSQL natif, sans extension** (voir ADR-0004).
 
@@ -142,7 +142,7 @@ Conséquence : le type `Measurement` du domaine porte un champ `methodology` dè
 
 ## 7. Découpage en crates
 
-Les crates publiables sont préfixées `carbonfr-*` même si les dossiers restent courts (`crates/core`, `crates/adapter-odre`, …).
+Les crates de `crates/` sont préfixées `carbonfr-*` même si les dossiers restent courts (`crates/core`, `crates/adapter-odre`, …).
 
 | Crate | Rôle | Dépendances notables |
 | --- | --- | --- |
@@ -161,7 +161,7 @@ Les crates publiables sont préfixées `carbonfr-*` même si les dossiers resten
 
 ## 8. Roadmap
 
-Les sept phases sont **livrées** ; l'itération I10 du [plan](plan-iterations.md) est en cours (parité SDK TS ↔ OpenAPI, exemples OpenAPI et rattrapage documentaire livrés ; restent, vers la v0.12.0, le backfill consolidé de juillet–septembre 2026 — juillet et août déjà publiés par RTE début octobre, septembre à venir — puis les échéances datées : revue LCOE du 2026-12-15 et millésime TRV 2027-H1 avant le 1er février 2027). État réel (version de workspace : cf. `[workspace.package] version` dans le `Cargo.toml` racine ; contrat d'API `/v1`) :
+Les sept phases sont **livrées** ; l'itération I10 du [plan](plan-iterations.md) est en cours (parité SDK TS ↔ OpenAPI, exemples OpenAPI et rattrapage documentaire livrés ; restent, vers la v0.12.0, le backfill consolidé de juillet–septembre 2026 — juillet et août déjà publiés par RTE (constaté le 2026-10-22), septembre à venir — puis les échéances datées : revue LCOE du 2026-12-15 et millésime TRV 2027-H1 avant le 1er février 2027). État réel (version de workspace : cf. `[workspace.package] version` dans le `Cargo.toml` racine ; contrat d'API `/v1`) :
 
 1. **Socle** ✅ — `core` + poller unique (`IngestLatest`, remplacé en 0.9.5 par `IngestRecent`) + `/intensity/now` + `/mix` + `/health`, national.
 2. **Historique + régional** ✅ — backfill par export de masse (2012→), `/intensity/date`, `/intensity/stats`, 12 régions (servies en `acv-ademe`), rollups (passés de vues matérialisées à tables incrémentales).

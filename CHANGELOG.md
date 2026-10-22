@@ -95,27 +95,35 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 - **Rattrapage documentaire** (DOCS-7, DX-7, plan I10) : `README.md`
   §Feuille de route et `docs/ARCHITECTURE.md` §8 gagnent la phase 7
-  « Fiabilité & écosystème Rust » (v0.7.0 → v0.11.0 : fenêtre glissante et
-  auto-réparation, quota ODRÉ réel, plafond SSE et délais, compression,
-  crates.io et SDK Rust, montées `utoipa`/`reqwest`/`sqlx`, API groupée,
-  index qualitatif, export CSV, parité SDK ↔ OpenAPI, gouvernance) ;
-  `CONTRIBUTING.md` : section « Tests d'intégration » (Postgres piloté par
-  `DATABASE_URL` — sans elle les tests s'auto-sautent en vert —, recette
-  locale identique au job CI, tests live ODRÉ/ENTSO-E/Open-Meteo en
-  `--ignored`). Chaque chiffre cité a été revérifié contre le code : le quota
-  ODRÉ est compté **par jeu de données** (le régional consomme ≈ 70 % de ses
-  50 000 appels/mois, et non « 80 % » d'un quota unique), `IngestRecent` a
-  remplacé `IngestLatest`, l'historique consolidé est au pas de 30 min,
-  l'upsert écrase à millésime « supérieur ou égal », index réels de
-  `measurement`, partitionnement tranché en I7, prérequis Rust (1.94 pour le
-  serveur via `sqlx` 0.9, MSRV 1.88 des crates publiées), 10 semaines
+  « Fiabilité & écosystème Rust » (v0.7.0 → v0.11.0, puis `main` : audit
+  2026-08, fenêtre glissante et auto-réparation, quota ODRÉ réel, plafond SSE
+  et délais, compression, crates.io et SDK Rust, montées
+  `utoipa`/`reqwest`/`sqlx`, API groupée, index qualitatif, export CSV,
+  parité SDK ↔ OpenAPI, gouvernance) ; `CONTRIBUTING.md` : section « Tests
+  d'intégration » (Postgres piloté par `DATABASE_URL` — sans elle les tests
+  s'auto-sautent en vert —, PostgreSQL jetable configuré comme le service du
+  job CI, rôle `anonymous` de `sqlx` sans utilisateur dans l'URL, sonde TCP
+  avant les tests, tests live ODRÉ/ENTSO-E/Open-Meteo en `--ignored`, tests
+  `stream` du SDK Rust à lancer avec leur feature). Les chiffres énumérés
+  ci-après ont été revérifiés contre le code : le quota ODRÉ est compté
+  **par jeu de données** (le régional consomme ≈ 70 % de ses 50 000
+  appels/mois, et non « 80 % » d'un quota unique ; quatre jauges
+  `carbonfr_odre_quota_*`), `IngestRecent` a remplacé `IngestLatest` dans le
+  poller (0.9.5), l'historique consolidé est au pas de 30 min et n'entre en
+  base que par `backfill`, l'upsert écrase à millésime « supérieur ou égal »,
+  index réels de `measurement`, partitionnement tranché en I7 (148 Mo
+  mesurés, 221 Mo après le comblement régional), prérequis Rust (1.94 pour
+  le serveur via `sqlx` 0.9, MSRV 1.88 des crates publiées), 10 semaines
   d'historique pour la prévision, `version=2` acceptée par quatre lectures
-  seulement, `index` dans l'exemple du parcours local, `carbonfr-sdk` 0.3.0,
-  noms exacts des contrôles CI, `cargo deny --all-features --workspace
-  check`, URL canonique RTE, jeu régional consolidé dans les sources, site
-  vitrine statique en ligne (<https://carbon-fr.kovelt.fr>) ; aucune
-  « élection de leader » du poller (déploiement mono-instance). `CLAUDE.md`
-  et `bruno/README.md` alignés sur les mêmes faits.
+  d'intensité seulement (`/factors` sert aussi la table `@2`), `index` dans
+  l'exemple du parcours local, `carbonfr-sdk` 0.3.0, noms exacts des
+  contrôles CI, `cargo deny --all-features --workspace check`, URL canonique
+  RTE, jeu régional consolidé dans les sources, `CARBONFR_BACKFILL_SCOPE`
+  (`all` ajoute les régions, `regional` les rapatrie seules), site vitrine
+  statique en ligne (<https://carbon-fr.kovelt.fr>, playground à rafraîchir) ;
+  aucune « élection de leader » du poller (déploiement mono-instance).
+  `CLAUDE.md`, `bruno/README.md` et `bruno/forecast.bru` alignés sur les
+  mêmes faits.
 
 ## [0.11.0] - 2026-10-20
 

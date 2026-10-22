@@ -26,8 +26,8 @@ Si une contribution fait fuiter de l'infrastructure dans le domaine, elle sera r
 ## Conventions de code
 
 - `cargo fmt --all` et `cargo clippy --all-targets -- -D warnings` doivent passer.
-- `cargo test --workspace` doit passer. Le `core` se teste **sans IO**, avec des *fakes* en mémoire implémentant les ports. Les tests Postgres exigent `DATABASE_URL` (voir [Tests d'intégration](#tests-dintégration)).
-- `cargo deny --all-features --workspace check` doit passer — les mêmes options que la CI, à placer **avant** `check` (licences permissives, avis RustSec, sources de confiance — voir [`deny.toml`](deny.toml)). Toute dépendance à licence inédite force une décision explicite dans `deny.toml`.
+- `cargo test --workspace` doit passer. Le `core` se teste **sans IO**, avec des *fakes* en mémoire implémentant les ports. Les tests Postgres ne s'exécutent qu'avec `DATABASE_URL` : sans elle, ils s'auto-sautent en vert (voir [Tests d'intégration](#tests-dintégration)).
+- `cargo deny --all-features --workspace check` doit passer — les mêmes options que la CI, à placer **avant** `check` (licences permissives, avis RustSec, sources de confiance — voir [`deny.toml`](deny.toml)). Toute dépendance normale ou de build à licence inédite force une décision explicite dans `deny.toml` (une crate tirée seulement par des `[dev-dependencies]` échappe au contrôle des licences : à vérifier à la main).
 - Pas d'`unwrap()` / `expect()` hors tests et hors bootstrap du binaire.
 - Erreurs : `thiserror` dans les bibliothèques ; `anyhow` toléré uniquement dans le binaire.
 - Unité canonique : **gCO₂eq/kWh**. L'horodatage est porté explicitement par chaque mesure.
@@ -35,9 +35,9 @@ Si une contribution fait fuiter de l'infrastructure dans le domaine, elle sera r
 
 ## Tests d'intégration
 
-`cargo test --workspace` est **hermétique par défaut** (ni réseau ni base) : deux familles de tests ne tournent que sur demande.
+`cargo test --workspace` est **hermétique par défaut** (ni réseau ni base) : trois familles de tests ne tournent que sur demande — les deux décrites ci-dessous, et les tests du flux SSE de `carbonfr-sdk` (`crates/sdk/src/stream.rs`), compilés seulement avec la feature Cargo `stream`, que ni `cargo test --workspace` ni la CI n'activent : `cargo test -p carbonfr-sdk --features stream` dès que tu touches au flux SSE du SDK.
 
-**PostgreSQL.** Les tests de [`crates/adapter-postgres/tests/pg.rs`](crates/adapter-postgres/tests/pg.rs) s'exécutent contre un vrai serveur et sont pilotés par la variable `DATABASE_URL`. ⚠️ Sans elle, ils **s'auto-sautent mais comptent comme réussis** (message `SKIP : DATABASE_URL non défini`, visible avec `-- --nocapture`) : un `cargo test --workspace` vert en local ne dit donc rien de la couche Postgres. La CI, elle, la définit (job `tests (avec PostgreSQL)`, service `postgres:17-alpine`, même version majeure que la prod) et les exécute pour de bon. **Lance-les en local dès que tu touches `crates/adapter-postgres/`** (requêtes, migrations) ou un port de persistance du `core` :
+**PostgreSQL.** Les tests de [`crates/adapter-postgres/tests/pg.rs`](crates/adapter-postgres/tests/pg.rs) s'exécutent contre un vrai serveur et sont pilotés par la variable `DATABASE_URL`. ⚠️ Sans elle, ils **s'auto-sautent mais comptent comme réussis** (message `SKIP : DATABASE_URL non défini`, visible avec `-- --nocapture`) : un `cargo test --workspace` vert en local ne dit donc rien des requêtes SQL ni des migrations (seuls tournent les tests unitaires hermétiques de `crates/adapter-postgres/src/mapping.rs`). La CI, elle, la définit (job `tests (avec PostgreSQL)`, service `postgres:17-alpine`, même version majeure que la prod) et les exécute pour de bon. **Lance-les en local dès que tu touches `crates/adapter-postgres/`** (requêtes, migrations) ou un port de persistance du `core` :
 
 ```bash
 # PostgreSQL jetable, configuré comme le service de la CI (la base carbonfr_test est créée au démarrage)
@@ -48,12 +48,12 @@ podman run -d --name carbonfr-pg-test \
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/carbonfr_test \
   cargo test -p carbonfr-adapter-postgres --test pg
 
-podman rm -f carbonfr-pg-test        # supprime la base jetable
+podman rm -f -v carbonfr-pg-test     # supprime le conteneur et son volume (la base jetable)
 ```
 
-- La **base doit exister** (les tests ne la créent pas) et le rôle doit pouvoir y créer des tables ; les **migrations sont appliquées par les tests eux-mêmes** (idempotentes, sans extension — ADR-0004). Sans identifiants dans l'URL, `sqlx` prend `PGUSER`/`PGPASSWORD`, puis le nom de l'utilisateur système.
-- **Base jetable uniquement** (jamais celle de dev ni de prod) : les tests tournent en parallèle et s'isolent par des méthodologies `test-pg-*` et des plages de dates dédiées, mais l'un d'eux vide la table `visit` et rien n'est nettoyé en fin de run.
-- `DATABASE_URL` définie mais base injoignable : les tests **échouent** (ils ne sautent pas). L'image `postgres-alpine` redémarre pendant son initialisation — attends qu'une vraie requête SQL passe, pas seulement `pg_isready`.
+- La **base doit exister** (les tests ne la créent pas) et le rôle doit pouvoir y créer des tables ; les **migrations sont appliquées par les tests eux-mêmes** (`migrate()` de sqlx n'exécute que celles qui manquent, journal `_sqlx_migrations` sous verrou consultatif : relancer les tests ne change pas le schéma ; aucune extension requise — ADR-0004). Sans identifiants dans l'URL, `sqlx` lit `PGUSER`/`PGPASSWORD` ; sans `PGUSER`, il se connecte sous le rôle `anonymous` (et non sous ton nom d'utilisateur système) — mets toujours l'utilisateur dans l'URL.
+- **Base jetable uniquement** (jamais celle de dev ni de prod) : les tests tournent en parallèle et s'isolent par des données dédiées (méthodologies `test-pg-*`, horodatages des années 1980, empreintes de clé et identifiants d'abonnement de test), mais l'un d'eux vide la table `visit`, et chaque test purge ses lignes au démarrage, pas en fin de run.
+- `DATABASE_URL` définie mais base injoignable : les tests **échouent** (ils ne sautent pas). Au premier démarrage, l'image `postgres` (alpine comprise) lance un serveur temporaire joignable par le seul socket Unix du conteneur, le temps de créer `carbonfr_test`, puis redémarre pour de bon en TCP : une sonde passée par ce socket peut répondre « prêt » trop tôt. Attends que la base réponde **en TCP** par le port publié, comme les tests (`pg_isready -h 127.0.0.1 -p 5432 -U postgres` depuis l'hôte, ou un `SELECT 1` par `DATABASE_URL`).
 
 **API réelles (ODRÉ, ENTSO-E, Open-Meteo).** Les tests « live » (`tests/live.rs` d'`adapter-odre`, `adapter-entsoe` et `adapter-meteo`) frappent les vraies API : ils sont `#[ignore]` (réseau ; quota ODRÉ de 50 000 appels/mois par jeu de données — ADR-0003) et la CI ne les lance jamais. À la demande seulement, par exemple `cargo test -p carbonfr-adapter-odre --test live -- --ignored` ; ENTSO-E exige en plus un jeton dans `CARBONFR_ENTSOE_TOKEN`. Le mainteneur rejoue le test ENTSO-E après toute montée de `reqwest` ou de `quick-xml` et tout changement du parseur, et date le rejeu dans `crates/adapter-entsoe/src/lib.rs`.
 

@@ -24,7 +24,7 @@ bru run --env Local
 
 > Certaines requêtes (`Intensité date`, `stats`, `Prévision`) supposent que
 > l'historique a été backfillé (`carbonfr-server backfill`) — la prévision
-> s'appuie sur ~8 semaines en amont du `from`. Les requêtes régionales
+> s'appuie sur ~10 semaines en amont du `from`. Les requêtes régionales
 > supposent que le poller a tourné au moins une fois.
 
 > Les requêtes Webhook (`{{apiKey}}`) nécessitent une clé émise via

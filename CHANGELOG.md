@@ -108,6 +108,31 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   désormais échouer la CI (la dérive constatée à la sortie de la 0.2.0).
   Aucun changement du SDK publié.
 
+### CI
+
+- **Tests de la feature `stream` du SDK Rust joués par la CI** : la
+  feature est désactivée par défaut et aucun autre membre du workspace ne
+  dépend de `carbonfr-sdk`, si bien que `cargo test --workspace` ne
+  compilait pas `crates/sdk/src/stream.rs` — ses 7 tests (backoff, `index`
+  optionnel et, contre un serveur `axum` local sur 127.0.0.1 sans réseau,
+  keep-alive, reconnexion sur coupure et sur délai de lecture, reconnexion
+  désactivée) n'étaient joués par aucun job. Le job `tests (avec PostgreSQL)`
+  gagne une étape `cargo test -p carbonfr-sdk --all-features` ; nom du job et
+  checks requis du *ruleset* inchangés. `CONTRIBUTING.md` (« Tests
+  d'intégration », « Crates publiées / publiables ») et `GOUVERNANCE.md` §5
+  décrivent désormais cette étape. **SemVer : aucun** (CI et documentation,
+  aucun fichier de la crate touché).
+- **Commentaires de `ci.yml` et description de la CI réalignés** (reliquats
+  de la PR #168) : sept commentaires périmés ou imprécis de `ci.yml`
+  corrigés (job semver qui couvre bien `carbonfr-sdk`, SDK publié depuis I6,
+  `cargo test` qui compile les exemples, tests `node:test` du SDK TS dont la
+  parité OpenAPI, limite du health-check PostgreSQL, trois familles de tests
+  live, permissions du job d'alerte) ; `GOUVERNANCE.md` §5, `deny.toml` et
+  le gabarit de PR citent la commande de la CI (`cargo deny --all-features
+  --workspace check`), `GOUVERNANCE.md` les tests `node:test` du job
+  `sdk-typescript` ; commentaire caduc de `release-rust-sdk.yml` daté.
+  **SemVer : aucun** (commentaires et documentation).
+
 ### Documentation
 
 - **Rattrapage documentaire** (DOCS-7, DX-7, plan I10) : `README.md`

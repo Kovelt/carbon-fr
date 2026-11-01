@@ -1693,6 +1693,13 @@ async fn range_bounds_with_an_offset_are_echoed_in_utc() {
             "{uri}"
         );
     }
+    // Un `+` brut est décodé en espace : `400`, jamais un autre instant (README).
+    let response = get(
+        app,
+        "/v1/intensity/date?from=1970-01-01T01:00:00+01:00&to=1970-01-01T03:00:00Z",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 /// Même règle pour les points dérivés de `from` : la prévision et le créneau

@@ -210,11 +210,15 @@ fn check_version(methodology: &str, version: Option<u32>) -> Result<(), ApiError
 /// en deçà (an 0000 avec un décalage positif), RFC 3339 ne sait pas l'écrire et
 /// l'écho de la réponse échouerait en 500.
 fn parse_timestamp(name: &str, raw: &str) -> Result<OffsetDateTime, ApiError> {
-    OffsetDateTime::parse(raw, &Rfc3339)
-        .ok()
-        .and_then(|at| at.checked_to_offset(UtcOffset::UTC))
+    let at = OffsetDateTime::parse(raw, &Rfc3339)
+        .map_err(|_| ApiError::bad_request(format!("`{name}` : horodatage RFC 3339 invalide")))?;
+    at.checked_to_offset(UtcOffset::UTC)
         .filter(|at| (0..=9999).contains(&at.year()))
-        .ok_or_else(|| ApiError::bad_request(format!("`{name}` : horodatage RFC 3339 invalide")))
+        .ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "`{name}` : instant hors des années 0000-9999 une fois ramené en UTC"
+            ))
+        })
 }
 
 /// `GET /v1/intensity/now` — dernière intensité carbone connue.

@@ -64,14 +64,23 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `greenest-window` (et `timestamp` des créneaux de son overlay
   `?eligibility=`) et de `/v1/schedule`, `timestamp` de `/v1/schedule/slots`
   et de `/v1/intensity/below` — sortait lui aussi en `+02:00`, à côté de
-  points de série en `Z` et contre l'annonce de l'OpenAPI (« RFC 3339, UTC »)
-  et du SDK TypeScript. Les instants reçus (`from`, `to`, `deadline`) sont
+  points de série en `Z` et contre l'en-tête de types du SDK TypeScript
+  (« horodatages en RFC 3339 UTC ») et, pour `ForecastResponse.from`,
+  `ForecastPointBody.timestamp` et `GreenestWindowResponse.start`, contre
+  l'OpenAPI (« RFC 3339, UTC »). Les instants reçus (`from`, `to`,
+  `deadline`) sont
   désormais ramenés en UTC dès la lecture du paramètre : l'instant ne change
   pas, seule sa représentation (`+02:00` → `Z`). Un instant qui, une fois en
-  UTC, sort des années 0000-9999 répond `400` : au-delà (an 9999 avec un
-  décalage négatif), `checked_to_offset` évite une panique de `to_offset` ; en
-  deçà (an 0000 avec un décalage positif), RFC 3339 ne sait pas l'écrire et
-  l'écho aurait échoué en `500`. Trois tests d'intégration. **SemVer :
+  UTC, sort des années 0000-9999 répond `400`. Au-delà (fin du 31 décembre
+  9999 avec un décalage négatif), `checked_to_offset` évite une panique de
+  `to_offset`, que la v0.11.0 déclenchait déjà avec Postgres : l'instant
+  passait `parse_timestamp`, puis l'encodage sqlx de la borne
+  (`to_offset(UTC)`) paniquait et la connexion était coupée sans réponse HTTP.
+  En deçà (début du 1er janvier 0000 avec un décalage positif), l'an -1 ne
+  s'écrit pas en RFC 3339 et l'écho, désormais en UTC, échouerait en `500` :
+  ces instants, jusqu'ici acceptés (`/v1/intensity/date` répondait `200`,
+  série vide, écho dans le décalage reçu), sont désormais refusés. Trois tests
+  d'intégration. **SemVer :
   patch** — le comportement rejoint le contrat déjà documenté ; instantané
   OpenAPI, SDK et crates publiées inchangés. Un client qui comparait l'écho au
   texte envoyé, décalage compris, ou qui lisait l'heure locale dans les

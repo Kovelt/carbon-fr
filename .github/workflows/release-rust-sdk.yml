@@ -17,10 +17,10 @@ name: Publier le SDK Rust (crates.io)
 # publiée (même contrainte que core/eligibility en I5). La toute première
 # publication de carbonfr-sdk se fait donc à la main, avec un jeton crates.io
 # ponctuel révoqué aussitôt (procédure identique à
-# `docs/plan-iterations.md` I5, adaptée à `-p carbonfr-sdk`) — CE WORKFLOW
-# échouera à l'étape d'authentification tant que cette première publication
-# manuelle et la déclaration ci-dessous n'ont pas eu lieu, c'est attendu.
-# Une fois la crate publiée au moins une fois :
+# `docs/plan-iterations.md` I5, adaptée à `-p carbonfr-sdk`) — faite le
+# 2026-09-25 en 0.1.0 ; la déclaration ci-dessous, faite le même jour, a
+# permis de publier la 0.1.1 par ce workflow, sans jeton. Pour mémoire,
+# déclaration (une fois la crate publiée au moins une fois) :
 #   Page de la crate carbonfr-sdk → Settings → Trusted Publishing → Add → GitHub :
 #     - Repository owner  : Kovelt
 #     - Repository name   : carbon-fr

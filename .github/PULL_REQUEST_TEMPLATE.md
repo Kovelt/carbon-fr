@@ -13,7 +13,7 @@
 
 - [ ] `cargo fmt --all` et `cargo clippy --all-targets -- -D warnings` passent.
 - [ ] `cargo test --workspace` passe (le `core` se teste sans IO, avec des *fakes*).
-- [ ] `cargo deny check` passe (licences/avis/sources — toute licence inédite = décision explicite dans `deny.toml`).
+- [ ] `cargo deny --all-features --workspace check` passe (avis/licences/interdictions/sources — toute licence inédite = décision explicite dans `deny.toml`).
 - [ ] Architecture hexagonale respectée : aucune IO (`reqwest`/`sqlx`/`axum`/`serde`) introduite dans `core` (ADR-0002).
 - [ ] Aucune méthodologie publiée modifiée silencieusement ; toute nouvelle méthode = nouvelle version + ADR (ADR-0005).
 - [ ] Pour toute décision structurante : un ADR a été ajouté dans `docs/adr/`.

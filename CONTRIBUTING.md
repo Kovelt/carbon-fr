@@ -35,7 +35,7 @@ Si une contribution fait fuiter de l'infrastructure dans le domaine, elle sera r
 
 ## Tests d'intégration
 
-`cargo test --workspace` est **hermétique par défaut** (ni réseau ni base) : trois familles de tests ne tournent que sur demande — les deux décrites ci-dessous, et les tests du flux SSE de `carbonfr-sdk` (`crates/sdk/src/stream.rs`), compilés seulement avec la feature Cargo `stream` : ni `cargo test --workspace` ni la CI ne les compilent ni ne les jouent (la CI n'active `stream` que pour `check`, `doc` et les exemples). Lance `cargo test -p carbonfr-sdk --features stream` et `cargo clippy -p carbonfr-sdk --all-targets --features stream` dès que tu touches au flux SSE du SDK.
+`cargo test --workspace` est **hermétique par défaut** (ni réseau ni base) : trois familles de tests ne tournent que sur demande — les deux décrites ci-dessous, et les tests du flux SSE de `carbonfr-sdk` (`crates/sdk/src/stream.rs`), compilés seulement avec la feature Cargo `stream` : `cargo test --workspace` ne l'active pas (aucun membre du workspace ne dépend du SDK), mais la CI les joue dans une étape dédiée du job `tests (avec PostgreSQL)` (`cargo test -p carbonfr-sdk --all-features`, serveur `axum` local, aucun réseau). Lance cette même commande dès que tu touches au flux SSE du SDK, ainsi que `cargo clippy -p carbonfr-sdk --all-targets --features stream` : la CI ne passe pas clippy avec cette feature.
 
 **PostgreSQL.** Les tests de [`crates/adapter-postgres/tests/pg.rs`](crates/adapter-postgres/tests/pg.rs) s'exécutent contre un vrai serveur et sont pilotés par la variable `DATABASE_URL`. ⚠️ Sans elle, ils **s'auto-sautent mais comptent comme réussis** (message `SKIP : DATABASE_URL non défini`, visible avec `-- --nocapture`) : un `cargo test --workspace` vert en local ne dit donc rien des requêtes SQL ni des migrations (seuls tournent les tests unitaires hermétiques de `crates/adapter-postgres/src/mapping.rs`). La CI, elle, la définit (job `tests (avec PostgreSQL)`, service `postgres:17-alpine`, même version majeure que la prod) et les exécute pour de bon. **Lance-les en local dès que tu touches `crates/adapter-postgres/`** (requêtes, migrations) ou un port de persistance du `core` :
 
@@ -103,8 +103,9 @@ fusion touchant ces trois crates :
 
 Ces trois checks sont **requis** par le *ruleset* de `main` depuis le
 2026-09-24 (procédure : [`docs/brief-claude-code-ruleset-main.md`](docs/brief-claude-code-ruleset-main.md)).
-Le job `tests (avec PostgreSQL)` compile aussi les `examples/` de
-`carbonfr-sdk` (`cargo build -p carbonfr-sdk --examples --all-features`,
+Le job `tests (avec PostgreSQL)` joue aussi les tests de la feature `stream`
+de `carbonfr-sdk` (`cargo test -p carbonfr-sdk --all-features`) et compile
+ses `examples/` (`cargo build -p carbonfr-sdk --examples --all-features`,
 depuis I6) — pas de job requis supplémentaire pour ça.
 
 ## Processus de contribution

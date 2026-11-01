@@ -55,6 +55,28 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `#[cfg(test)]` faisaient échouer `cargo doc` strict sur tout le workspace
   (sans effet sur la CI, qui ne documente que les crates publiées) ; remplacés
   par de simples mentions de code.
+- **Horodatages `/v1` : toujours en UTC, quel que soit le décalage fourni**.
+  `parse_timestamp` conservait le décalage du texte reçu : un `from`/`to` en
+  `+02:00` (`%2B02:00` dans la query) revenait tel quel dans l'écho de
+  `/v1/intensity/date`, `/v1/intensity/stats`, `/v1/exchanges/date`,
+  `/v1/weather/date`, `/v1/price/date` et `/v1/intensity/forecast`, et chaque
+  point dérivé de `from` — `timestamp` de la prévision, `start`/`end` de
+  `greenest-window` (et `timestamp` des créneaux de son overlay
+  `?eligibility=`) et de `/v1/schedule`, `timestamp` de `/v1/schedule/slots`
+  et de `/v1/intensity/below` — sortait lui aussi en `+02:00`, à côté de
+  points de série en `Z` et contre l'annonce de l'OpenAPI (« RFC 3339, UTC »)
+  et du SDK TypeScript. Les instants reçus (`from`, `to`, `deadline`) sont
+  désormais ramenés en UTC dès la lecture du paramètre : l'instant ne change
+  pas, seule sa représentation (`+02:00` → `Z`). Un instant qui, une fois en
+  UTC, sort des années 0000-9999 répond `400` : au-delà (an 9999 avec un
+  décalage négatif), `checked_to_offset` évite une panique de `to_offset` ; en
+  deçà (an 0000 avec un décalage positif), RFC 3339 ne sait pas l'écrire et
+  l'écho aurait échoué en `500`. Trois tests d'intégration. **SemVer :
+  patch** — le comportement rejoint le contrat déjà documenté ; instantané
+  OpenAPI, SDK et crates publiées inchangés. Un client qui comparait l'écho au
+  texte envoyé, décalage compris, ou qui lisait l'heure locale dans les
+  horodatages renvoyés, doit comparer des instants (ou les reconvertir dans
+  son fuseau).
 
 ### Sécurité
 

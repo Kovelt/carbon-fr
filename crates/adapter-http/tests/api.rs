@@ -1669,6 +1669,90 @@ async fn intensity_date_csv_headers() {
     );
 }
 
+/// Une borne fournie avec un décalage horaire est ramenée en UTC : l'instant ne
+/// change pas, mais l'écho `from`/`to` est rendu en `Z`, comme les `timestamp`
+/// des points lus en base. `+` est encodé `%2B` (un `+` brut est une espace
+/// dans une query string).
+#[tokio::test]
+async fn range_bounds_with_an_offset_are_echoed_in_utc() {
+    let app = app_with_series(hourly_series());
+    // 01:00+01:00 = 00:00Z ; 05:00+02:00 = 03:00Z ; 20:00-04:00 = 00:00Z.
+    for (from, to) in [
+        ("1970-01-01T01:00:00%2B01:00", "1970-01-01T05:00:00%2B02:00"),
+        ("1969-12-31T20:00:00-04:00", "1969-12-31T23:00:00-04:00"),
+    ] {
+        let uri = format!("/v1/intensity/date?from={from}&to={to}");
+        let response = get(app.clone(), &uri).await;
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        let body = json_body(response).await;
+        assert_eq!(body["from"], "1970-01-01T00:00:00Z", "{uri}");
+        assert_eq!(body["to"], "1970-01-01T03:00:00Z", "{uri}");
+        assert_eq!(body["count"], 3, "{uri}");
+        assert_eq!(
+            body["data"][0]["timestamp"], "1970-01-01T00:00:00Z",
+            "{uri}"
+        );
+    }
+}
+
+/// Même règle pour les points dérivés de `from` : la prévision et le créneau
+/// vert d'un `from` en `+02:00` sortent en UTC (`from` + k × 15 min, en `Z`),
+/// comme l'annonce l'OpenAPI (« RFC 3339, UTC »).
+#[tokio::test]
+async fn forecast_derived_timestamps_are_served_in_utc() {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 40.0))
+        .collect();
+    let app = app_with_series(series);
+
+    // 02:00+02:00 = 1970-03-02T00:00:00Z, le `from` des autres tests de prévision.
+    let forecast = json_body(
+        get(
+            app.clone(),
+            "/v1/intensity/forecast?from=1970-03-02T02:00:00%2B02:00&horizon_hours=1",
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(forecast["from"], "1970-03-02T00:00:00Z");
+    assert_eq!(forecast["data"][0]["timestamp"], "1970-03-02T00:00:00Z");
+    assert_eq!(forecast["data"][3]["timestamp"], "1970-03-02T00:45:00Z");
+
+    let window = json_body(
+        get(
+            app,
+            "/v1/intensity/greenest-window?from=1970-03-02T02:00:00%2B02:00&horizon_hours=3&window_minutes=60",
+        )
+        .await,
+    )
+    .await;
+    for bound in ["start", "end"] {
+        let text = window[bound].as_str().unwrap();
+        assert!(text.ends_with('Z'), "{bound} = {text}");
+    }
+}
+
+/// Un instant qui, ramené en UTC, sort des années 0000-9999 est un 400 — ni une
+/// panique de `OffsetDateTime::to_offset` (an 9999 avec un décalage négatif :
+/// 23:00-23:00 tombe en l'an 10000 UTC, hors de la plage de `time` sans
+/// `large-dates` ; `to`, 23:59:59-23:59, déborde aussi, mais `from` est lu en
+/// premier), ni un 500 à l'écriture de l'écho (an 0000 avec un décalage
+/// positif : 00:30+01:00 tombe en l'an -1 UTC, que RFC 3339 n'écrit pas), ni un
+/// 200 à série vide.
+#[tokio::test]
+async fn timestamp_outside_rfc3339_years_once_in_utc_is_400() {
+    for uri in [
+        "/v1/intensity/date?from=9999-12-31T23:00:00-23:00&to=9999-12-31T23:59:59-23:59",
+        "/v1/intensity/date?from=0000-01-01T00:30:00%2B01:00&to=0000-01-01T05:00:00Z",
+    ] {
+        let response = get(app(None), uri).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{uri}");
+        assert_eq!(json_body(response).await["code"], "bad_request", "{uri}");
+    }
+}
+
 /// Le format pouvant dépendre de `Accept`, les réponses 200 — JSON comme CSV —
 /// portent `Vary: Accept`, sans effacer ce que pose la couche CORS ; les
 /// erreurs ne sont jamais marquées `Cache-Control`.

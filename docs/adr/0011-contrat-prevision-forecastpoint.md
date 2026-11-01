@@ -124,3 +124,22 @@ Un harnais de **validation *walk-forward*** sur l'historique (consolidé/défini
 - Cadence de recalcul des quantiles / ré-estimation, et déclenchement après révision de millésime.
 - Forme du harnais de backtest (`bin/backtest` vs *bench*) et support de publication de la précision.
 - Signature exacte du sélecteur d'estimateur de `greenest_window` (central / prudent).
+
+## Addendum 2026-11-01 — horodatages servis en UTC
+
+Tous les instants des réponses issues d'une prévision — `from` et
+`data[].timestamp` de `/v1/intensity/forecast`, `start`/`end` de
+`/v1/intensity/greenest-window` (et `timestamp` des créneaux de son overlay
+`?eligibility=`) et de `/v1/schedule`, `timestamp` des créneaux de
+`/v1/schedule/slots` et de `/v1/intensity/below` — sont rendus en **UTC**
+(suffixe `Z`), comme les points de la série stockée, quel que soit le décalage
+du `from` fourni. La normalisation est faite **à la frontière HTTP** :
+`adapter-http` ramène en UTC chaque instant reçu en paramètre
+(`parse_timestamp`) ; l'instant est inchangé, seule sa représentation l'est. Le
+domaine reste indifférent au décalage (créneaux de semaine calculés en UTC,
+ADR-0009, « Formule », point 3) et le port `ForecastModel` n'a pas à le
+normaliser. C'est la correction d'un écart au contrat, pas une rupture :
+l'OpenAPI (`ForecastResponse.from`, `ForecastPointBody.timestamp`,
+`GreenestWindowResponse.start` : « RFC 3339, UTC ») et l'en-tête de types du SDK
+TypeScript (« RFC 3339 UTC ») l'annonçaient déjà ; contrat `/v1` inchangé
+(ADR-0019).

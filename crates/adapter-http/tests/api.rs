@@ -2163,6 +2163,30 @@ async fn greenest_window_invalid_window_is_400() {
 }
 
 #[tokio::test]
+async fn greenest_window_end_rounds_the_duration_up_to_the_step() {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 50.0))
+        .collect();
+
+    // 20 min n'est pas un multiple du pas de la prévision (15 min) : le créneau
+    // couvre 2 points prévus, donc `end` = `start` + 30 min (et non + 20 min).
+    let response = get(
+        app_with_series(series),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&window_minutes=20",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = json_body(response).await;
+    let rfc3339 = &time::format_description::well_known::Rfc3339;
+    let start = OffsetDateTime::parse(body["start"].as_str().unwrap(), rfc3339).unwrap();
+    let end = OffsetDateTime::parse(body["end"].as_str().unwrap(), rfc3339).unwrap();
+    assert_eq!(end - start, Duration::minutes(30));
+}
+
+#[tokio::test]
 async fn greenest_window_estimator_selector() {
     let from = forecast_from();
     let step = Duration::minutes(15);
@@ -2863,6 +2887,53 @@ async fn schedule_returns_window_and_savings() {
     assert!(body["savings"]["reduction_percent"].as_f64().unwrap() > 0.0);
     // énergie fournie → économie absolue présente.
     assert!(body["savings"]["absolute_saved_g"].as_f64().unwrap() > 0.0);
+}
+
+#[tokio::test]
+async fn schedule_end_rounds_the_duration_up_to_the_step() {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 50.0))
+        .collect();
+    let app = app_with_series(series);
+    let rfc3339 = &time::format_description::well_known::Rfc3339;
+    let base = "/v1/schedule?from=1970-03-02T00:00:00Z&horizon_hours=24";
+
+    // Requête → durée du créneau servi (minutes) : arrondi au pas de 15 min
+    // supérieur, un multiple exact ne bouge pas ; une échéance qui ne laisse
+    // qu'un point éligible (branche `cutoff == 1` de `greenest_window_before`)
+    // sert ce pas entier.
+    for (query, served) in [
+        ("duration_minutes=15", 15),
+        ("duration_minutes=20", 30),
+        ("duration_minutes=30", 30),
+        ("duration_minutes=31", 45),
+        ("duration_minutes=10&deadline=1970-03-02T00:15:00Z", 15),
+    ] {
+        let uri = format!("{base}&{query}");
+        let response = get(app.clone(), &uri).await;
+        assert_eq!(response.status(), StatusCode::OK, "{uri}");
+        let body = json_body(response).await;
+        let start = OffsetDateTime::parse(body["start"].as_str().unwrap(), rfc3339).unwrap();
+        let end = OffsetDateTime::parse(body["end"].as_str().unwrap(), rfc3339).unwrap();
+        assert_eq!(end - start, Duration::minutes(served), "{uri}");
+    }
+
+    // L'échéance borne la fin du créneau *arrondi* : un job de 20 min (créneau
+    // de 30 min) ne tient pas avant une échéance à +25 min, il tient à +30.
+    let tight = get(
+        app.clone(),
+        &format!("{base}&duration_minutes=20&deadline=1970-03-02T00:25:00Z"),
+    )
+    .await;
+    assert_eq!(tight.status(), StatusCode::NOT_FOUND);
+    let fits = get(
+        app,
+        &format!("{base}&duration_minutes=20&deadline=1970-03-02T00:30:00Z"),
+    )
+    .await;
+    assert_eq!(fits.status(), StatusCode::OK);
 }
 
 #[tokio::test]

@@ -29,7 +29,15 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   `429` `rate_limited` (`RateLimit-*` + `Retry-After`) et `401`
   `unauthorized` (`WWW-Authenticate`) — jamais sur `/health*` ni sur un
   préflight. Un test d'intégration confronte la spec aux en-têtes réellement
-  envoyés par un routeur au tier hébergé actif ; instantané régénéré.
+  envoyés par un routeur au tier hébergé actif ; instantané régénéré. Les
+  descriptions de `end` et du paramètre `window_minutes`
+  (`/v1/intensity/greenest-window`), comme celles de `end` et de
+  `duration_minutes` (`/v1/schedule`), précisent que la durée demandée est
+  arrondie au quart d'heure supérieur (`window_minutes=20` → créneau de
+  30 min) ; le code le fait depuis l'origine, deux tests l'épinglent
+  (`/v1/intensity/greenest-window` ; `/v1/schedule`, avec et sans échéance),
+  et la rustdoc de `carbonfr-sdk` (options) et de `carbonfr-core`
+  (cas d'usage) dit la même chose.
   **SemVer : aucun** (documentation du contrat, aucun comportement modifié).
   Au passage (issue #161) : quand la série prévue vient du cache, `from` peut
   précéder de moins de 15 min le premier point — à traiter à part.

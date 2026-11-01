@@ -215,7 +215,7 @@ pub struct CarbonFr {
     pub(crate) user_agent: String,
     /// Délai par défaut d'une requête REST — lu par `CarbonFr::send_checked`
     /// (`request`/`send_checked`/`request_json` ci-dessous, utilisés par les
-    /// 25 méthodes REST de `crate::methods`, ADR-0031 décision 8) et par le
+    /// 28 méthodes REST de `crate::methods`, ADR-0031 décision 8) et par le
     /// flux SSE (délai de connexion, `crate::stream`, feature `stream`).
     pub(crate) rest_timeout: Option<Duration>,
     #[cfg(feature = "stream")]
@@ -253,7 +253,7 @@ impl CarbonFr {
     /// client.
     ///
     /// `request`/`request_for_url`/`send_checked`/`request_json` sont le
-    /// socle **testé** (voir `tests` ci-dessous) des 25 méthodes REST
+    /// socle **testé** (voir `tests` ci-dessous) des 28 méthodes REST
     /// publiques de `crate::methods` (ADR-0031 décision 8).
     pub(crate) fn request(
         &self,

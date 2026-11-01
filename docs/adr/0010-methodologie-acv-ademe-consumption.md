@@ -261,7 +261,11 @@ conditions** suivantes sont réunies :
   **recompter le quota avant tout branchement** : le poller régional consomme
   déjà **~80 %** du quota ODRÉ de 50 000 appels/mois avec le seul `acv-ademe@1`
   (addendum ADR-0003, 2026-09-23) ; une ingestion bilatérale par région
-  rapprocherait la marge de zéro, voire la dépasserait selon la source retenue.
+  rapprocherait la marge de zéro, voire la dépasserait selon la source retenue
+  *(correction 2026-11-01 : ≈ 70 % du seul jeu `eco2mix-regional-tr`, le
+  « ~80 % » additionnant deux jeux ODRÉ aux plafonds distincts ; une source
+  publiée sur un autre jeu aurait son propre plafond — cf. l'addendum du
+  2026-11-01 plus bas)*.
 - **Gouvernance** : le précédent posé par l'ADR-0008 (extension du national au
   régional pour `acv-ademe@1`, **même version**, simple addendum du
   2026-06-20 — pas de bump pour une extension de **périmètre géographique** à
@@ -316,3 +320,9 @@ conditions** suivantes sont réunies :
 >    inchangés, seul le périmètre géographique s'étend) — cohérent avec la
 >    gouvernance ADR-0005/ADR-0019 (versionner un **changement de méthode**,
 >    pas une extension de couverture).
+
+## Addendum (2026-11-01) — Quota ODRÉ : ≈ 70 % du jeu régional, et non « ~80 % »
+
+L'addendum du 2026-09-25 ci-dessus écrit que « le poller régional consomme déjà **~80 %** du quota ODRÉ de 50 000 appels/mois » (§ « Ce qui serait requis… ») et que « le quota est déjà tendu (~80 %, ADR-0003) » (§ « Points à confirmer », n° 1). Ce chiffre vient de l'addendum du 2026-09-23 de l'ADR-0003, qui rapportait le total des appels du poller sur **deux jeux** ODRÉ à **un seul** plafond de 50 000 ; or le plafond est **par jeu de données** (recomptage détaillé dans l'addendum du 2026-11-01 de l'ADR-0003 sur le budget par jeu). Le poller régional pèse en réalité **≈ 70 %** du plafond du jeu `eco2mix-regional-tr` (12 appels × 96 cycles = 1 152/jour, soit 69 % à 71 % sur un mois de 30 ou 31 jours) ; le jeu national, ≈ 12 %.
+
+La règle *recompter le quota avant tout branchement* tient. La recommandation « réactif » du point n° 1 garde ses autres motifs (rien n'indique un chantier RTE sur une matrice inter-régionale ; une veille dédiée ajouterait du travail récurrent) ; seul l'argument du quota s'affaiblit, la marge du jeu régional étant d'environ 30 % et non 20 %. L'avertissement selon lequel une ingestion bilatérale par région « rapprocherait la marge de zéro, voire la dépasserait » ne vaut que pour des lectures supplémentaires de `eco2mix-regional-tr` : une source publiée sur un autre jeu ODRÉ aurait son propre plafond de 50 000 appels/mois et n'entamerait pas cette marge.

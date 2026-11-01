@@ -134,3 +134,13 @@ obtenu par la structure, non par un privilège d'administrateur.
 5. **Branch protection « legacy ».** *Rejeté :* on retient les **rulesets** GitHub
    (plus expressifs, versionnables en JSON, `bypass_actors` explicite). Ne pas
    reconvertir en règle de protection legacy.
+
+## Addendum 2026-11-01 — le job d'alerte du scan planifié n'est pas un contrôle
+
+Depuis le 2026-09-23 (PR #97), `ci.yml` compte un neuvième job, `Alerte (scan
+planifié en échec)`, qui ne tourne que lorsque le scan quotidien échoue, pour
+ouvrir ou commenter une issue. Ce n'est pas un contrôle de PR et il n'est pas
+requis : « tous les jobs de `ci.yml` » (Phase A) s'entend des jobs de
+**contrôle**, soit **8** status checks requis depuis le 2026-09-24
+(`GOUVERNANCE.md` §2 et §5, `docs/brief-claude-code-ruleset-main.md`). La
+décision ne change pas.

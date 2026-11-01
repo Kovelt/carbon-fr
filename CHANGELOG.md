@@ -118,8 +118,10 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   keep-alive, reconnexion sur coupure et sur délai de lecture, reconnexion
   désactivée) n'étaient joués par aucun job. Le job `tests (avec PostgreSQL)`
   gagne une étape `cargo test -p carbonfr-sdk --all-features` ; nom du job et
-  checks requis du *ruleset* inchangés. **SemVer : aucun** (CI seule, aucun
-  fichier de la crate touché).
+  checks requis du *ruleset* inchangés. `CONTRIBUTING.md` (« Tests
+  d'intégration », « Crates publiées / publiables ») et `GOUVERNANCE.md` §5
+  décrivent désormais cette étape. **SemVer : aucun** (CI et documentation,
+  aucun fichier de la crate touché).
 - **Commentaires de `ci.yml` et description de la CI réalignés** (reliquats
   de la PR #168) : sept commentaires périmés ou imprécis de `ci.yml`
   corrigés (job semver qui couvre bien `carbonfr-sdk`, SDK publié depuis I6,

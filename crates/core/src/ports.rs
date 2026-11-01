@@ -480,6 +480,13 @@ pub trait ForecastModel: Send + Sync {
     /// `(region, methodology_id)`. La méthodologie est explicite : on prévoit une
     /// méthode précise (`rte-direct`, `acv-ademe`…), pas une intensité générique.
     ///
+    /// Contrat de la série rendue (sur lequel s'appuient l'API `/v1` et le
+    /// cache de l'adapter de prévision) : des points strictement croissants à
+    /// `from + k × pas` (k = 0, 1, …) dans `[from, from + horizon)`, au pas
+    /// propre au modèle (15 min pour les modèles servis), **ancrés sur `from`**
+    /// — sans alignement sur une grille horaire ou quart-horaire — et rendus
+    /// dans le décalage horaire de `from` ; le premier point est à `from`.
+    ///
     /// Renvoie des [`ForecastPoint`] (estimation + intervalle + modèle), **pas**
     /// des `Measurement` : une prévision n'est ni une observation ni un millésime
     /// (ADR-0011).

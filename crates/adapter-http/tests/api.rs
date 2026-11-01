@@ -4221,3 +4221,85 @@ async fn openapi_documents_the_headers_the_hosted_tier_really_sends() {
     check(&limited, "429");
     assert!(header_of(&limited, "content-type").starts_with("application/problem+json"));
 }
+
+/// Issue #161 : deux requêtes du même quart d'heure partagent la série prévue
+/// en cache, mais chacune la reçoit **ré-ancrée** sur son propre `from` —
+/// `from` renvoyé = premier point, horizon couvert, comme sans cache.
+#[tokio::test]
+async fn forecast_from_cache_is_reanchored_on_each_request() {
+    struct FixedClock(OffsetDateTime);
+    impl carbonfr_core::ports::Clock for FixedClock {
+        fn now(&self) -> OffsetDateTime {
+            self.0
+        }
+    }
+
+    let t0 = forecast_from(); // 1970-03-02T00:00:00Z, début d'un seau quart d'heure
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(t0 - step * i, 40.0))
+        .collect();
+    let repo = FakeRepo {
+        series,
+        ..Default::default()
+    };
+    let now = t0 + Duration::minutes(10) + Duration::seconds(2);
+    // L'espion compte les calculs : la seconde réponse doit venir du cache.
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let forecaster = carbonfr_adapter_forecast::CachedForecaster::new(
+        SpyForecaster {
+            inner: ClimatologyForecaster::new(repo.clone()),
+            calls: calls.clone(),
+        },
+        std::time::Duration::from_secs(900),
+    )
+    .with_clock(Arc::new(FixedClock(now)));
+    let forecast = ForecastState::new(forecaster, "climatology@1");
+    let (updates, _) = tokio::sync::broadcast::channel(8);
+    let app = router(
+        AppState::new(repo),
+        forecast,
+        StreamState::new(updates),
+        None,
+    );
+
+    // Premier appelant du seau (instants à la nanoseconde, comme en prod) : la
+    // série est calculée pour son `from`.
+    let first = json_body(
+        get(
+            app.clone(),
+            "/v1/intensity/forecast?from=1970-03-02T00:02:38.4862783Z&horizon_hours=1",
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(first["from"], "1970-03-02T00:02:38.4862783Z");
+    assert_eq!(first["data"][0]["timestamp"], first["from"]);
+
+    // Second appelant, même seau, 7 min plus tard : série servie du cache et
+    // ré-ancrée — `from` renvoyé = premier point = `from` demandé, pas de 15 min.
+    let second = json_body(
+        get(
+            app,
+            "/v1/intensity/forecast?from=1970-03-02T00:10:02.421910722Z&horizon_hours=1",
+        )
+        .await,
+    )
+    .await;
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "un seul calcul"
+    );
+    assert_eq!(second["from"], "1970-03-02T00:10:02.421910722Z");
+    assert_eq!(
+        second["data"][0]["timestamp"],
+        "1970-03-02T00:10:02.421910722Z"
+    );
+    assert_eq!(
+        second["data"][3]["timestamp"],
+        "1970-03-02T00:55:02.421910722Z"
+    );
+    assert_eq!(second["count"], 4);
+    assert_eq!(second["data"][0]["expected"], first["data"][0]["expected"]);
+}

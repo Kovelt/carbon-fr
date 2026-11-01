@@ -16,7 +16,7 @@ name: Publier le SDK Rust (crates.io)
 # Publishing de crates.io ne peut être configuré que sur une crate DÉJÀ
 # publiée (même contrainte que core/eligibility en I5). La toute première
 # publication de carbonfr-sdk se fait donc à la main, avec un jeton crates.io
-# ponctuel révoqué aussitôt (procédure identique à
+# ponctuel à révoquer aussitôt (procédure identique à
 # `docs/plan-iterations.md` I5, adaptée à `-p carbonfr-sdk`) — faite le
 # 2026-09-25 en 0.1.0 ; la déclaration ci-dessous, faite le même jour, a
 # permis de publier la 0.1.1 par ce workflow, sans jeton. Pour mémoire,

@@ -64,7 +64,7 @@ Le workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) s'exécute à
 
 - **lint** : `cargo fmt --all --check` + `cargo clippy --all-targets -- -D warnings` ;
 - **deny** : `cargo deny --all-features --workspace check` — les quatre contrôles de `deny.toml` (avis RustSec, licences permissives, interdictions `bans`, sources de confiance), dépendances optionnelles de la feature `stream` du SDK Rust comprises ;
-- **test** : `cargo test --workspace` avec un service PostgreSQL (les tests d'intégration appliquent eux-mêmes les migrations), puis `cargo test -p carbonfr-sdk --all-features` (tests du flux SSE du SDK Rust, feature `stream` que `cargo test --workspace` n'active pas) ;
+- **test** : `cargo test --workspace` avec un service PostgreSQL (les tests d'intégration appliquent eux-mêmes les migrations), puis `cargo test -p carbonfr-sdk --all-features` (tests du flux SSE du SDK Rust, feature `stream` que `cargo test --workspace` n'active pas), puis `cargo build -p carbonfr-sdk --examples --all-features` (compilation seule des quatre exemples du SDK) ;
 - **build-release** : `cargo build --release --locked` du binaire `carbonfr-server` (garantit que l'image de prod compile et que le lockfile est cohérent) ;
 - **sdk-typescript** : typecheck + build du SDK `@carbon-fr/sdk` (`sdk/typescript/`), puis ses tests `node:test` sans réseau (flux SSE et reconnexion, index qualitatif, parité avec l'OpenAPI — ADR-0032) ;
 - **msrv** : `cargo check` des trois crates publiées (`carbonfr-core`, `carbonfr-eligibility`, `carbonfr-sdk`) avec la toolchain épinglée `1.88.0` — le plancher `rust-version` du workspace tient (ADR-0030) ;

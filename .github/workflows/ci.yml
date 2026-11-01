@@ -109,8 +109,9 @@ jobs:
       # tests de `crates/sdk/src/stream.rs` (module `tests`, serveur `axum` local
       # sur 127.0.0.1, aucun accès réseau externe) ne seraient joués par aucun
       # job. Ici plutôt qu'un job requis de plus (même choix que pour les
-      # exemples ci-dessous). `--all-features` : comme les autres étapes du SDK
-      # (le SDK n'a aujourd'hui que cette feature, purement additive).
+      # exemples ci-dessous). `--all-features` : comme les étapes MSRV, rustdoc,
+      # semver et exemples (le SDK n'a aujourd'hui que cette feature, purement
+      # additive ; `cargo package` et clippy restent aux features par défaut).
       - name: Tests du SDK Rust (feature `stream`)
         run: cargo test -p carbonfr-sdk --all-features
 

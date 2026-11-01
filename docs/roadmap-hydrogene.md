@@ -1,7 +1,7 @@
 # Roadmap hydrogène — extension carbon-aware (ADR-0025/0026)
 
 - **Statut** : document vivant (mis à jour à chaque jalon ou signal réglementaire)
-- **Dernière mise à jour** : 2026-09-23 (état des échéances réglementaires reporté dans les `legal_basis` servis ; aucun texte adopté)
+- **Dernière mise à jour** : 2026-11-01 (veille réglementaire, issue #173 : deux actes délégués planifiés sur *Have your say*, sans projet de texte publié ; aucun texte adopté ; `legal_basis` servis inchangés depuis le 2026-09-23)
 - **ADR liés** : [ADR-0025](adr/0025-extension-hydrogene-carbon-aware.md) (vision, couches A/B), [ADR-0026](adr/0026-methodologie-overlays-eligibilite.md) (méthodologie des overlays)
 
 ## Position

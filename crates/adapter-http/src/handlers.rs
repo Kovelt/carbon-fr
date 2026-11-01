@@ -21,7 +21,7 @@ use carbonfr_eligibility::{EligibilityFramework, resolve_ruleset};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
-use time::{Duration, OffsetDateTime};
+use time::{Duration, OffsetDateTime, UtcOffset};
 use utoipa::IntoParams;
 
 use crate::dto::{
@@ -198,9 +198,27 @@ fn check_version(methodology: &str, version: Option<u32>) -> Result<(), ApiError
 }
 
 /// Parse un horodatage RFC 3339 fourni en paramètre, ou 400.
+///
+/// Le résultat est **ramené en UTC** : `OffsetDateTime::parse` conserve le
+/// décalage du texte reçu (`2026-10-25T02:00:00+02:00`), qui se retrouverait
+/// tel quel dans l'écho `from`/`to` des réponses et dans chaque point dérivé de
+/// `from` (prévision, créneaux, overlay d'éligibilité) — alors que le contrat
+/// annonce des horodatages UTC (`Z`), comme ceux que sert la base. L'instant,
+/// lui, ne change pas. Un instant qui, une fois en UTC, sort des années
+/// 0000-9999 est un 400 : au-delà (an 9999 avec un décalage négatif), il sort
+/// de la plage de `time` et `to_offset` paniquerait, d'où `checked_to_offset` ;
+/// en deçà (an 0000 avec un décalage positif), RFC 3339 ne sait pas l'écrire et
+/// l'écho de la réponse échouerait en 500.
 fn parse_timestamp(name: &str, raw: &str) -> Result<OffsetDateTime, ApiError> {
-    OffsetDateTime::parse(raw, &Rfc3339)
-        .map_err(|_| ApiError::bad_request(format!("`{name}` : horodatage RFC 3339 invalide")))
+    let at = OffsetDateTime::parse(raw, &Rfc3339)
+        .map_err(|_| ApiError::bad_request(format!("`{name}` : horodatage RFC 3339 invalide")))?;
+    at.checked_to_offset(UtcOffset::UTC)
+        .filter(|at| (0..=9999).contains(&at.year()))
+        .ok_or_else(|| {
+            ApiError::bad_request(format!(
+                "`{name}` : instant hors des années 0000-9999 une fois ramené en UTC"
+            ))
+        })
 }
 
 /// `GET /v1/intensity/now` — dernière intensité carbone connue.

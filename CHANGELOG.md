@@ -180,8 +180,9 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   la borne effective de `/v1/schedule` est `deadline − ⌈duration/15 min⌉ ×
   15 min`, non `deadline − duration` ; **`docs/roadmap-hydrogene.md`** —
   veille du 2026-11-01 (deux actes délégués RFNBO planifiés sur *Have your
-  say*, adoption visée T4 2026, aucun texte ; CELLAR : aucun acte ne modifie
-  2023/1184 ; H3 reste bloqué) ; **`CLAUDE.md`** (I9 close, échéances
+  say*, adoption visée T4 2026, aucun texte ; CELLAR : aucun nouvel acte ne
+  modifie 2023/1184 depuis 2024/1408 (terminologique) ; H3 reste bloqué) ;
+  **`CLAUDE.md`** (I9 close, échéances
   vérifiées, correctif #161 livré, tests live des trois adapters) et
   **`deploy/README.md`** (exemples `X.Y.Z` au lieu de `0.3.2`). Le site
   vitrine (rafraîchissement, puis addendum de clôture de l'ADR-0007) reste en

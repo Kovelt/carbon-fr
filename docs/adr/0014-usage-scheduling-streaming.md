@@ -218,3 +218,7 @@ toujours rien) ; et le dernier point des « Comportements clients » décrit la
 0.3.0. La carte `/hydrogene`, cliente `EventSource` native, a reçu son propre
 repli (polling toutes les 60 s + nouvelle tentative d'ouverture du flux toutes
 les 5 min, PR #151).
+
+## Addendum 2026-11-01 — borne effective de l'échéance et durée arrondie au pas
+
+La décision 1 borne le scheduling contraint par échéance à `[from, deadline − duration]`. Le code est plus précis : `greenest_window_before` (`crates/core/src/domain/schedule.rs`) ne garde que les points prévus dont le créneau se termine au plus tard à l'échéance (`at + pas ≤ deadline`), puis `greenest_window` (`crates/core/src/domain/window.rs`) retient un créneau couvrant au moins `duration` avec un nombre entier de pas (`⌈duration / pas⌉`). Au pas de 15 min des modèles servis, `end − start` vaut donc `⌈duration / 15 min⌉ × 15 min` et le début du créneau est au plus `deadline − ⌈duration / 15 min⌉ × 15 min` (et non `deadline − duration`) ; un job de 20 min occupe un créneau de 30 min. La décision ne change pas : seule la borne est précisée, comme dans la description OpenAPI de `end` (`/v1/intensity/greenest-window`, `/v1/schedule`).

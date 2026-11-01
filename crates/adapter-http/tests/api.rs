@@ -2163,6 +2163,30 @@ async fn greenest_window_invalid_window_is_400() {
 }
 
 #[tokio::test]
+async fn greenest_window_end_rounds_the_duration_up_to_the_step() {
+    let from = forecast_from();
+    let step = Duration::minutes(15);
+    let series: Vec<Measurement> = (1..=14 * 96)
+        .map(|i: i32| point(from - step * i, 50.0))
+        .collect();
+
+    // 20 min n'est pas un multiple du pas de la prévision (15 min) : le créneau
+    // couvre 2 points prévus, donc `end` = `start` + 30 min (et non + 20 min).
+    let response = get(
+        app_with_series(series),
+        "/v1/intensity/greenest-window?from=1970-03-02T00:00:00Z&horizon_hours=24&window_minutes=20",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = json_body(response).await;
+    let rfc3339 = &time::format_description::well_known::Rfc3339;
+    let start = OffsetDateTime::parse(body["start"].as_str().unwrap(), rfc3339).unwrap();
+    let end = OffsetDateTime::parse(body["end"].as_str().unwrap(), rfc3339).unwrap();
+    assert_eq!(end - start, Duration::minutes(30));
+}
+
+#[tokio::test]
 async fn greenest_window_estimator_selector() {
     let from = forecast_from();
     let step = Duration::minutes(15);

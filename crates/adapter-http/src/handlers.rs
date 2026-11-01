@@ -954,7 +954,9 @@ pub(crate) struct GreenestWindowQuery {
     from: Option<String>,
     /// Profondeur de l'horizon en heures (1..=72). Défaut 24.
     horizon_hours: Option<u32>,
-    /// Durée du créneau recherché, en minutes. Défaut 60.
+    /// Durée du créneau recherché, en minutes. Défaut 60. Arrondie au quart
+    /// d'heure supérieur : le créneau renvoyé couvre un nombre entier de points
+    /// prévus (pas de 15 min).
     window_minutes: Option<u32>,
     /// Estimateur : `central` (estimation, défaut) ou `prudent` (borne haute).
     estimator: Option<String>,
@@ -1170,7 +1172,9 @@ pub(crate) struct ScheduleQuery {
     from: Option<String>,
     /// Profondeur de l'horizon en heures (1..=72). Défaut 24.
     horizon_hours: Option<u32>,
-    /// Durée du job à planifier, en minutes. Défaut 60.
+    /// Durée du job à planifier, en minutes. Défaut 60. Arrondie au quart
+    /// d'heure supérieur : le créneau renvoyé couvre un nombre entier de points
+    /// prévus (pas de 15 min).
     duration_minutes: Option<u32>,
     /// Échéance de livraison (RFC 3339). Optionnelle : sans elle, tout l'horizon.
     deadline: Option<String>,

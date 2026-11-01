@@ -999,7 +999,7 @@
           {
             "name": "window_minutes",
             "in": "query",
-            "description": "Durée du créneau recherché, en minutes. Défaut 60.",
+            "description": "Durée du créneau recherché, en minutes. Défaut 60. Arrondie au quart\nd'heure supérieur : le créneau renvoyé couvre un nombre entier de points\nprévus (pas de 15 min).",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2266,7 +2266,7 @@
           {
             "name": "duration_minutes",
             "in": "query",
-            "description": "Durée du job à planifier, en minutes. Défaut 60.",
+            "description": "Durée du job à planifier, en minutes. Défaut 60. Arrondie au quart\nd'heure supérieur : le créneau renvoyé couvre un nombre entier de points\nprévus (pas de 15 min).",
             "required": false,
             "schema": {
               "type": "integer",
@@ -3679,7 +3679,7 @@
           },
           "end": {
             "type": "string",
-            "description": "Fin du créneau (RFC 3339, exclue) : `start` + `window_minutes`."
+            "description": "Fin du créneau (RFC 3339, exclue) : `start` + la durée `window_minutes`\narrondie au quart d'heure supérieur (le créneau couvre un nombre entier\nde points prévus, au pas de 15 min) — `window_minutes=20` donne donc\n`end` = `start` + 30 min."
           },
           "methodology": {
             "type": "string"
@@ -4706,7 +4706,7 @@
           },
           "end": {
             "type": "string",
-            "description": "Fin du créneau planifié (RFC 3339, exclue)."
+            "description": "Fin du créneau planifié (RFC 3339, exclue) : `start` + la durée\n`duration_minutes` arrondie au quart d'heure supérieur."
           },
           "estimator": {
             "type": "string"

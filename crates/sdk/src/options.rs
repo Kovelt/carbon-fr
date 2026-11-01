@@ -98,7 +98,9 @@ pub struct GreenestWindowOptions {
     pub version: Option<u32>,
     pub from: Option<OffsetDateTime>,
     pub horizon_hours: Option<u32>,
-    /// Durée du créneau recherché, en minutes. Défaut 60.
+    /// Durée du créneau recherché, en minutes. Défaut 60. Arrondie au quart
+    /// d'heure supérieur par le serveur (le créneau couvre un nombre entier de
+    /// points prévus, au pas de 15 min).
     pub window_minutes: Option<u32>,
     pub estimator: Option<Estimator>,
     /// Cadre d'éligibilité électrolyseur. Absent ⇒ réponse historique
@@ -134,7 +136,9 @@ pub struct ScheduleOptions {
     pub version: Option<u32>,
     pub from: Option<OffsetDateTime>,
     pub horizon_hours: Option<u32>,
-    /// Durée du job à planifier, en minutes. Défaut 60.
+    /// Durée du job à planifier, en minutes. Défaut 60. Arrondie au quart
+    /// d'heure supérieur par le serveur (le créneau couvre un nombre entier de
+    /// points prévus, au pas de 15 min).
     pub duration_minutes: Option<u32>,
     /// Échéance de livraison. Sans elle, tout l'horizon est considéré.
     pub deadline: Option<OffsetDateTime>,

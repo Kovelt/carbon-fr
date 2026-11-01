@@ -8,7 +8,8 @@ use crate::ports::ForecastModel;
 use super::ApplicationError;
 
 /// Détermine, sur une prévision d'`horizon` à partir de `from`, le créneau
-/// contigu de durée `window` minimisant l'intensité carbone moyenne.
+/// contigu couvrant au moins `window` (un nombre entier de pas de la
+/// prévision) minimisant l'intensité carbone moyenne.
 ///
 /// C'est de la **valeur créée** (ADR / ARCHITECTURE §2) : la prévision
 /// d'intensité n'existe pas à la source, elle est produite par l'adapter

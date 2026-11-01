@@ -40,8 +40,9 @@ pub struct ScheduleSlot {
 /// série aux créneaux dont la fin (`at + pas`) est `≤ deadline`, puis applique
 /// [`greenest_window`]. Généralise `greenest_window` avec une échéance.
 ///
-/// `None` si la série est trop courte, ou si aucun créneau de `duration` ne tient
-/// avant l'échéance.
+/// `None` si la série est trop courte, ou si aucun créneau couvrant au moins
+/// `duration` (un nombre entier de pas, cf. [`greenest_window`]) ne se termine
+/// au plus tard à l'échéance.
 pub fn greenest_window_before(
     points: &[ForecastPoint],
     duration: Duration,

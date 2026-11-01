@@ -1,5 +1,5 @@
 //! Cas d'usage : ingérer la dernière mesure d'une région (cœur du poller
-//! jusqu'à la 0.9.5, remplacé depuis par `IngestRecent`).
+//! avant la 0.9.5, qui l'a remplacé par `IngestRecent`).
 
 use crate::domain::{Methodology, Region, derive_acv_ademe};
 use crate::ports::{Eco2mixSource, IntensityRepository};

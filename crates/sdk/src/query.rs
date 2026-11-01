@@ -1,4 +1,4 @@
-//! Petits utilitaires de construction de query string, partagés par les 25
+//! Petits utilitaires de construction de query string, partagés par les 28
 //! méthodes REST de `crate::methods` — évite de répéter le motif `if let
 //! Some(v) = opt { pairs.append_pair(...) }` à chaque paramètre optionnel.
 

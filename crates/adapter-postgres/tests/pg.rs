@@ -1,12 +1,23 @@
 //! Tests d'intégration contre un vrai PostgreSQL.
 //!
 //! Pilotés par la variable d'environnement `DATABASE_URL`. Sans elle, les tests
-//! s'auto-sautent (message explicite) pour rester hermétiques par défaut :
+//! s'auto-sautent pour rester hermétiques par défaut, **mais comptent comme
+//! réussis** (message `SKIP : DATABASE_URL non défini`, visible avec
+//! `-- --nocapture`) :
 //!
 //! ```bash
-//! export DATABASE_URL=postgres://localhost/carbonfr_test
-//! cargo test -p carbonfr-adapter-postgres --test pg
+//! DATABASE_URL=postgres://postgres:postgres@localhost:5432/carbonfr_test \
+//!   cargo test -p carbonfr-adapter-postgres --test pg
 //! ```
+//!
+//! Sans identifiants dans l'URL, `sqlx` lit `PGUSER`/`PGPASSWORD` ; sans
+//! `PGUSER`, il se connecte sous le rôle `anonymous` (et non sous le nom
+//! d'utilisateur système) — toujours mettre l'utilisateur dans l'URL. Le test
+//! échoue sinon sur le seul message générique
+//! `connexion à PostgreSQL impossible` : l'adapter masque l'erreur `sqlx`,
+//! qui peut citer le DSN. La base doit exister (les tests ne la créent pas) ;
+//! la recette d'un PostgreSQL jetable, configuré comme le service de la CI,
+//! est dans `CONTRIBUTING.md` (§ « Tests d'intégration »).
 //!
 //! Les tests s'exécutent en parallèle : chacun s'isole via une **méthodologie
 //! dédiée** (la clé d'unicité et les requêtes filtrent dessus) et nettoie ses

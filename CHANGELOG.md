@@ -141,6 +141,51 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   aucune « élection de leader » du poller (déploiement mono-instance).
   `CLAUDE.md`, `bruno/README.md` et `bruno/forecast.bru` alignés sur les
   mêmes faits.
+- **Reliquats documentaires d'I10** (signalés par la PR #168 et le
+  2026-10-22, chacun vérifié contre le code puis réfuté le 2026-11-01) :
+  **brief du ruleset de `main`** (`docs/brief-claude-code-ruleset-main.md`) —
+  l'état déclaratif cible, le bloc JSON de mise en œuvre et les contrôles de
+  *Vérification* en étaient restés à **5** status checks requis, alors que le
+  ruleset réel et `.github/ruleset-main-phaseA.json` en exigent **8** depuis
+  le 2026-09-24 (recopier ce bloc au lieu de passer le fichier par `--input`
+  risquait de ramener le ruleset à 5 checks) : alignés sur les 8, neuvième
+  job de `ci.yml` (alerte du scan planifié, non requis) signalé, relecture du
+  ruleset réel datée du 2026-11-01 (lectures seules de l'API ; deux
+  paramètres réels de la règle `pull_request` absents du fichier consignés),
+  ADR-0027 complété d'un addendum (« tous les jobs » = les 8 jobs de
+  contrôle) ; **docstring de `crates/adapter-postgres/tests/pg.rs`** —
+  l'exemple `DATABASE_URL` porte l'utilisateur et le mot de passe du service
+  de la CI (sans utilisateur, `sqlx` 0.9 se connecte sous le rôle `anonymous`
+  et le test n'affiche qu'un message générique), les tests sautés comptent
+  comme réussis, renvoi à la section « Tests d'intégration » de
+  `CONTRIBUTING.md` ; **quota ODRÉ par jeu dans les ADR** — addenda du
+  2026-11-01 aux ADR-0003 et ADR-0010 : leurs « ~80 % du quota » de septembre
+  rapportaient à un plafond unique les appels de deux jeux ; recompté sur le
+  poller, ≈ 70 % pour `eco2mix-regional-tr` (1 152 appels/jour) et ≈ 12 %
+  pour `eco2mix-national-tr` (192/jour), plus un export par jour et par jeu
+  pour l'auto-réparation ; décisions inchangées, commentaire de
+  `spawn_poller` aligné ; **ADR-0033, addendum 2026-11-01** — la borne 64,8 de
+  la bande `low` reprend le seuil de 18 gCO₂eq/MJ de l'article 4 §2 du
+  règlement délégué (UE) 2023/1184, et non un seuil de la couche éligibilité
+  (ADR-0025/0026 ne retiennent que le paragraphe 1 : 90 % de renouvelable) ;
+  ce seuil exige aussi des accords d'achat d'électricité renouvelable et les
+  corrélations temporelle et géographique, et porte sur l'intensité annuelle
+  de la zone de dépôt calculée selon le règlement délégué (UE) 2023/1185, pas
+  sur une mesure carbon-fr : une bande `low` n'est pas un constat
+  d'éligibilité RFNBO ; barème `index@1` inchangé ; **ADR-0003, addendum
+  2026-11-01** — l'heure répétée du passage à l'heure d'hiver est absente de
+  la source (ODRÉ ne publie qu'une occurrence : 92 points au lieu de 96 le
+  2026-10-25, même trou dans le consolidé du 2025-10-26), assumé sans
+  interpolation ni correctif d'ingestion ; **ADR-0014, addendum 2026-11-01** —
+  la borne effective de `/v1/schedule` est `deadline − ⌈duration/15 min⌉ ×
+  15 min`, non `deadline − duration` ; **`docs/roadmap-hydrogene.md`** —
+  veille du 2026-11-01 (deux actes délégués RFNBO planifiés sur *Have your
+  say*, adoption visée T4 2026, aucun texte ; CELLAR : aucun acte ne modifie
+  2023/1184 ; H3 reste bloqué) ; **`CLAUDE.md`** (I9 close, échéances
+  vérifiées, correctif #161 livré, tests live des trois adapters) et
+  **`deploy/README.md`** (exemples `X.Y.Z` au lieu de `0.3.2`). Le site
+  vitrine (rafraîchissement, puis addendum de clôture de l'ADR-0007) reste en
+  attente de la décision produit. **SemVer : aucun**.
 
 ## [0.11.0] - 2026-10-20
 

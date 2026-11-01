@@ -15,7 +15,9 @@ concurrency:
   cancel-in-progress: true
 
 # Moindre privilège : la CI ne fait que lire le dépôt. Seul le job d'alerte
-# (scan planifié en échec) reçoit en plus le droit d'écrire des issues.
+# (scan planifié en échec) peut écrire des issues : son propre bloc
+# `permissions` remplace celui du workflow (donc pas de `contents: read`,
+# inutile ici : aucun checkout).
 # Les actions sont épinglées par SHA de commit (un tag est réécrivable par le
 # mainteneur de l'action) ; Dependabot (github-actions) met SHA et commentaire
 # de version à jour.
@@ -74,8 +76,12 @@ jobs:
           POSTGRES_DB: carbonfr_test
         ports:
           - 5432:5432
-        # Le health-check garantit que Postgres accepte les connexions avant
-        # les tests (évite les « connection reset » au démarrage).
+        # Le health-check attend que Postgres réponde avant les tests (évite
+        # les « connection reset » au démarrage). Limite : `pg_isready` sans
+        # `-h` sonde le socket Unix, que sert déjà le serveur temporaire de
+        # l'init de l'image avant son redémarrage en TCP ; en pratique, le
+        # délai de 10 s avant le 1er essai laisse l'init se terminer. Avec
+        # `-h 127.0.0.1`, la sonde passerait par TCP, comme les tests.
         options: >-
           --health-cmd "pg_isready -U postgres"
           --health-interval 10s
@@ -93,15 +99,29 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
 
       - name: Tests du workspace
-        # Les tests ODRÉ « live » sont #[ignore] (réseau + quota) : non exécutés.
+        # Les tests « live » (ODRÉ, ENTSO-E, Open-Meteo) sont #[ignore]
+        # (réseau, quota, jeton) : non exécutés.
         run: cargo test --workspace
 
-      # `cargo test` ne compile pas les `examples/` par défaut : les couvrir
-      # ici (compilation seule, pas d'exécution — certains touchent le flux
-      # SSE en direct) plutôt que d'ajouter un job requis de plus (I6,
-      # ADR-0031 décision 11). `--all-features` couvre la feature `stream`.
-      # Les 4 exemples de `crates/sdk/examples/` (dont `stream`, qui exige la
-      # feature du même nom) doivent toujours compiler.
+      # La feature Cargo `stream` du SDK Rust (flux SSE) est désactivée par
+      # défaut et aucun autre membre du workspace ne dépend de `carbonfr-sdk` :
+      # `cargo test --workspace` ne la compile donc pas, et sans cette étape les
+      # tests de `crates/sdk/src/stream.rs` (module `tests`, serveur `axum` local
+      # sur 127.0.0.1, aucun accès réseau externe) ne seraient joués par aucun
+      # job. Ici plutôt qu'un job requis de plus (même choix que pour les
+      # exemples ci-dessous). `--all-features` : comme les autres étapes du SDK
+      # (le SDK n'a aujourd'hui que cette feature, purement additive).
+      - name: Tests du SDK Rust (feature `stream`)
+        run: cargo test -p carbonfr-sdk --all-features
+
+      # `cargo test` compile aussi les `examples/` (pour qu'ils ne pourrissent
+      # pas), avec les seules features actives : `cargo test --workspace` saute
+      # donc l'exemple `stream` (`required-features`) ; l'étape précédente
+      # (`--all-features`) compile déjà les 4 exemples de
+      # `crates/sdk/examples/`. Cette étape garde cette garantie explicite et
+      # indépendante des tests (compilation seule, pas d'exécution — tous
+      # interrogent l'instance hébergée, `stream` ouvrant en plus le flux SSE),
+      # sans job requis de plus (I6, ADR-0031 décision 11).
       - name: Exemples du SDK Rust (compilation)
         run: cargo build -p carbonfr-sdk --examples --all-features
 
@@ -136,18 +156,21 @@ jobs:
         run: npm ci
       - name: Typecheck + build
         run: npm run build
-      # Tests `node:test` du flux SSE (serveur HTTP local, sans réseau) ; ils
-      # importent `dist/`, d'où leur place après le build. Motif explicite :
-      # depuis Node 21, `node --test <dossier>` n'explore plus le dossier.
+      # Tests `node:test`, sans réseau : flux SSE et reconnexion, index
+      # qualitatif (serveur HTTP local) et parité avec l'OpenAPI (ADR-0032 :
+      # `parity.test.mjs` lit l'instantané `openapi.snapshot.json` de
+      # `crates/adapter-http/tests/`). Ils importent `dist/`, d'où leur place
+      # après le build. Motif explicite : depuis Node 21, `node --test
+      # <dossier>` n'explore plus le dossier.
       - name: Tests (node:test)
         run: node --test test/*.test.mjs
 
   # Les trois jobs suivants concernent les crates publiées/publiables sur
   # crates.io : carbonfr-core et carbonfr-eligibility (ADR-0030 §1), rejointes
-  # depuis I6 par carbonfr-sdk pour les jobs MSRV et rustdoc+package
-  # (ADR-0031 décision 10) — le job semver l'exclut encore, cf. son
-  # commentaire plus bas. Les 9 autres membres du workspace (adapters,
-  # bin/server) n'y sont pas soumis.
+  # depuis I6 par carbonfr-sdk dans les trois (MSRV : ADR-0031 décision 10 ;
+  # semver, sur son axe de version propre : décision 12, cf. le commentaire
+  # du job). Les 9 autres membres du workspace (adapters, bin/server) n'y
+  # sont pas soumis.
   msrv:
     name: MSRV (Rust 1.88)
     runs-on: ubuntu-latest
@@ -258,7 +281,7 @@ jobs:
       # (ADR-0031 décision 5) : il est empaqueté dans le même appel par
       # commodité (rejoint depuis I6), pas par nécessité de vérification
       # croisée. Aucun upload, aucun jeton (ADR-0030 §8 : la 1re publication
-      # est manuelle, en I5 pour core/eligibility, à venir pour le SDK).
+      # est manuelle, en I5 pour core/eligibility, en I6 pour le SDK).
       - name: Empaquetage (package + vérification croisée, aucun upload)
         run: cargo package --locked -p carbonfr-core -p carbonfr-eligibility -p carbonfr-sdk
 

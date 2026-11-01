@@ -58,6 +58,23 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ### Sécurité
 
+- **`ctutils` 0.4.2 → 0.4.7 sur l'advisory RustSec RUSTSEC-2026-0385**
+  (publiée le 2026-10-23 ; porte `cargo-deny` de la CI rouge sur `main` à
+  chaque run planifié depuis ce jour — issue #169 — et sur toute PR) : avant
+  la 0.4.4, les fonctions `const fn` de génération de masque de
+  `ctutils::Choice` (et les comparaisons `u128` sur cibles 32 bits)
+  pouvaient compiler en un **branchement dépendant du secret**, donc fuir
+  par canal temporel ; la 0.4.4 passe par `black_box` (vérifié par BINSEC).
+  **Exposition réelle de carbon-fr : limitée** — `ctutils` n'est tiré que par
+  `digest` 0.11, c'est-à-dire la génération RustCrypto « 0.11 » de
+  `sqlx-postgres` 0.9 (`hmac`/`hkdf`/`md-5`/`sha2` 0.11 : authentification
+  SCRAM-SHA-256 à l'ouverture des connexions Postgres, entre le conteneur
+  de l'API et sa base sur le réseau Docker interne) ; les signatures HMAC
+  des webhooks (`sha2` 0.10.9 → `digest` 0.10, `carbonfr-core` et
+  adaptateur HTTP) ne passent pas par `ctutils`. Montée imposée par la porte
+  CI, `cargo update -p ctutils` seul ; aucun changement d'API ni de borne
+  dans `Cargo.toml`.
+
 - **`rustls-webpki`, `webpki-roots` et `webpki-root-certs` mis à jour sur trois
   advisories RustSec** publiées le 2026-10-20 (porte `cargo-deny` de la CI,
   rouge sur toute PR à partir de ce jour) : RUSTSEC-2026-0382 (`rustls-webpki`

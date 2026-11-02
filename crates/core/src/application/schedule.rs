@@ -46,7 +46,8 @@ impl<F: ForecastModel> CarbonAwareScheduler<F> {
             .await?)
     }
 
-    /// Créneau contigu de `duration` minimisant l'intensité, borné par `deadline`
+    /// Créneau contigu couvrant au moins `duration` (un nombre entier de pas de
+    /// la prévision) minimisant l'intensité, borné par `deadline`
     /// (optionnel), + économie vs maintenant (absolue si `energy_kwh` fourni).
     #[allow(clippy::too_many_arguments)]
     pub async fn schedule_window(

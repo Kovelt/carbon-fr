@@ -471,7 +471,10 @@ pub(crate) struct GreenestWindowResponse {
     /// Début du créneau (RFC 3339, UTC) : un instant de la série prévue, au pas
     /// de 15 min depuis l'instant de la requête (fraction de seconde comprise).
     start: String,
-    /// Fin du créneau (RFC 3339, exclue) : `start` + `window_minutes`.
+    /// Fin du créneau (RFC 3339, exclue) : `start` + la durée `window_minutes`
+    /// arrondie au quart d'heure supérieur (le créneau couvre un nombre entier
+    /// de points prévus, au pas de 15 min) — `window_minutes=20` donne donc
+    /// `end` = `start` + 30 min.
     end: String,
     unit: &'static str,
     /// Intensité carbone moyenne prévue sur le créneau.
@@ -1768,7 +1771,8 @@ pub(crate) struct ScheduleResponse {
     unit: &'static str,
     /// Début du créneau planifié (RFC 3339).
     start: String,
-    /// Fin du créneau planifié (RFC 3339, exclue).
+    /// Fin du créneau planifié (RFC 3339, exclue) : `start` + la durée
+    /// `duration_minutes` arrondie au quart d'heure supérieur.
     end: String,
     /// Intensité moyenne prévue sur le créneau.
     average_intensity: f64,

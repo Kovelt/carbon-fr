@@ -1318,7 +1318,7 @@ impl IntensityIndexResponse {
     pub(crate) fn catalog() -> Self {
         const DESCRIPTIONS: [&str; 5] = [
             "Mix dominé par le nucléaire, l'hydraulique et l'éolien : l'état normal du réseau national.",
-            "Électricité « pleinement renouvelable » au sens RFNBO (intensité de la zone de dépôt sous 18 gCO₂eq/MJ).",
+            "Sous le chiffre du seuil RFNBO (18 gCO₂eq/MJ, soit 64,8 g/kWh), qui ne vaut qu'à l'échelle annuelle d'une zone de dépôt et sous conditions : une lecture de l'intensité, jamais un constat d'éligibilité.",
             "Au-dessus du seuil RFNBO, encore « durable » au sens de la taxonomie européenne (< 100 g).",
             "Au-delà de la taxonomie ; jusqu'à environ un kWh sur deux produit au gaz.",
             "Mix majoritairement fossile (gaz de pointe, charbon, fioul).",
@@ -1329,7 +1329,7 @@ impl IntensityIndexResponse {
                 "/v1/factors?methodology=acv-ademe",
             ),
             (
-                "18 gCO₂eq/MJ × 3,6 = 64,8 gCO₂eq/kWh : intensité maximale de la zone de dépôt pour que l'électricité du réseau compte comme pleinement renouvelable (RFNBO) — règlement délégué (UE) 2023/1184, art. 4 §2.",
+                "18 gCO₂eq/MJ × 3,6 = 64,8 gCO₂eq/kWh — règlement délégué (UE) 2023/1184, art. 4 §2 : dans une zone de dépôt dont l'intensité annuelle, calculée selon le règlement délégué (UE) 2023/1185, est inférieure à ce seuil, l'électricité prélevée sur le réseau peut être comptabilisée comme entièrement renouvelable, sous réserve d'accords d'achat d'électricité renouvelable et des corrélations temporelle et géographique ; la borne en reprend le chiffre, pas la grandeur.",
                 "https://eur-lex.europa.eu/eli/reg_del/2023/1184/oj",
             ),
             (

@@ -167,3 +167,7 @@ aujourd'hui. Le SDK TS ne se reconnecte d'ailleurs pas automatiquement (`client.
 > 3. **Async uniquement en 0.1** (décision 4 confirmée) ; un mode bloquant reste ajoutable sans rupture.
 > 4. **`eventsource-stream`** retenu (décision 7 confirmée), `sse-stream` documenté comme repli s'il était un jour classé
 >    non maintenu par RustSec.
+
+## Addendum (2026-11-02) — `cargo-semver-checks` : `--baseline-rev` conservé après la publication
+
+La décision 12 disait « `--baseline-rev` avant la première publication, mode registre ensuite ». La CI est restée en `--baseline-rev` sur le dernier tag `rust-sdk-v*`, avec `feature-group: all-features` pour couvrir `IntensityStream` : même référence que la dernière version publiée (chaque tag est publié), sans dépendance au registre — même choix et mêmes raisons que l'addendum du 2026-11-02 de l'ADR-0030.

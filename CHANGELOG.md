@@ -23,6 +23,19 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   instantané OpenAPI inchangés ; fixture du SDK Rust alignée ; un test d'API
   garde les deux textes. **SemVer : patch** (texte libre de deux champs).
 
+### CI
+
+- **`cargo clippy --all-features`** dans le job `fmt + clippy` : le code sous
+  feature (`stream` de `carbonfr-sdk`, que MSRV, semver, rustdoc et les
+  tests compilaient déjà avec) est désormais linté ; commandes alignées dans
+  README, CONTRIBUTING, GOUVERNANCE et `CLAUDE.md`. **Sonde Postgres en
+  TCP** (`pg_isready -h 127.0.0.1`) dans le job `tests (avec PostgreSQL)`,
+  comme les tests eux-mêmes, au lieu du socket Unix que sert déjà le serveur
+  temporaire de l'init de l'image. Noms des 8 contrôles requis inchangés.
+- **ADR-0030/0031, addenda 2026-11-02** : `cargo-semver-checks` reste en
+  `--baseline-rev` sur le dernier tag de release (qui est la dernière version
+  publiée) plutôt qu'en mode registre — choix assumé, documenté.
+
 ### Documentation
 
 - **ADR-0007, addendum 2026-11-02 : l'item « site / doc / playground » est

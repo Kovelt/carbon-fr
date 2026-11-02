@@ -44,8 +44,11 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
 
+      # --all-features : lint aussi le code sous feature (aujourd'hui la seule
+      # feature du workspace est `stream` de carbonfr-sdk — IntensityStream —,
+      # que les étapes MSRV/semver/rustdoc/tests compilent déjà avec).
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   deny:
     name: cargo-deny (licences + advisories)
@@ -77,13 +80,12 @@ jobs:
         ports:
           - 5432:5432
         # Le health-check attend que Postgres réponde avant les tests (évite
-        # les « connection reset » au démarrage). Limite : `pg_isready` sans
-        # `-h` sonde le socket Unix, que sert déjà le serveur temporaire de
-        # l'init de l'image avant son redémarrage en TCP ; en pratique, le
-        # délai de 10 s avant le 1er essai laisse l'init se terminer. Avec
-        # `-h 127.0.0.1`, la sonde passerait par TCP, comme les tests.
+        # les « connection reset » au démarrage). `-h 127.0.0.1` : la sonde
+        # passe par TCP, comme les tests — sans `-h`, `pg_isready` sonde le
+        # socket Unix, que sert déjà le serveur temporaire de l'init de l'image
+        # avant son redémarrage en TCP (CONTRIBUTING § Tests d'intégration).
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5

@@ -4271,6 +4271,15 @@ async fn intensity_index_catalog_is_served_and_cacheable() {
             .unwrap()
             .contains("2023/1184")
     );
+    // Addendum ADR-0033 du 2026-11-01 : la bande `low` reprend le chiffre du
+    // seuil de l'art. 4 §2, pas la grandeur ni le constat d'éligibilité — les
+    // deux textes servis en portent les conditions et ne parlent plus
+    // d'électricité « pleinement renouvelable » sans elles.
+    let low_source = thresholds[1]["source"].as_str().unwrap();
+    assert!(low_source.contains("2023/1185") && low_source.contains("accords d'achat"));
+    assert!(!low_source.contains("pleinement"));
+    let low_description = bands[1]["description"].as_str().unwrap();
+    assert!(low_description.contains("sous conditions") && !low_description.contains("pleinement"));
     assert!(
         thresholds[1]["url"]
             .as_str()

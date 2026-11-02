@@ -8,6 +8,21 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
 
 ## [Non publié]
 
+### Modifié
+
+- **Libellés servis de la bande `low` de l'index** (`GET /v1/intensity/index`,
+  [addendum ADR-0033 du 2026-11-01](docs/adr/0033-index-qualitatif-intensite.md)) :
+  la description de la bande et la source de la borne 64,8 parlaient
+  d'électricité « pleinement renouvelable » sans les conditions de l'article
+  4 §2 du règlement délégué (UE) 2023/1184. Elles disent désormais que la
+  bande reprend le **chiffre** du seuil (18 gCO₂eq/MJ × 3,6), pas la grandeur
+  à laquelle il s'applique — intensité annuelle de la zone de dépôt calculée
+  selon le règlement délégué (UE) 2023/1185, accords d'achat d'électricité
+  renouvelable, corrélations temporelle et géographique —, et qu'une mesure
+  `low` n'est jamais un constat d'éligibilité. Barème `index@1`, schéma et
+  instantané OpenAPI inchangés ; fixture du SDK Rust alignée ; un test d'API
+  garde les deux textes. **SemVer : patch** (texte libre de deux champs).
+
 ### Documentation
 
 - **ADR-0007, addendum 2026-11-02 : l'item « site / doc / playground » est

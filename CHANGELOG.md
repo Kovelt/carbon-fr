@@ -6,6 +6,26 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
+## [Non publié]
+
+### Documentation
+
+- **ADR-0007, addendum 2026-11-02 : l'item « site / doc / playground » est
+  clos.** Le site vitrine statique (<https://carbon-fr.kovelt.fr>) est en
+  ligne depuis le 2026-06-16 sur l'hébergement o2switch, sans SSG (pages
+  servies telles quelles, dépôt séparé, synchronisation `rsync`) ; l'addendum
+  du 2026-06-20 ne le mentionnait pas et l'ADR-0029 le disait « non
+  concrétisé » (en-tête corrigé, addendum du même jour). Le site a été
+  rafraîchi pour l'API 0.11.1 et redéployé le 2026-11-02 : playground à
+  21 routes (dont `/v1/intensity/now/all`, `/v1/regions`,
+  `/v1/intensity/index` et `?format=csv`), quickstart sur les crates publiées
+  (`carbonfr-sdk`, `carbonfr-core`, `carbonfr-eligibility`) au lieu d'une
+  crate `carbonfr-client` qui n'a jamais existé, horodatages en UTC,
+  pré-rendus de la référence, du journal des versions et du registre ADR
+  régénérés depuis les sources. README (feuille de route) et plan alignés ;
+  la ligne « en attente d'un déclencheur » du plan disparaît. **SemVer :
+  aucun** (documentation seule).
+
 ## [0.11.1] - 2026-11-02
 
 Première publication de l'itération I10 du [plan](docs/plan-iterations.md) —

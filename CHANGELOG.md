@@ -63,7 +63,8 @@ phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6
   appelant (faux positif reproduit en prod le 2026-10-21, requêtes dans la
   PR). La série en cache est désormais **translatée** sur le `from` de la
   requête (horodatages décalés de `from − from₀`, valeurs inchangées, rendue
-  dans le décalage horaire de la requête) : le contrat déjà documenté —
+  dans le décalage horaire de `from`, que la couche HTTP ramène en UTC — voir
+  plus bas) : le contrat déjà documenté —
   `from` = premier point, `timestamp = from + k × 15 min`,
   `[from, from + horizon)` couvert, `start ≥ from` — redevient vrai à
   l'exécution. Effet visible : chaque requête reçoit la réponse qu'elle

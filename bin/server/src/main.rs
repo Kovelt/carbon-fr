@@ -2367,7 +2367,10 @@ where
             // (acv-ademe). Une région en échec ne bloque pas les autres.
             let mut written = 0usize;
             for region in std::iter::once(Region::National).chain(Region::METROPOLITAN) {
-                // Un appel ODRÉ par région : compté pour suivre le quota (50k/mois).
+                // Un appel ODRÉ par zone (national : `eco2mix-national-tr` ; régions :
+                // `eco2mix-regional-tr`), compté dans le proxy
+                // `carbonfr_upstream_requests_total` (tous jeux confondus) ; le plafond
+                // de 50k/mois est par jeu de données (jauges `carbonfr_odre_quota_*`).
                 metrics.add_upstream_odre(1);
                 match ingest.execute(region, now).await {
                     Ok(report) => written += report.written,

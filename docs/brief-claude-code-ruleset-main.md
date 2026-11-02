@@ -61,6 +61,12 @@ licence**, érigée en invariant par l'ADR.
 des 3 jobs sur `main`) ; vérifié par `GET /repos/Kovelt/carbon-fr/rules/branches/main`
 → 8 checks requis, identiques au fichier.
 
+Le neuvième job de `ci.yml`, `alerte-scan-planifie`
+(`Alerte (scan planifié en échec)`, ajouté le 2026-09-23), n'est **pas** requis :
+ce n'est pas un contrôle mais une alerte, qui ne tourne que si l'un des huit jobs
+échoue lors du scan quotidien planifié, pour ouvrir ou commenter une issue (cf.
+[`GOUVERNANCE.md`](../GOUVERNANCE.md) §5).
+
 ## Paramètres
 
 - `OWNER` : `Kovelt`.
@@ -79,7 +85,7 @@ des 3 jobs sur `main`) ; vérifié par `GET /repos/Kovelt/carbon-fr/rules/branch
 | `require_code_owner_review` | `false` | `true` |
 | `dismiss_stale_reviews_on_push` | `true` | `true` |
 | `required_review_thread_resolution` | `true` | `true` |
-| `required_status_checks` (strict) | oui — **les 5 contexts** ci-dessus | idem |
+| `required_status_checks` (strict) | oui — **les 8 contexts** ci-dessus | idem |
 | `allowed_merge_methods` | `["squash", "rebase"]` (pas de merge commit) | idem |
 | `required_linear_history` | oui | oui |
 | `non_fast_forward` (bloque force-push) | oui | oui |
@@ -129,7 +135,10 @@ Le payload canonique vit dans **[`.github/ruleset-main-phaseA.json`](../.github/
           { "context": "cargo-deny (licences + advisories)", "integration_id": 15368 },
           { "context": "tests (avec PostgreSQL)", "integration_id": 15368 },
           { "context": "build release (artefact déployable)", "integration_id": 15368 },
-          { "context": "SDK TypeScript (typecheck + build)", "integration_id": 15368 }
+          { "context": "SDK TypeScript (typecheck + build)", "integration_id": 15368 },
+          { "context": "MSRV (Rust 1.88)", "integration_id": 15368 },
+          { "context": "semver (crates publiables)", "integration_id": 15368 },
+          { "context": "rustdoc + package (crates publiables)", "integration_id": 15368 }
         ]
       }
     }
@@ -173,12 +182,12 @@ Contrôles attendus :
 
 - `enforcement` = `active` ;
 - `bypass_actors` = `[]` ;
-- les **cinq** contexts de status checks présents, orthographiés comme les
+- les **huit** contexts de status checks présents, orthographiés comme les
   check-runs réels (cf. tableau) avec `integration_id = 15368` ;
 - `strict_required_status_checks_policy` = `true` ;
 - `required_review_thread_resolution` = `true`, `dismiss_stale_reviews_on_push` = `true` ;
 - un push direct sur `main` est refusé (tester avec une branche jetable) ;
-- une PR ne peut fusionner que CI verte (5/5) + branche à jour + conversations résolues.
+- une PR ne peut fusionner que CI verte (8/8) + branche à jour + conversations résolues.
 
 ## Notes de vigilance
 
@@ -199,9 +208,10 @@ Contrôles attendus :
 ## État au 2026-06-21
 
 Phase A **appliquée** : le ruleset `protect-main` (id `17745480`) a été **mis à
-jour** (PUT) vers l'état déclaratif cible ci-dessus — 5 status checks requis,
-`strict = true`, conversations résolues, dismiss stale, squash/rebase imposés,
-`bypass_actors` vide. Phase B non activée.
+jour** (PUT) vers l'état déclaratif cible de l'époque — 5 status checks requis
+(portés à 8 le 2026-09-24, cf. ci-dessous), `strict = true`, conversations
+résolues, dismiss stale, squash/rebase imposés, `bypass_actors` vide. Phase B
+non activée.
 
 ## État au 2026-09-24
 
@@ -211,3 +221,22 @@ jour** (PUT) vers l'état déclaratif cible ci-dessus — 5 status checks requis
 par l'itération I4 / ADR-0030). Appliqué par l'interface GitHub (pas de `gh`
 sur le poste) puis vérifié via l'API publique
 (`GET /repos/Kovelt/carbon-fr/rules/branches/main`).
+
+## État au 2026-11-01
+
+Relecture du brief contre le ruleset réel, par lectures seules de l'API
+(`gh api /repos/Kovelt/carbon-fr/rulesets/17745480` et
+`GET /repos/Kovelt/carbon-fr/rules/branches/main`) : `protect-main` est
+`active`, `bypass_actors` vide, avec les **8** status checks requis
+(`integration_id` 15368), `strict = true`, 0 approbation, squash/rebase,
+historique linéaire, suppression et force-push bloqués — conforme à tout ce que
+déclare `.github/ruleset-main-phaseA.json`. La règle `pull_request` réelle porte
+en plus deux paramètres absents du fichier : `dismissal_restriction` (désactivé)
+et `require_extra_approval_for_unattributed_changes` (`true` : une approbation de
+plus pour une PR ouverte par Copilot sans collaborateur humain, sans effet tant
+qu'aucune approbation n'est requise) — à examiner avant le prochain `PUT` du
+fichier, au plus tard au passage en Phase B. Seul le brief était resté à **5**
+contexts, dans l'état déclaratif cible, le bloc JSON de mise en œuvre et les
+contrôles de *Vérification* : ces trois endroits sont alignés sur les 8, et le
+neuvième job de `ci.yml`, non requis, est signalé dans les prérequis. Aucun
+changement du ruleset réel.

@@ -1,7 +1,7 @@
 # Roadmap hydrogène — extension carbon-aware (ADR-0025/0026)
 
 - **Statut** : document vivant (mis à jour à chaque jalon ou signal réglementaire)
-- **Dernière mise à jour** : 2026-09-23 (état des échéances réglementaires reporté dans les `legal_basis` servis ; aucun texte adopté)
+- **Dernière mise à jour** : 2026-11-01 (veille réglementaire, issue #173 : deux actes délégués planifiés sur *Have your say*, sans projet de texte publié ; aucun texte adopté ; `legal_basis` servis inchangés depuis le 2026-09-23)
 - **ADR liés** : [ADR-0025](adr/0025-extension-hydrogene-carbon-aware.md) (vision, couches A/B), [ADR-0026](adr/0026-methodologie-overlays-eligibilite.md) (méthodologie des overlays)
 
 ## Position
@@ -29,6 +29,8 @@ L'hydrogène est servi comme **extension de la couche carbon-aware** (pas de pro
 
 > **Mise à jour du 2026-09-23** (contre-vérifiée) : la **consultation nucléaire** du considérant 7 du 2025/2359 n'est **toujours pas lancée** (échéance non contraignante du 30/06/2026 dépassée — sources primaires) ; la **révision ciblée RFNBO** promise pour le T2 2026 (COM(2026) 370, source primaire) est annoncée **pour l'automne 2026** — **déclaration orale** de la DG ENER en audition ITRE du 14/07/2026, **rapportée par la presse** (Argus Media), sans texte officiel — et **aucun projet n'est publié**. H3 reste bloqué ; les `legal_basis` des rulesets `low-carbon:2025-2359` et `rfnbo:2026-revision` ne changent que ces dates et états.
 
+> **Mise à jour du 2026-11-01** (sources primaires lues en direct : API du portail *Have your say*, historique CELLAR ; issue #173) : **deux actes délégués planifiés** sur *Have your say*, sans projet de texte publié — **PLAN/2026/1517** (28/10/2026, *Revision of the production criteria for renewable fuels of non-biological origin*, DG ENER : « reportera l'application de certains des critères » de production RFNBO — la révision ciblée de 2023/1184 annoncée par COM(2026) 370) et **PLAN/2026/1366** (21/10/2026, *Merge of the methodologies for GHG emission savings for RFNBO and low-carbon fuels* : fusion des règles LCF/RFNBO et **critères pour l'électricité d'origine nucléaire**) —, adoption planifiée **T4 2026**, chaque projet devant d'abord passer par quatre semaines de retours publics. Aucun acte modificatif de 2023/1184 dans CELLAR (seuls 2024/1408 et le rectificatif en langue slovaque 2023/1184R(01) du 06/08/2025). La **consultation nucléaire** dédiée n'est toujours pas ouverte : les critères nucléaires passent par l'acte fusionné ci-dessus. *Hydrogen strategy* (PLAN/2026/1033) : appel à contributions ouvert du 26/10 au 23/11/2026, communication planifiée T4 2026 ; aucune proposition RED IV. **H3 reste bloqué** (texte adopté requis) ; à la publication d'un projet : lecture, mise à jour de cette page et des `legal_basis` (`rfnbo:2026-revision`, `low-carbon:2025-2359`, texte servi → passe de neutralité), **rien à coder avant l'adoption**.
+
 - **Révision ciblée RFNBO** : engagement politique seulement (AccelerateEU, COM(2026) 370 final, 22/04/2026 — « targeted review » promise T2 2026). **Aucun acte modificatif de 2023/1184 adopté/publié.** Les chiffres 2032-2033 (bascule horaire, additionnalité) et ~2040 (grandfathering) = fuites/analystes, non actionnables.
 - **Annexe 2025/2359** (lue intégralement) : pas de seuil électrique explicite → notre proxy `indicative` est la bonne qualification. **Quatre méthodes** de comptabilisation de l'électricité réseau, dont deux **horaires** — (b) moyenne du mix de bidding zone prévue day-ahead par le GRT, (d) technologie marginale horaire — cf. opportunité O1 ci-dessous.
 - **Consultation nucléaire** (méthodologie PPA nucléaire) : échéance 30/06/2026 = considérant non contraignant ; pas de lancement constaté ; l'obligation dure est l'évaluation du **01/07/2028** (art. 3 du 2025/2359).
@@ -55,8 +57,8 @@ L'hydrogène est servi comme **extension de la couche carbon-aware** (pas de pro
 
 ## Signaux de veille (chacun rouvre H3)
 
-1. Projet de texte sur le portail **Have your say** (recherche « RFNBO » / « renewable hydrogen ») — un draft publié ⇒ commencer l'analyse, **ne rien coder** avant adoption.
-2. Nouvel acte dans l'**historique EUR-Lex CELEX 32023R1184** (à ce jour, seul 2024/1408 — terminologique).
+1. Projet de texte sur le portail **Have your say** (recherche « RFNBO » / « renewable hydrogen » / « non-biological origin » ; initiatives planifiées n° 19592 et 19515 depuis octobre 2026, cf. mise à jour du 2026-11-01) — un draft publié ⇒ commencer l'analyse, **ne rien coder** avant adoption.
+2. Nouvel acte dans l'**historique EUR-Lex CELEX 32023R1184** (à ce jour, seul 2024/1408 — terminologique — et le rectificatif en langue slovaque 2023/1184R(01) du 06/08/2025 ; vérifiable sans navigateur par SPARQL CELLAR, EUR-Lex HTML répondant vide aux clients automatisés).
 3. Lancement effectif de la **consultation nucléaire** (méthodologie PPA) et, à terme, l'évaluation du 01/07/2028 (art. 3 du 2025/2359) — impacte la formulation neutre du caveat nucléaire (`legal_basis`/`disclaimer`).
 4. Proposition **RED IV** (annoncée fin 2026) — surveiller le sort du quota industriel RFNBO 42 % (art. 22a RED III) et l'ouverture « techno-neutre » au bas-carbone.
 

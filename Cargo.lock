@@ -256,7 +256,7 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "carbonfr-adapter-entsoe"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "carbonfr-core",
@@ -271,7 +271,7 @@ dependencies = [
 
 [[package]]
 name = "carbonfr-adapter-forecast"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "carbonfr-core",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "carbonfr-adapter-gbdt"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "carbonfr-core",
@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "carbonfr-adapter-http"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "carbonfr-adapter-meteo"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "carbonfr-core",
@@ -332,7 +332,7 @@ dependencies = [
 
 [[package]]
 name = "carbonfr-adapter-odre"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -349,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "carbonfr-adapter-postgres"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "carbonfr-core",
@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "carbonfr-adapter-webhook"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -372,7 +372,7 @@ dependencies = [
 
 [[package]]
 name = "carbonfr-core"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "async-trait",
  "sha2 0.10.9",
@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "carbonfr-eligibility"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "carbonfr-core",
  "time",
@@ -1825,7 +1825,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "anyhow",
  "async-trait",

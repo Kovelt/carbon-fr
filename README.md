@@ -188,7 +188,7 @@ cd carbon-fr
 
 cargo check --workspace        # compile tout le workspace
 cargo test  --workspace        # lance les tests (le core se teste sans IO)
-cargo clippy --all-targets -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all
 ```
 

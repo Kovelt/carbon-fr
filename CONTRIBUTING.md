@@ -25,7 +25,7 @@ Si une contribution fait fuiter de l'infrastructure dans le domaine, elle sera r
 
 ## Conventions de code
 
-- `cargo fmt --all` et `cargo clippy --all-targets -- -D warnings` doivent passer.
+- `cargo fmt --all` et `cargo clippy --all-targets --all-features -- -D warnings` doivent passer (toutes les features : la CI lint aussi la feature `stream` du SDK Rust).
 - `cargo test --workspace` doit passer. Le `core` se teste **sans IO**, avec des *fakes* en mémoire implémentant les ports. Les tests Postgres ne s'exécutent qu'avec `DATABASE_URL` : sans elle, ils s'auto-sautent en vert (voir [Tests d'intégration](#tests-dintégration)).
 - `cargo deny --all-features --workspace check` doit passer — les mêmes options que la CI, à placer **avant** `check` (avis RustSec, licences permissives, interdictions `bans`, sources de confiance — voir [`deny.toml`](deny.toml)). Toute dépendance normale ou de build à licence inédite force une décision explicite dans `deny.toml` (une crate tirée seulement par des `[dev-dependencies]` échappe au contrôle des licences : à vérifier à la main).
 - Pas d'`unwrap()` / `expect()` hors tests et hors bootstrap du binaire.

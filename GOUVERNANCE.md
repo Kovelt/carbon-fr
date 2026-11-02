@@ -62,7 +62,7 @@ C'est le même schéma que sur un **GitLab auto-hébergé** plus tard (branches 
 
 Le workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) s'exécute à chaque PR (et sur `push` vers `main`, plus un scan quotidien des advisories) et applique exactement les règles du CONTRIBUTING :
 
-- **lint** : `cargo fmt --all --check` + `cargo clippy --all-targets -- -D warnings` ;
+- **lint** : `cargo fmt --all --check` + `cargo clippy --all-targets --all-features -- -D warnings` ;
 - **deny** : `cargo deny --all-features --workspace check` — les quatre contrôles de `deny.toml` (avis RustSec, licences permissives, interdictions `bans`, sources de confiance), dépendances optionnelles de la feature `stream` du SDK Rust comprises ;
 - **test** : `cargo test --workspace` avec un service PostgreSQL (les tests d'intégration appliquent eux-mêmes les migrations), puis `cargo test -p carbonfr-sdk --all-features` (tests du flux SSE du SDK Rust, feature `stream` que `cargo test --workspace` n'active pas), puis `cargo build -p carbonfr-sdk --examples --all-features` (compilation seule des quatre exemples du SDK) ;
 - **build-release** : `cargo build --release --locked` du binaire `carbonfr-server` (garantit que l'image de prod compile et que le lockfile est cohérent) ;

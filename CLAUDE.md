@@ -47,7 +47,7 @@ API d'intensité carbone de l'électricité française (gCO₂eq/kWh), souverain
 
 ```bash
 cargo check --workspace && cargo test --workspace     # hermétique (sans réseau ni base)
-cargo clippy --all-targets -- -D warnings && cargo fmt --all
+cargo clippy --all-targets --all-features -- -D warnings && cargo fmt --all
 cargo deny --all-features --workspace check          # 4 contrôles de deny.toml : advisories RustSec (+ crates retirées), licences, sources, bans — options de la CI, avant check
 
 DATABASE_URL=postgres://carbonfr:carbonfr@localhost:5432/carbonfr cargo run -p server        # API ; sous-commandes (backfill, backtest*, train, mint-key…) : cf. docstring main.rs

@@ -45,7 +45,8 @@ impl std::fmt::Display for ModelVersion {
 /// Invariant garanti à la construction : `lower ≤ expected ≤ upper`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForecastPoint {
-    /// Début du pas (quart d'heure).
+    /// Instant prévu : début du pas, `from + k × pas` — ancré sur le `from`
+    /// demandé, pas sur la grille horaire (cf. le port `ForecastModel`).
     pub at: OffsetDateTime,
     pub region: Region,
     /// Estimation centrale.

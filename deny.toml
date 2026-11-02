@@ -4,7 +4,8 @@
 # à ne tirer que des dépendances à licence permissive compatible, sans CVE
 # connue, et issues de sources de confiance. Vérifié en CI à chaque PR.
 #
-# Lancer localement : `cargo deny check`
+# Lancer localement avec les options de la CI (placées avant `check`) :
+# `cargo deny --all-features --workspace check`
 
 # ─── Avis de sécurité (RustSec) ────────────────────────────────────────────
 [advisories]

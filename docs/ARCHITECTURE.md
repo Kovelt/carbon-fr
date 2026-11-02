@@ -161,7 +161,7 @@ Les crates de `crates/` sont préfixées `carbonfr-*` même si les dossiers rest
 
 ## 8. Roadmap
 
-Les sept phases sont **livrées** ; l'itération I10 du [plan](plan-iterations.md) est en cours (parité SDK TS ↔ OpenAPI, exemples OpenAPI et rattrapage documentaire livrés ; restent, vers la v0.12.0, le backfill consolidé de juillet–septembre 2026 — juillet et août déjà publiés par RTE (constaté le 2026-10-22), septembre à venir — puis les échéances datées : revue LCOE du 2026-12-15 et millésime TRV 2027-H1 avant le 1er février 2027). État réel (version de workspace : cf. `[workspace.package] version` dans le `Cargo.toml` racine ; contrat d'API `/v1`) :
+Les sept phases sont **livrées** ; l'itération I10 du [plan](plan-iterations.md) est en cours (parité SDK TS ↔ OpenAPI, exemples OpenAPI, rattrapage documentaire, correctif #161 et horodatages `/v1` en UTC publiés en **v0.11.1** le 2026-11-02 ; restent, vers la v0.12.0, le backfill consolidé de juillet–septembre 2026 — juillet et août déjà publiés par RTE (constaté le 2026-10-22), septembre à venir — puis les échéances datées : revue LCOE du 2026-12-15 et millésime TRV 2027-H1 avant le 1er février 2027). État réel (version de workspace : cf. `[workspace.package] version` dans le `Cargo.toml` racine ; contrat d'API `/v1`) :
 
 1. **Socle** ✅ — `core` + poller unique (`IngestLatest`, remplacé en 0.9.5 par `IngestRecent`) + `/intensity/now` + `/mix` + `/health`, national.
 2. **Historique + régional** ✅ — backfill par export de masse (2012→), `/intensity/date`, `/intensity/stats`, 12 régions (servies en `acv-ademe`), rollups (passés de vues matérialisées à tables incrémentales).

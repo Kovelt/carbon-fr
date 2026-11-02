@@ -6,7 +6,30 @@ Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/),
 et le projet suit le [versionnage sémantique](https://semver.org/lang/fr/). En
 phase `0.x`, des ruptures d'API peuvent survenir en *minor* (cf. GOUVERNANCE §6).
 
-## [Non publié]
+## [0.11.1] - 2026-11-02
+
+Première publication de l'itération I10 du [plan](docs/plan-iterations.md) —
+version *patch* (ADR-0019) : rien d'ajouté ni de retiré dans le contrat
+`/v1`, aucune migration, aucune variable d'environnement nouvelle. Deux
+correctifs de comportement ramènent l'API à son contrat documenté : la
+**prévision servie depuis le cache** est ré-ancrée sur le `from` de chaque
+requête (issue #161 — `from` = premier point, horizon couvert, créneaux de
+`greenest-window`/`schedule`/`slots`/`below` jamais antérieurs à la requête,
+verdict de `/v1/schedule?deadline=` indépendant des autres appelants du
+quart d'heure) et les **horodatages `/v1` sont toujours rendus en UTC**
+(`+02:00` reçu → `Z` renvoyé ; `400` hors des années 0000-9999, au lieu d'une
+connexion coupée). Effets visibles pour un client : suffixe `Z` systématique,
+créneaux de prévision décalés de moins de 15 min par rapport à la v0.11.0.
+S'y ajoutent le `503` du plafond SSE journalisé en `warn`, quatre advisories
+RustSec (`rustls-webpki`, `webpki-roots`, `webpki-root-certs`, `ctutils`) et
+`tokio` 1.54.1 (1.54.0 retirée), les exemples et en-têtes de l'OpenAPI, le
+test de parité SDK TS ↔ OpenAPI et les tests `stream` du SDK Rust en CI, le
+rattrapage documentaire et ses addenda. L'instantané OpenAPI ne change que
+par ses descriptions et exemples ; SDK TypeScript 0.5.0 et Rust 0.3.0
+inchangés, non republiés ; `carbonfr-core` et `carbonfr-eligibility` sont
+republiées en 0.11.1 (rustdoc seule : contrat du port `ForecastModel`). Au
+déploiement Kovelt : image `0.11.1` épinglée, rien d'autre à changer dans le
+compose ni le `.env`.
 
 ### Ajouté
 

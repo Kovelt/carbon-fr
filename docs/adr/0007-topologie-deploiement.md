@@ -49,3 +49,14 @@ Les choix de packaging laissés ouverts ont été tranchés à l'usage, parfois 
 - **Site / doc / playground** : le SSG sur o2switch n'est pas encore déployé ; la doc vit dans le repo (README, `docs/`, OpenAPI `/docs`). Sous-domaine d'API retenu : `carbon-fr-api.kovelt.fr`.
 
 Cf. ARCHITECTURE §9 et `deploy/README.md`.
+
+## Addendum (2026-11-02) — site vitrine en ligne depuis le 2026-06-16, sans SSG : l'item « site / doc / playground » est clos
+
+L'addendum du 2026-06-20 disait le SSG « pas encore déployé » sans mentionner le site, et l'ADR-0029 a ensuite dit ce site « non concrétisé » : le site vitrine était pourtant **en ligne depuis le 2026-06-16** sur `carbon-fr.kovelt.fr` (sous-domaine Kovelt de la décision 3), sur l'**hébergement mutualisé o2switch** de la décision 1 — seul le SSG n'a jamais existé. Le CORS ouvert de l'API, ajouté le même jour, le cite déjà. Constat fait le 2026-11-01 sur le site en production et sur son dépôt (GitLab Kovelt, distinct de celui-ci) :
+
+- **Statique, sans SSG ni étape de build** : pages HTML/CSS/JS servies telles quelles, publiées par un script de synchronisation (`rsync`) vers o2switch. La décision 1 est tenue sur ce qu'elle cherchait — site statique, hébergement o2switch, redéployable sans impact — et abandonnée sur « généré par un SSG » : ni Zola ni mdBook.
+- **Documentation rendue depuis les sources** : la référence de l'API lit `GET /v1/openapi.json`, le registre des ADR et le journal des versions lisent `docs/adr/` et `CHANGELOG.md` sur la branche `main` de GitHub, le playground exécute de vraies requêtes `GET` sur l'API de production. Référence, registre et journal gardent chacun un instantané de repli et un pré-rendu statique (indexation sans JavaScript), régénérés à chaque déploiement du site depuis ces mêmes sources.
+- **La carte `/hydrogene` reste servie par l'API** (ADR-0029) : le site l'embarque en iframe depuis la 0.6.1 (CSP `frame-ancestors`).
+- **Rafraîchi et redéployé le 2026-11-02 pour l'API 0.11.1** : le site était figé depuis le 2026-07-04 (API 0.6.1). Le playground connaît désormais `/v1/intensity/now/all` et `/v1/regions` (0.10.0), `/v1/intensity/index` et `?format=csv` (0.11.0) ; le quickstart décrit les crates publiées (`carbonfr-sdk`, `carbonfr-core`, `carbonfr-eligibility`, ADR-0030/0031) à la place d'une crate `carbonfr-client` qui n'a jamais existé ; la référence donne les horodatages en UTC (0.11.1). Le contenu du site suit l'API sans en dépendre : un retard de contenu n'est pas un écart de décision, et il se corrige hors de ce dépôt.
+
+La décision de topologie — site statique sur o2switch, API sur le VPS Kovelt, sous-domaines `carbon-fr.kovelt.fr` et `carbon-fr-api.kovelt.fr`, `/v1` dans le chemin — est **appliquée** ; l'item « site / doc / playground » est **clos**. Aucun changement de code ni de contrat `/v1`.

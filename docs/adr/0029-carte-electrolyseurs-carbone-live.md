@@ -3,7 +3,7 @@
 - **Statut** : Accepté, implémenté
 - **Date** : 2026-07-03
 - **Décideurs** : Morgan (Kovelt / carbon-fr)
-- **ADR liés** : ADR-0025 (parent — décision 5, couche B-light), ADR-0007 (topologie — site statique o2switch resté non concrétisé), ADR-0024 (discipline licences), ADR-0026/0028 (données d'éligibilité consommées)
+- **ADR liés** : ADR-0025 (parent — décision 5, couche B-light), ADR-0007 (topologie — site statique o2switch, en ligne depuis le 2026-06-16 ; cf. addendum du 2026-11-02 ci-dessous), ADR-0024 (discipline licences), ADR-0026/0028 (données d'éligibilité consommées)
 
 ---
 
@@ -74,3 +74,7 @@ La décision 5 classait les régions en cinq couleurs sur `<25, 25-45, 45-70, 70
 - **Conséquence visuelle assumée** : moins de nuances entre les régions nucléaires (Centre-Val de Loire, Auvergne-Rhône-Alpes, Normandie : presque toujours `very-low`), plus de contraste pour les régions à pointe fossile (Île-de-France, Bretagne, Pays de la Loire, PACA) — c'est l'information, pas l'esthétique, qui prime. **Une seule échelle dans le produit** : l'API, les SDK et la carte parlent des mêmes bandes.
 
 La décision 6 (neutralité) est inchangée : la couleur reste un signal **réseau**, jamais une éligibilité du site, et la réserve d'`acv-ademe` « basé production » (ADR-0008) vaut pour les bandes comme pour les valeurs — une région importatrice peut apparaître `high` ou `very-high` quand ses centrales de pointe tournent.
+
+## Addendum (2026-11-02) — le site statique de l'ADR-0007 existait déjà
+
+Les formules « resté non concrétisé » (en-tête d'origine) et « n'a jamais été concrétisé » (décision 1, alternative « site statique o2switch d'abord ») étaient inexactes dès la rédaction de cet ADR : le site vitrine statique était en ligne sur `carbon-fr.kovelt.fr` depuis le 2026-06-16 ; seul le SSG prévu par la lettre de l'ADR-0007 n'a jamais existé (cf. son addendum du 2026-11-02). La décision 1 n'est pas remise en cause : la page reste servie par l'API, hors contrat `/v1`, pour ses autres raisons (zéro nouvelle infra, même origine, parité self-hosting), et le site l'embarque en iframe depuis la 0.6.1. Le corps de l'ADR est conservé tel quel ; seul l'en-tête « ADR liés » a été corrigé.

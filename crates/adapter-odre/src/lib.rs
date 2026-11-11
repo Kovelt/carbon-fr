@@ -702,6 +702,7 @@ mod tests {
         );
         let (base_url, _server) = spawn_server(app).await;
 
+        ensure_crypto_provider();
         let client = OdreClient::with_http(reqwest::Client::new(), base_url);
 
         // Résultats vides → `latest` échoue avec `SourceError::NoData` : sans
@@ -776,6 +777,8 @@ mod tests {
             }),
         );
         let (base_url, _server) = spawn_server(app).await;
+
+        ensure_crypto_provider();
         let client = OdreClient::with_http(reqwest::Client::new(), base_url);
 
         let t0 = OffsetDateTime::from_unix_timestamp(0).unwrap();
